@@ -1,0 +1,29 @@
+{
+	"name": "zero-g",
+	"build": {
+		"dockerfile": "Dockerfile"
+	},
+	"containerUser": "dev",
+	"remoteUser": "dev",
+	"runArgs": [
+		"--hostname=zero-g",
+		"--security-opt",
+		"label=disable",
+		"--userns=keep-id",
+		"-v",
+		"cargo-cache:/usr/local/cargo"
+	],
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"rust-lang.rust-analyzer",
+				"tamasfe.even-better-toml",
+				"fill-labs.dependi"
+			],
+			"settings": {
+				"terminal.integrated.defaultProfile.linux": "bash"
+			}
+		}
+	},
+	"postCreateCommand": "bash .devcontainer/postinstall.sh"
+}
