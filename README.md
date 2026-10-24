@@ -62,12 +62,6 @@ flowchart LR
 
 For component boundaries, internal translation, and state invariants, see **[Architecture Guide](docs/architecture.md)**.
 
-## Roadmap
-
-- [x] **Core Proxy & Protocol Translation** — Chat completions, Responses API, SSE streaming, and tool calling.
-- [ ] **Homebrew Tap Distribution** — Packaged formula under `Delnegend/homebrew-tap`.
-- [ ] **Daemon Service Units** — Automated systemd user unit and launchd configuration.
-
 ## Documentation
 
 - **[Configuration](docs/configuration.md)** — Environment variables, flags, and credentials schema.

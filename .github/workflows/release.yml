@@ -66,14 +66,11 @@ jobs:
           semver-next: ${{ steps.semver.outputs.next }}
           semver-next-strict: ${{ steps.semver.outputs.nextStrict }}
 
-  build:
-    name: Build & Release Artifacts
+  build-binaries:
+    name: Build Release Binaries
     needs: prepare
     if: needs.prepare.outputs.skip != 'true'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -89,15 +86,27 @@ jobs:
           cargo build --release --bin zero-g
 
       - name: Package artifact
-        uses: Delnegend/actions/package-artifact@62064acc9dce2872175e85b3b2e1c2295cd1bee7 # v1
+        uses: Delnegend/actions/package-artifact@61325e8e0af53ec1f8731b2bde68cfc622148611 # v1
         with:
           name: zero-g
           version: ${{ needs.prepare.outputs.version }}
           target: x86_64-unknown-linux-gnu
           source: target/release/zero-g
 
+  build-container:
+    name: Build Container Image
+    needs: prepare
+    if: needs.prepare.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+
       - name: Build and push container image
-        uses: Delnegend/actions/docker-build-push@f8687fdc288837d994b43118f44972b9b8e7b2aa # v1
+        uses: Delnegend/actions/docker-build-push@61325e8e0af53ec1f8731b2bde68cfc622148611 # v1
         with:
           version: ${{ needs.prepare.outputs.version }}
           publish: ${{ needs.prepare.outputs.publish }}
@@ -105,12 +114,12 @@ jobs:
 
   publish:
     name: Publish Consolidated Release
-    needs: [prepare, build]
+    needs: [prepare, build-binaries, build-container]
     if: needs.prepare.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Publish release
-        uses: Delnegend/actions/publish-release@62064acc9dce2872175e85b3b2e1c2295cd1bee7 # v1
+        uses: Delnegend/actions/publish-release@61325e8e0af53ec1f8731b2bde68cfc622148611 # v1
         with:
           ref: ${{ needs.prepare.outputs.ref }}
           publish: ${{ needs.prepare.outputs.publish }}
