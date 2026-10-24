@@ -3,6 +3,7 @@ name = "zero-g"
 version = "0.1.0"
 edition = "2024"
 description = "OpenAI-compatible proxy for Google Antigravity subscriptions"
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 tokio = { version = "1.54.1", features = ["full"] }
