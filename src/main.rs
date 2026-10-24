@@ -19,6 +19,7 @@ use crate::server::{AppState, create_router};
 #[derive(Parser)]
 #[command(name = "zero-g")]
 #[command(about = "OpenAI-compatible proxy for Google Antigravity subscription", long_about = None)]
+#[command(version)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
