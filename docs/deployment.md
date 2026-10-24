@@ -68,6 +68,36 @@ systemctl --user enable --now zero-g
 journalctl --user -u zero-g -f
 ```
 
+## Container Deployment
+
+`zero-g` ships a static distroless container image based on `gcr.io/distroless/static-debian13:nonroot` (<10 MB).
+
+### 1. Seed `credentials.json`
+
+Authenticate and seed credentials using a temporary one-off container:
+
+```bash
+mkdir -p /tmp/zero-g && chmod 777 /tmp/zero-g
+
+podman run --rm -it \
+  --net=host \
+  --env-file .env \
+  -v /tmp/zero-g:/app/data \
+  -e ZERO_G_CREDENTIALS=/app/data/credentials.json \
+  zero-g:latest login
+
+mv /tmp/zero-g/credentials.json ./credentials.json
+chmod 644 ./credentials.json
+rm -rf /tmp/zero-g
+```
+
+### 2. Run with Compose
+
+```bash
+docker compose up -d
+# or: podman compose up -d
+```
+
 ## Upgrade
 
 ```bash
