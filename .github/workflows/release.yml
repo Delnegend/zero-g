@@ -71,6 +71,9 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.skip != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -93,6 +96,12 @@ jobs:
           target: x86_64-unknown-linux-gnu
           source: target/release/zero-g
 
+      - name: Build and push container image
+        uses: Delnegend/actions/docker-build-push@62064acc9dce2872175e85b3b2e1c2295cd1bee7 # v1
+        with:
+          version: ${{ needs.prepare.outputs.version }}
+          publish: ${{ needs.prepare.outputs.publish }}
+
   publish:
     name: Publish Consolidated Release
     needs: [prepare, build]
@@ -104,3 +113,5 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.ref }}
           publish: ${{ needs.prepare.outputs.publish }}
+          image: ghcr.io/${{ github.repository }}
+          version: ${{ needs.prepare.outputs.version }}

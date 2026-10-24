@@ -1,7 +1,7 @@
 services:
   zero-g:
     build: .
-    image: zero-g:latest
+    image: ghcr.io/delnegend/zero-g:latest
     container_name: zero-g
     restart: unless-stopped
     ports:

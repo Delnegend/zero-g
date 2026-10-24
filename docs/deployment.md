@@ -70,7 +70,7 @@ journalctl --user -u zero-g -f
 
 ## Container Deployment
 
-`zero-g` ships a static distroless container image based on `gcr.io/distroless/static-debian13:nonroot` (<10 MB).
+`zero-g` ships a static distroless container image based on `gcr.io/distroless/static-debian13:nonroot` (<10 MB), published to GitHub Packages (`ghcr.io/delnegend/zero-g`).
 
 ### 1. Seed `credentials.json`
 
@@ -83,7 +83,7 @@ podman run --rm -it \
   --net=host \
   --env-file .env \
   -v /tmp/zero-g:/home/nonroot/.config/zero-g:Z \
-  zero-g:latest login
+  ghcr.io/delnegend/zero-g:latest login
 
 mv /tmp/zero-g/credentials.json ./credentials.json
 chmod 644 ./credentials.json
