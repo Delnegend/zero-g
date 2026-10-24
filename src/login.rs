@@ -76,7 +76,7 @@ pub(crate) async fn run_login() -> Result<Credentials, String> {
         }),
     );
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], OAUTH_CALLBACK_PORT));
+    let addr = SocketAddr::from(([0, 0, 0, 0], OAUTH_CALLBACK_PORT));
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|e| format!("Failed to bind to callback port {OAUTH_CALLBACK_PORT}: {e}"))?;

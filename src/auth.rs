@@ -85,6 +85,9 @@ impl AuthManager {
         )
     }
     fn get_config_path() -> PathBuf {
+        if let Ok(p) = std::env::var("ZERO_G_CREDENTIALS") {
+            return PathBuf::from(p);
+        }
         if Path::new("credentials.json").exists() {
             return PathBuf::from("credentials.json");
         }
@@ -103,16 +106,15 @@ impl AuthManager {
     }
 
     fn load_from_file() -> Option<Credentials> {
-        let paths = [
-            PathBuf::from("credentials.json"),
-            std::env::var("HOME")
-                .map(|h| PathBuf::from(&h).join(".config/zero-g/credentials.json"))
-                .unwrap_or_default(),
-            std::env::var("HOME")
-                .map(|h| PathBuf::from(&h).join(".config/gap/credentials.json"))
-                .unwrap_or_default(),
-        ];
-
+        let mut paths = Vec::new();
+        if let Ok(p) = std::env::var("ZERO_G_CREDENTIALS") {
+            paths.push(PathBuf::from(p));
+        }
+        paths.push(PathBuf::from("credentials.json"));
+        if let Ok(home) = std::env::var("HOME") {
+            paths.push(PathBuf::from(&home).join(".config/zero-g/credentials.json"));
+            paths.push(PathBuf::from(&home).join(".config/gap/credentials.json"));
+        }
         for path in &paths {
             if path.exists()
                 && let Ok(content) = fs::read_to_string(path)

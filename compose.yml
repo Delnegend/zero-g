@@ -1,0 +1,17 @@
+services:
+  zero-g:
+    build: .
+    image: zero-g:latest
+    container_name: zero-g
+    restart: unless-stopped
+    ports:
+      - "${ZERO_G_PORT:-8080}:8080"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - ZERO_G_HOST=0.0.0.0
+      - ZERO_G_PORT=8080
+      - ZERO_G_CREDENTIALS=/app/credentials.json
+    volumes:
+      - ./credentials.json:/app/credentials.json:ro,Z
