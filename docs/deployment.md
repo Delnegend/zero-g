@@ -36,15 +36,17 @@ After authentication, credentials are saved to `~/.config/zero-g/credentials.jso
 brew services start zero-g
 ```
 
-Inspect service logs:
+Inspect service logs (paths match the Homebrew formula's `service` block):
 
 ```bash
-tail -f "$(brew --prefix)/var/log/zero-g.log"
+tail -f /tmp/zero-g.log
 ```
 
-### Systemd User Unit (Linux)
+### Systemd User Unit (Linux, non-Homebrew installs)
 
-Create `~/.config/systemd/user/zero-g.service`:
+Homebrew users should prefer `brew services start zero-g` above. For installs
+outside Homebrew (release binary or `cargo install`), create
+`~/.config/systemd/user/zero-g.service` pointing at the installed binary:
 
 ```ini
 [Unit]
@@ -52,7 +54,7 @@ Description=Google Antigravity OpenAI Proxy
 After=network.target
 
 [Service]
-ExecStart=%h/.cargo/bin/zero-g serve
+ExecStart=/usr/local/bin/zero-g serve
 Restart=always
 RestartSec=5
 
