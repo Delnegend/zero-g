@@ -24,6 +24,5 @@
 				"terminal.integrated.defaultProfile.linux": "bash"
 			}
 		}
-	},
-	"postCreateCommand": "bash .devcontainer/postinstall.sh"
+	}
 }
