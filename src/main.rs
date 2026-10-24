@@ -27,11 +27,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Start the OpenAI-compatible proxy server (default)
-    Serve {
-        /// Optional API key for proxy authentication
-        #[arg(long, env = "ZERO_G_API_KEY")]
-        api_key: Option<String>,
-    },
+    Serve,
     /// Interactive Google OAuth login to authorize Antigravity
     Login,
     /// List available models on your Google Antigravity account
@@ -50,13 +46,13 @@ async fn main() {
     let _ = tracing::subscriber::set_global_default(subscriber);
 
     let cli = Cli::parse();
-    let command = cli.command.unwrap_or(Commands::Serve { api_key: None });
+    let command = cli.command.unwrap_or(Commands::Serve);
 
     match command {
-        Commands::Serve { api_key } => {
+        Commands::Serve => {
             let (host, port) = resolve_bind_config();
-            let api_key = api_key
-                .or_else(|| std::env::var("ZERO_G_API_KEY").ok())
+            let api_key = std::env::var("ZERO_G_API_KEY")
+                .ok()
                 .or_else(|| std::env::var("GAP_API_KEY").ok());
             if let Err(e) = run_server(host, port, api_key).await {
                 error!("Server error: {e}");

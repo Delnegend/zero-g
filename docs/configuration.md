@@ -26,11 +26,7 @@
 
 ### `zero-g serve`
 
-Run the OpenAI-compatible HTTP proxy. Listening host and port are configured via environment variables (`ZERO_G_HOST`, `ZERO_G_PORT`, `ZERO_G_BIND`).
-
-| Option | Default | Description |
-|---|---|---|
-| `--api-key <key>` | None | Require `Authorization: Bearer <key>` from callers |
+Run the OpenAI-compatible HTTP proxy. All runtime options (listening host, port, API key authentication) are configured exclusively via environment variables (`ZERO_G_HOST`, `ZERO_G_PORT`, `ZERO_G_BIND`, `ZERO_G_API_KEY`).
 ### `zero-g login`
 
 Start a temporary OAuth callback listener on `127.0.0.1:51121`, open the browser consent flow, exchange tokens, and discover the Cloud Code Assist project.

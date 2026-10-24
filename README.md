@@ -36,21 +36,21 @@ Source builds from checkout: `cargo install --path .` (last resort only).
 - **Claude & Gemini Support** — Formats Anthropic thinking beta headers, system instructions, and tool calling signatures automatically.
 - **Multi-Turn Tool Calling** — End-to-end function declaration, execution, and tool response turn merging.
 
-## Common Options
+## Common Commands
 
 ```bash
 # Start proxy (configured via .env or defaults to 127.0.0.1:8080)
-zero-g serve --api-key sk-local-secret
+zero-g serve
 ```
 
-| Option | Default | Description |
-|---|---|---|
-| `serve` | None | Start HTTP proxy server (default) |
-| `--api-key <key>` | None | Optional Bearer authentication token |
-| `login` | None | Interactive browser OAuth sign-in flow |
-| `models` | None | List available models and quotas |
-| `status` | None | Print token validity and project ID |
-For all environment variables and advanced flags, see **[Configuration Reference](docs/configuration.md)**.
+| Command | Description |
+|---|---|
+| `serve` | Start HTTP proxy server (default) |
+| `login` | Interactive browser OAuth sign-in flow |
+| `models` | List available models and quotas |
+| `status` | Print token validity and project ID |
+
+For all environment variables, see **[Configuration Reference](docs/configuration.md)**.
 
 ## Architecture
 
