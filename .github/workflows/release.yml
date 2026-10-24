@@ -1,0 +1,106 @@
+name: Release / Build Artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Empty = ship a new version. SHA = test-build it (no publish). Tag = rebuild it."
+        required: false
+        type: string
+      dry-run:
+        description: "Preview only: print each action (gate, bump, tag, build, publish) without doing any of it."
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  gate:
+    name: Gate (all of CI)
+    uses: ./.github/workflows/ci.yml
+
+  prepare:
+    name: Prepare (bump, tag, push)
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      ref: ${{ steps.resolve.outputs.ref }}
+      version: ${{ steps.resolve.outputs.version }}
+      publish: ${{ steps.resolve.outputs.publish }}
+      skip: ${{ steps.resolve.outputs.skip }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          token: ${{ github.token }}
+          persist-credentials: true
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      - name: Calculate Next SemVer
+        id: semver
+        uses: ietf-tools/semver-action@c90370b2958652d71c06a3484129a4d423a6d8a8 # v1
+        with:
+          token: ${{ github.token }}
+          fallbackTag: v0.0.0
+          noNewCommitBehavior: silent
+          noVersionBumpBehavior: patch
+
+      - name: Bump, tag, and push
+        id: resolve
+        uses: Delnegend/actions/resolve-release@62064acc9dce2872175e85b3b2e1c2295cd1bee7 # v1
+        with:
+          ref: ${{ inputs.ref }}
+          dry-run: ${{ inputs.dry-run }}
+          gate-sha: ${{ github.sha }}
+          semver-bump: ${{ steps.semver.outputs.bump }}
+          semver-current: ${{ steps.semver.outputs.current }}
+          semver-next: ${{ steps.semver.outputs.next }}
+          semver-next-strict: ${{ steps.semver.outputs.nextStrict }}
+
+  build:
+    name: Build & Release Artifacts
+    needs: prepare
+    if: needs.prepare.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+
+      - name: Build Linux x64 binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release --bin zero-g
+
+      - name: Package artifact
+        uses: Delnegend/actions/package-artifact@62064acc9dce2872175e85b3b2e1c2295cd1bee7 # v1
+        with:
+          name: zero-g
+          version: ${{ needs.prepare.outputs.version }}
+          target: x86_64-unknown-linux-gnu
+          source: target/release/zero-g
+
+  publish:
+    name: Publish Consolidated Release
+    needs: [prepare, build]
+    if: needs.prepare.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish release
+        uses: Delnegend/actions/publish-release@62064acc9dce2872175e85b3b2e1c2295cd1bee7 # v1
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+          publish: ${{ needs.prepare.outputs.publish }}

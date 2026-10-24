@@ -1,0 +1,20 @@
+name: Dependency updates
+
+on:
+  schedule:
+    - cron: '0 2 * * *' # Daily 02:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: deps-main
+  cancel-in-progress: false
+
+jobs:
+  update:
+    uses: Delnegend/actions/.github/workflows/reusable-deps-update.yml@62064acc9dce2872175e85b3b2e1c2295cd1bee7 # v1
+    with:
+      cargo: true
