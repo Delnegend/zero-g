@@ -6,8 +6,8 @@
 |---|---|---|---|
 | `ZERO_G_BIND` | `127.0.0.1:8080` | No | Listening `host:port` bind address |
 | `ZERO_G_API_KEY` | None | No | Bearer token required for proxy client requests |
-| `OAUTH_CLIENT_ID` | None (reads `.env`) | No | Google OAuth desktop client ID for sign-in/refresh |
-| `OAUTH_CLIENT_SECRET` | None (reads `.env`) | No | Google OAuth desktop client secret |
+| `ZERO_G_OAUTH_CLIENT_ID` | None (reads `.env`) | No | Google OAuth desktop client ID for sign-in/refresh |
+| `ZERO_G_OAUTH_CLIENT_SECRET` | None (reads `.env`) | No | Google OAuth desktop client secret |
 
 ## Obtaining OAuth Credentials
 
@@ -16,7 +16,7 @@
 1. Navigate to [Google Cloud Console](https://console.cloud.google.com/) $\to$ **APIs & Services** $\to$ **Credentials**.
 2. Click **Create Credentials** $\to$ **OAuth client ID** $\to$ select Application type: **Desktop app**.
 3. Add the required scopes (`cloud-platform`, `userinfo.email`, `userinfo.profile`, `cclog`, `experimentsandconfigs`).
-4. Copy the Client ID and Client Secret into `.env` as `OAUTH_CLIENT_ID` and `OAUTH_CLIENT_SECRET`.
+4. Copy the Client ID and Client Secret into `.env` as `ZERO_G_OAUTH_CLIENT_ID` and `ZERO_G_OAUTH_CLIENT_SECRET`.
 ## CLI Commands and Flags
 
 ### `zero-g serve`

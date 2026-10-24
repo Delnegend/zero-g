@@ -8,13 +8,14 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 pub(crate) fn oauth_client_id() -> Result<String, String> {
-    std::env::var("OAUTH_CLIENT_ID")
-        .map_err(|_| "OAUTH_CLIENT_ID not set. Please set it in .env or environment.".to_string())
+    std::env::var("ZERO_G_OAUTH_CLIENT_ID").map_err(|_| {
+        "ZERO_G_OAUTH_CLIENT_ID not set. Please set it in .env or environment.".to_string()
+    })
 }
 
 pub(crate) fn oauth_client_secret() -> Result<String, String> {
-    std::env::var("OAUTH_CLIENT_SECRET").map_err(|_| {
-        "OAUTH_CLIENT_SECRET not set. Please set it in .env or environment.".to_string()
+    std::env::var("ZERO_G_OAUTH_CLIENT_SECRET").map_err(|_| {
+        "ZERO_G_OAUTH_CLIENT_SECRET not set. Please set it in .env or environment.".to_string()
     })
 }
 pub(crate) const OAUTH_CALLBACK_PORT: u16 = 51121;

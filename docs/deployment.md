@@ -18,7 +18,7 @@ Before logging in, configure your OAuth desktop credentials in `.env` (see **[Ob
 
 ```bash
 cp .env.example .env
-# edit .env with your OAUTH_CLIENT_ID and OAUTH_CLIENT_SECRET
+# edit .env with your ZERO_G_OAUTH_CLIENT_ID and ZERO_G_OAUTH_CLIENT_SECRET
 ```
 
 Run the sign-in command to authenticate:
