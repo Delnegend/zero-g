@@ -97,10 +97,11 @@ jobs:
           source: target/release/zero-g
 
       - name: Build and push container image
-        uses: Delnegend/actions/docker-build-push@62064acc9dce2872175e85b3b2e1c2295cd1bee7 # v1
+        uses: Delnegend/actions/docker-build-push@f8687fdc288837d994b43118f44972b9b8e7b2aa # v1
         with:
           version: ${{ needs.prepare.outputs.version }}
           publish: ${{ needs.prepare.outputs.publish }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
   publish:
     name: Publish Consolidated Release
@@ -113,5 +114,6 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.ref }}
           publish: ${{ needs.prepare.outputs.publish }}
-          image: ghcr.io/${{ github.repository }}
+          container: true
+          download: true
           version: ${{ needs.prepare.outputs.version }}
