@@ -119,7 +119,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Publish release
-        uses: Delnegend/actions/publish-release@61325e8e0af53ec1f8731b2bde68cfc622148611 # v1
+        uses: Delnegend/actions/publish-release@786c275d963cd7452f2b5c21b2f903b57ae146a7 # v1
         with:
           ref: ${{ needs.prepare.outputs.ref }}
           publish: ${{ needs.prepare.outputs.publish }}
