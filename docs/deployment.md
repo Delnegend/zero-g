@@ -82,7 +82,7 @@ mkdir -p /tmp/zero-g && chmod 777 /tmp/zero-g
 podman run --rm -it \
   --net=host \
   --env-file .env \
-  -v /tmp/zero-g:/app/data \
+  -v /tmp/zero-g:/app/data:Z \
   -e ZERO_G_CREDENTIALS=/app/data/credentials.json \
   zero-g:latest login
 
