@@ -11,8 +11,7 @@ FROM gcr.io/distroless/static-debian13:nonroot
 WORKDIR /app
 COPY --from=builder /app/target/release/zero-g /usr/local/bin/zero-g
 
-ENV ZERO_G_HOST=0.0.0.0
-ENV ZERO_G_PORT=8080
+ENV ZERO_G_BIND=0.0.0.0:8080
 
 EXPOSE 8080
 USER nonroot:nonroot

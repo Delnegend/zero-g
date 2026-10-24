@@ -49,7 +49,7 @@ pub(crate) struct Credentials {
 #[derive(Clone)]
 pub(crate) struct AuthManager {
     creds: Arc<RwLock<Credentials>>,
-    storage_path: Option<PathBuf>,
+    storage_path: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -60,22 +60,12 @@ struct TokenRefreshResponse {
 
 impl AuthManager {
     pub(crate) fn load() -> Result<Self, String> {
-        // 1. Try local file credentials.json or ~/.config/zero-g/credentials.json
-        if let Some(creds) = Self::load_from_file() {
-            let storage_path = Self::get_config_path();
+        let storage_path = Self::get_config_path();
+        if let Some(creds) = Self::load_from_file(&storage_path) {
             info!("Loaded credentials from file: {:?}", storage_path);
             return Ok(Self {
                 creds: Arc::new(RwLock::new(creds)),
-                storage_path: Some(storage_path),
-            });
-        }
-
-        // 2. Try environment variables
-        if let Some(creds) = Self::load_from_env() {
-            info!("Loaded credentials from environment variables");
-            return Ok(Self {
-                creds: Arc::new(RwLock::new(creds)),
-                storage_path: None,
+                storage_path,
             });
         }
 
@@ -85,58 +75,23 @@ impl AuthManager {
         )
     }
     fn get_config_path() -> PathBuf {
-        if let Ok(p) = std::env::var("ZERO_G_CREDENTIALS") {
-            return PathBuf::from(p);
-        }
         if Path::new("credentials.json").exists() {
             return PathBuf::from("credentials.json");
         }
-        if let Ok(home) = std::env::var("HOME") {
-            let p = PathBuf::from(&home).join(".config/zero-g/credentials.json");
-            if p.exists() {
-                return p;
-            }
-            let gap_p = PathBuf::from(&home).join(".config/gap/credentials.json");
-            if gap_p.exists() {
-                return gap_p;
-            }
-            return p;
+        if let Some(base) = get_config_base_dir() {
+            return base.join("zero-g/credentials.json");
         }
         PathBuf::from("credentials.json")
     }
 
-    fn load_from_file() -> Option<Credentials> {
-        let mut paths = Vec::new();
-        if let Ok(p) = std::env::var("ZERO_G_CREDENTIALS") {
-            paths.push(PathBuf::from(p));
-        }
-        paths.push(PathBuf::from("credentials.json"));
-        if let Ok(home) = std::env::var("HOME") {
-            paths.push(PathBuf::from(&home).join(".config/zero-g/credentials.json"));
-            paths.push(PathBuf::from(&home).join(".config/gap/credentials.json"));
-        }
-        for path in &paths {
-            if path.exists()
-                && let Ok(content) = fs::read_to_string(path)
-                && let Ok(creds) = serde_json::from_str::<Credentials>(&content)
-            {
-                return Some(creds);
-            }
+    fn load_from_file(path: &Path) -> Option<Credentials> {
+        if path.exists()
+            && let Ok(content) = fs::read_to_string(path)
+            && let Ok(creds) = serde_json::from_str::<Credentials>(&content)
+        {
+            return Some(creds);
         }
         None
-    }
-
-    fn load_from_env() -> Option<Credentials> {
-        let access_token = std::env::var("ANTIGRAVITY_ACCESS_TOKEN").ok()?;
-        let project_id = std::env::var("ANTIGRAVITY_PROJECT_ID").ok()?;
-        let refresh_token = std::env::var("ANTIGRAVITY_REFRESH_TOKEN").ok();
-        Some(Credentials {
-            access_token,
-            refresh_token,
-            project_id,
-            expires_at: None,
-            email: None,
-        })
     }
 
     pub(crate) async fn get_credentials(&self) -> Result<Credentials, String> {
@@ -222,13 +177,11 @@ impl AuthManager {
     async fn save_updated_credentials(&self) {
         let creds = self.creds.read().await.clone();
 
-        if let Some(storage_path) = &self.storage_path
-            && let Ok(json) = serde_json::to_string_pretty(&creds)
-        {
-            if let Some(parent) = storage_path.parent() {
+        if let Ok(json) = serde_json::to_string_pretty(&creds) {
+            if let Some(parent) = self.storage_path.parent() {
                 let _ = fs::create_dir_all(parent);
             }
-            let _ = fs::write(storage_path, json);
+            let _ = fs::write(&self.storage_path, json);
         }
     }
 
@@ -243,5 +196,28 @@ impl AuthManager {
         fs::write(&path, json)
             .map_err(|e| format!("Failed to write credentials to {}: {e}", path.display()))?;
         Ok(path)
+    }
+}
+
+fn get_config_base_dir() -> Option<PathBuf> {
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME")
+        && !xdg.trim().is_empty()
+    {
+        return Some(PathBuf::from(xdg));
+    }
+    std::env::var("HOME")
+        .ok()
+        .map(|h| PathBuf::from(h).join(".config"))
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_config_base_dir() {
+        let base = get_config_base_dir();
+        assert!(base.is_some());
     }
 }

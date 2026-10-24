@@ -51,9 +51,7 @@ async fn main() {
     match command {
         Commands::Serve => {
             let (host, port) = resolve_bind_config();
-            let api_key = std::env::var("ZERO_G_API_KEY")
-                .ok()
-                .or_else(|| std::env::var("GAP_API_KEY").ok());
+            let api_key = std::env::var("ZERO_G_API_KEY").ok();
             if let Err(e) = run_server(host, port, api_key).await {
                 error!("Server error: {e}");
                 std::process::exit(1);
@@ -81,41 +79,14 @@ async fn main() {
 }
 
 fn resolve_bind_config() -> (String, u16) {
-    let (env_host, env_port) = match std::env::var("ZERO_G_BIND")
-        .or_else(|_| std::env::var("GAP_BIND"))
-        .or_else(|_| std::env::var("BIND"))
+    if let Ok(bind) = std::env::var("ZERO_G_BIND")
+        && let Some((h, p)) = bind.rsplit_once(':')
+        && let Ok(port) = p.parse::<u16>()
     {
-        Ok(bind) => match bind.rsplit_once(':') {
-            Some((h, p)) => (
-                if h.is_empty() {
-                    None
-                } else {
-                    Some(h.to_string())
-                },
-                p.parse::<u16>().ok(),
-            ),
-            None => (Some(bind), None),
-        },
-        Err(_) => (None, None),
-    };
-
-    let host = env_host
-        .or_else(|| std::env::var("ZERO_G_HOST").ok())
-        .or_else(|| std::env::var("GAP_HOST").ok())
-        .or_else(|| std::env::var("HOST").ok())
-        .unwrap_or_else(|| "127.0.0.1".to_string());
-
-    let port = env_port
-        .or_else(|| {
-            std::env::var("ZERO_G_PORT")
-                .ok()
-                .and_then(|p| p.parse().ok())
-        })
-        .or_else(|| std::env::var("GAP_PORT").ok().and_then(|p| p.parse().ok()))
-        .or_else(|| std::env::var("PORT").ok().and_then(|p| p.parse().ok()))
-        .unwrap_or(8080);
-
-    (host, port)
+        let host = if h.is_empty() { "127.0.0.1" } else { h };
+        return (host.to_string(), port);
+    }
+    ("127.0.0.1".to_string(), 8080)
 }
 
 async fn run_server(host: String, port: u16, api_key: Option<String>) -> Result<(), String> {

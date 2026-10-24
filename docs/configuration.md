@@ -4,15 +4,10 @@
 
 | Variable | Default | Required | Description |
 |---|---|---|---|
-| `ZERO_G_HOST` | `127.0.0.1` | No | Listening network interface or IP address |
-| `ZERO_G_PORT` | `8080` | No | Listening TCP port |
-| `ZERO_G_BIND` | None | No | Combined `host:port` bind address override |
+| `ZERO_G_BIND` | `127.0.0.1:8080` | No | Listening `host:port` bind address |
 | `ZERO_G_API_KEY` | None | No | Bearer token required for proxy client requests |
 | `OAUTH_CLIENT_ID` | None (reads `.env`) | No | Google OAuth desktop client ID for sign-in/refresh |
 | `OAUTH_CLIENT_SECRET` | None (reads `.env`) | No | Google OAuth desktop client secret |
-| `ANTIGRAVITY_ACCESS_TOKEN` | None | No | Explicit Google OAuth access token override |
-| `ANTIGRAVITY_REFRESH_TOKEN` | None | No | Explicit Google OAuth refresh token override |
-| `ANTIGRAVITY_PROJECT_ID` | None | No | Google Cloud Code Assist companion project ID |
 
 ## Obtaining OAuth Credentials
 
@@ -26,7 +21,7 @@
 
 ### `zero-g serve`
 
-Run the OpenAI-compatible HTTP proxy. All runtime options (listening host, port, API key authentication) are configured exclusively via environment variables (`ZERO_G_HOST`, `ZERO_G_PORT`, `ZERO_G_BIND`, `ZERO_G_API_KEY`).
+Run the OpenAI-compatible HTTP proxy. All runtime options (bind address, API key authentication) are configured via environment variables (`ZERO_G_BIND`, `ZERO_G_API_KEY`).
 ### `zero-g login`
 
 Start a temporary OAuth callback listener on `127.0.0.1:51121`, open the browser consent flow, exchange tokens, and discover the Cloud Code Assist project.
@@ -44,8 +39,7 @@ Print the active GCP companion project ID, account email, token expiry, and refr
 `zero-g` looks for credentials in the following order:
 
 1. Local configuration file: `credentials.json` in the current working directory.
-2. User configuration file: `~/.config/zero-g/credentials.json`.
-3. Environment variables: `ANTIGRAVITY_ACCESS_TOKEN` and `ANTIGRAVITY_PROJECT_ID`.
+2. User configuration file: `$XDG_CONFIG_HOME/zero-g/credentials.json` (falling back to `~/.config/zero-g/credentials.json`).
 
 ### Credentials JSON Schema
 

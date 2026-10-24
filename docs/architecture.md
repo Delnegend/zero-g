@@ -19,7 +19,7 @@ flowchart TD
 
 - **Axum HTTP Layer (`src/server/`):** Exposes `/v1/chat/completions`, `/v1/responses`, and `/v1/models` with optional Bearer authentication and CORS handling.
 - **Protocol Models (`src/openai.rs`, `src/responses.rs`):** Strongly typed Serde models for Chat Completions and Responses API inputs (prompts, messages, tool outputs).
-- **Auth Manager (`src/auth.rs`):** Resolves tokens from `credentials.json`, `~/.config/zero-g/credentials.json`, or environment variables; refreshes access tokens within 60 seconds of expiration.
+- **Auth Manager (`src/auth.rs`):** Loads credentials from `credentials.json` (local or XDG config directory); refreshes access tokens within 60 seconds of expiration.
 - **Login Flow (`src/login.rs`):** Runs the local loopback OAuth listener (`51121`), exchanges authorization codes, and provisions the Cloud Code Assist project via `loadCodeAssist` and `onboardUser`.
 - **Wire Translator (`src/antigravity/`):** Translates message roles, formats system instructions into `role: "user"` parts, merges multi-turn function responses, and injects Antigravity request envelopes.
 - **Stream Parsers (`src/server/chat.rs`, `src/server/responses.rs`):** Decodes upstream CCA chunks and emits OpenAI chat completion chunks or Responses API lifecycle events.
