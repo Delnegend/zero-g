@@ -44,7 +44,3 @@ RUN curl -fsSL -o /tmp/mold.tar.gz "https://github.com/rui314/mold/releases/down
     tar -xf /tmp/mold.tar.gz -C /usr/local/cargo "mold-${MOLD_VERSION}-x86_64-linux" && \
     rm /tmp/mold.tar.gz && \
     printf '[target.x86_64-unknown-linux-gnu]\nlinker = "clang"\nrustflags = ["-C", "link-arg=-fuse-ld=/usr/local/cargo/mold-%s-x86_64-linux/bin/mold"]\n' "$MOLD_VERSION" > /usr/local/cargo/config.toml
-
-# cargo-binstall + flamegraph (cached in image, not postinstall)
-RUN curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash && \
-    cargo binstall -y flamegraph
