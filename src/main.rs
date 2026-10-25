@@ -89,7 +89,7 @@ fn resolve_bind_config() -> (String, u16) {
     ("127.0.0.1".to_string(), 8080)
 }
 
-async fn run_server(host: String, port: u16) -> Result<(), String> {
+async fn init_state() -> Result<AppState, String> {
     let auth = AuthManager::load()?;
     let client = Arc::new(AntigravityClient::new());
 
@@ -100,19 +100,24 @@ async fn run_server(host: String, port: u16) -> Result<(), String> {
     }
     info!("Localhost-only proxy; place behind an AI gateway for auth");
 
-    let state = AppState { auth, client };
+    Ok(AppState { auth, client })
+}
 
-    let app = create_router(state);
-    let addr: SocketAddr = format!("{host}:{port}")
+fn parse_socket_addr(host: &str, port: u16) -> Result<SocketAddr, String> {
+    format!("{host}:{port}")
         .parse()
-        .map_err(|e| format!("Invalid bind address: {e}"))?;
+        .map_err(|e| format!("Invalid bind address: {e}"))
+}
 
+fn log_endpoints(addr: SocketAddr) {
     info!("OpenAI-compatible proxy running at http://{addr}");
     info!("API Base URL: http://{addr}/v1");
     info!("Models: http://{addr}/v1/models");
     info!("Chat Completions: http://{addr}/v1/chat/completions");
     info!("Responses: http://{addr}/v1/responses");
+}
 
+async fn bind_and_serve(addr: SocketAddr, app: axum::Router) -> Result<(), String> {
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|e| format!("Failed to bind to {addr}: {e}"))?;
@@ -124,16 +129,34 @@ async fn run_server(host: String, port: u16) -> Result<(), String> {
     Ok(())
 }
 
-async fn run_login() -> Result<(), String> {
-    let creds = login::run_login().await?;
-    let path = AuthManager::save_to_file(&creds)?;
-    println!("\nLogin successful!");
+async fn run_server(host: String, port: u16) -> Result<(), String> {
+    let state = init_state().await?;
+    let app = create_router(state);
+    let addr = parse_socket_addr(&host, port)?;
+    log_endpoints(addr);
+    bind_and_serve(addr, app).await
+}
+
+fn print_login_success(creds: &crate::auth::Credentials, path: &std::path::Path) {
+    println!(
+        "
+Login successful!"
+    );
     println!("Credentials saved to: {}", path.display());
     println!("GCP Project ID: {}", creds.project_id);
     if let Some(email) = &creds.email {
         println!("Account: {email}");
     }
-    println!("\nYou can now run `zero-g serve` to start the OpenAI proxy.");
+    println!(
+        "
+You can now run `zero-g serve` to start the OpenAI proxy."
+    );
+}
+
+async fn run_login() -> Result<(), String> {
+    let creds = login::run_login().await?;
+    let path = AuthManager::save_to_file(&creds)?;
+    print_login_success(&creds, &path);
     Ok(())
 }
 

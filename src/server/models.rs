@@ -7,6 +7,15 @@ use tracing::warn;
 use crate::openai::{ModelEntry, ModelListResponse};
 use crate::server::AppState;
 
+const FALLBACK_MODEL_IDS: &[&str] = &[
+    "claude-sonnet-5-5-medium",
+    "claude-sonnet-5-5-high",
+    "claude-opus-5-5-medium",
+    "gemini-3.8-flash-low",
+    "gemini-4-argon-low",
+    "gpt-oss-120b-medium",
+];
+
 pub(crate) async fn list_models_handler(
     State(state): State<AppState>,
 ) -> Result<Json<ModelListResponse>, (StatusCode, Json<Value>)> {
@@ -21,77 +30,15 @@ pub(crate) async fn list_models_handler(
         )
     })?;
 
-    let models = state.client.fetch_models(&creds).await.unwrap_or_else(|e| {
-        warn!("Failed to fetch live models from Antigravity: {e}; falling back to standard list");
-        vec![
-            (
-                "claude-sonnet-5-5-medium".to_string(),
-                crate::antigravity::AntigravityModelInfo {
-                    display_name: Some("Claude Sonnet 5.5 (Medium)".to_string()),
-                    supports_images: Some(true),
-                    supports_thinking: Some(true),
-                    max_tokens: Some(200_000),
-                    max_output_tokens: Some(64_000),
-                    disabled: None,
-                },
-            ),
-            (
-                "claude-sonnet-5-5-high".to_string(),
-                crate::antigravity::AntigravityModelInfo {
-                    display_name: Some("Claude Sonnet 5.5 (High)".to_string()),
-                    supports_images: Some(true),
-                    supports_thinking: Some(true),
-                    max_tokens: Some(200_000),
-                    max_output_tokens: Some(64_000),
-                    disabled: None,
-                },
-            ),
-            (
-                "claude-opus-5-5-medium".to_string(),
-                crate::antigravity::AntigravityModelInfo {
-                    display_name: Some("Claude Opus 5.5 (Medium)".to_string()),
-                    supports_images: Some(true),
-                    supports_thinking: Some(true),
-                    max_tokens: Some(200_000),
-                    max_output_tokens: Some(64_000),
-                    disabled: None,
-                },
-            ),
-            (
-                "gemini-3.8-flash-low".to_string(),
-                crate::antigravity::AntigravityModelInfo {
-                    display_name: Some("Gemini 3.8 Flash (Low)".to_string()),
-                    supports_images: Some(true),
-                    supports_thinking: Some(true),
-                    max_tokens: Some(1_000_000),
-                    max_output_tokens: Some(65_536),
-                    disabled: None,
-                },
-            ),
-            (
-                "gemini-4-argon-low".to_string(),
-                crate::antigravity::AntigravityModelInfo {
-                    display_name: Some("Gemini 4 Argon (Low)".to_string()),
-                    supports_images: Some(true),
-                    supports_thinking: Some(true),
-                    max_tokens: Some(1_000_000),
-                    max_output_tokens: Some(65_535),
-                    disabled: None,
-                },
-            ),
-            (
-                "gpt-oss-120b-medium".to_string(),
-                crate::antigravity::AntigravityModelInfo {
-                    display_name: Some("GPT-OSS 120B (Medium)".to_string()),
-                    supports_images: Some(false),
-                    supports_thinking: Some(true),
-                    max_tokens: Some(128_000),
-                    max_output_tokens: Some(16_384),
-                    disabled: None,
-                },
-            ),
-        ]
-    });
+    let model_ids: Vec<String> = match state.client.fetch_models(&creds).await {
+        Ok(models) => models.into_iter().map(|(id, _)| id).collect(),
+        Err(e) => {
+            warn!(
+                "Failed to fetch live models from Antigravity: {e}; falling back to standard list"
+            );
+            FALLBACK_MODEL_IDS.iter().map(ToString::to_string).collect()
+        }
+    };
 
     let mut data = Vec::new();
 
@@ -104,7 +51,7 @@ pub(crate) async fn list_models_handler(
         });
     }
 
-    for (id, _) in models {
+    for id in model_ids {
         if crate::antigravity::MODEL_ALIASES.contains(&id.as_str()) {
             continue;
         }

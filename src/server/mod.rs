@@ -1,6 +1,7 @@
 mod chat;
 mod models;
 mod responses;
+mod sse;
 
 use std::sync::Arc;
 

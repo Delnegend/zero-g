@@ -4,7 +4,6 @@ mod payload;
 mod stream;
 
 pub(crate) use models::MODEL_ALIASES;
-pub(crate) use models::*;
 pub(crate) use stream::{AntigravityEvent, map_finish_reason, spawn_event_stream};
 
 pub(crate) struct AntigravityClient {

@@ -77,93 +77,12 @@ fn default_user_role() -> String {
 impl ResponseCreateRequest {
     pub(crate) fn into_chat_request(self) -> ChatCompletionRequest {
         let mut messages = Vec::new();
-
-        if let Some(instructions) = self.instructions
-            && !instructions.trim().is_empty()
-        {
-            messages.push(ChatMessage {
-                role: "system".to_string(),
-                content: Some(MessageContent::Text(instructions)),
-                name: None,
-                tool_calls: None,
-                tool_call_id: None,
-            });
-        }
+        push_system_message(&mut messages, self.instructions);
 
         match self.input {
-            ResponseInput::Text(prompt) => {
-                if !prompt.trim().is_empty() {
-                    messages.push(ChatMessage {
-                        role: "user".to_string(),
-                        content: Some(MessageContent::Text(prompt)),
-                        name: None,
-                        tool_calls: None,
-                        tool_call_id: None,
-                    });
-                }
-            }
+            ResponseInput::Text(prompt) => push_user_text(&mut messages, prompt),
             ResponseInput::Items(items) => {
-                for item in items {
-                    match item {
-                        ResponseInputItem::Message(msg) => messages.push(msg),
-                        ResponseInputItem::Tagged(ResponseTaggedItem::Message {
-                            role,
-                            content,
-                            name,
-                            tool_calls,
-                        }) => {
-                            messages.push(ChatMessage {
-                                role,
-                                content,
-                                name,
-                                tool_calls,
-                                tool_call_id: None,
-                            });
-                        }
-                        ResponseInputItem::Tagged(ResponseTaggedItem::FunctionCall {
-                            call_id,
-                            id,
-                            name,
-                            arguments,
-                        }) => {
-                            let call_id = call_id.or(id).unwrap_or_default();
-                            let arguments_str = match arguments {
-                                Value::String(s) => s,
-                                other => other.to_string(),
-                            };
-                            messages.push(ChatMessage {
-                                role: "assistant".to_string(),
-                                content: None,
-                                name: None,
-                                tool_calls: Some(vec![ToolCall {
-                                    id: call_id,
-                                    r#type: "function".to_string(),
-                                    function: FunctionCall {
-                                        name,
-                                        arguments: arguments_str,
-                                    },
-                                }]),
-                                tool_call_id: None,
-                            });
-                        }
-                        ResponseInputItem::Tagged(ResponseTaggedItem::FunctionCallOutput {
-                            call_id,
-                            output,
-                        }) => {
-                            let output_str = match output {
-                                Value::String(s) => s,
-                                other => other.to_string(),
-                            };
-                            messages.push(ChatMessage {
-                                role: "tool".to_string(),
-                                content: Some(MessageContent::Text(output_str)),
-                                name: None,
-                                tool_calls: None,
-                                tool_call_id: call_id,
-                            });
-                        }
-                    }
-                }
+                messages.extend(items.into_iter().map(ChatMessage::from));
             }
         }
 
@@ -178,6 +97,96 @@ impl ResponseCreateRequest {
             stream_options: None,
             tools: self.tools,
             tool_choice: self.tool_choice,
+        }
+    }
+}
+
+fn push_system_message(messages: &mut Vec<ChatMessage>, instructions: Option<String>) {
+    if let Some(instructions) = instructions
+        && !instructions.trim().is_empty()
+    {
+        messages.push(ChatMessage {
+            role: "system".to_string(),
+            content: Some(MessageContent::Text(instructions)),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        });
+    }
+}
+
+fn push_user_text(messages: &mut Vec<ChatMessage>, prompt: String) {
+    if !prompt.trim().is_empty() {
+        messages.push(ChatMessage {
+            role: "user".to_string(),
+            content: Some(MessageContent::Text(prompt)),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        });
+    }
+}
+
+fn value_to_string(value: Value) -> String {
+    match value {
+        Value::String(s) => s,
+        other => other.to_string(),
+    }
+}
+
+impl From<ResponseInputItem> for ChatMessage {
+    fn from(item: ResponseInputItem) -> Self {
+        match item {
+            ResponseInputItem::Message(message) => message,
+            ResponseInputItem::Tagged(tagged) => ChatMessage::from(tagged),
+        }
+    }
+}
+
+impl From<ResponseTaggedItem> for ChatMessage {
+    fn from(tagged: ResponseTaggedItem) -> Self {
+        match tagged {
+            ResponseTaggedItem::Message {
+                role,
+                content,
+                name,
+                tool_calls,
+            } => ChatMessage {
+                role,
+                content,
+                name,
+                tool_calls,
+                tool_call_id: None,
+            },
+            ResponseTaggedItem::FunctionCall {
+                call_id,
+                id,
+                name,
+                arguments,
+            } => {
+                let call_id = call_id.or(id).unwrap_or_default();
+                ChatMessage {
+                    role: "assistant".to_string(),
+                    content: None,
+                    name: None,
+                    tool_calls: Some(vec![ToolCall {
+                        id: call_id,
+                        r#type: "function".to_string(),
+                        function: FunctionCall {
+                            name,
+                            arguments: value_to_string(arguments),
+                        },
+                    }]),
+                    tool_call_id: None,
+                }
+            }
+            ResponseTaggedItem::FunctionCallOutput { call_id, output } => ChatMessage {
+                role: "tool".to_string(),
+                content: Some(MessageContent::Text(value_to_string(output))),
+                name: None,
+                tool_calls: None,
+                tool_call_id: call_id,
+            },
         }
     }
 }
