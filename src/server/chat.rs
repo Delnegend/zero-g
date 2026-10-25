@@ -17,6 +17,10 @@ pub(crate) async fn chat_completions_handler(
     State(state): State<AppState>,
     Json(req): Json<ChatCompletionRequest>,
 ) -> Response {
+    if crate::zen::is_zen_model(&req.model) {
+        return crate::zen::handle_chat(req).await;
+    }
+
     let creds = match state.auth.get_credentials().await {
         Ok(c) => c,
         Err(e) => {

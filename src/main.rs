@@ -4,6 +4,7 @@ mod login;
 mod openai;
 mod responses;
 mod server;
+mod zen;
 
 use std::net::SocketAddr;
 use std::sync::Arc;

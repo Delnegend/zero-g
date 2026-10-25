@@ -51,6 +51,15 @@ pub(crate) async fn list_models_handler(
         });
     }
 
+    for id in crate::zen::zen_models() {
+        data.push(ModelEntry {
+            id: id.to_string(),
+            object: "model".to_string(),
+            created: 0,
+            owned_by: "opencode-zen".to_string(),
+        });
+    }
+
     Ok(Json(ModelListResponse {
         object: "list".to_string(),
         data,
