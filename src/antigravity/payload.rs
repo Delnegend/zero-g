@@ -317,6 +317,7 @@ mod tests {
             max_tokens: Some(4096),
             max_completion_tokens: None,
             stream: None,
+            stream_options: None,
             tools: None,
             tool_choice: None,
         };

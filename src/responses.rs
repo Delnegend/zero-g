@@ -175,6 +175,7 @@ impl ResponseCreateRequest {
             max_tokens: self.max_output_tokens,
             max_completion_tokens: self.max_output_tokens,
             stream: self.stream,
+            stream_options: None,
             tools: self.tools,
             tool_choice: self.tool_choice,
         }
@@ -226,6 +227,16 @@ pub(crate) struct ResponseUsage {
     pub(crate) input_tokens: u32,
     pub(crate) output_tokens: u32,
     pub(crate) total_tokens: u32,
+}
+
+impl From<crate::openai::Usage> for ResponseUsage {
+    fn from(usage: crate::openai::Usage) -> Self {
+        Self {
+            input_tokens: usage.prompt_tokens,
+            output_tokens: usage.completion_tokens,
+            total_tokens: usage.total_tokens,
+        }
+    }
 }
 
 #[cfg(test)]

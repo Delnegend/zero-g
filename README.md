@@ -66,6 +66,7 @@ For component boundaries, internal translation, and state invariants, see **[Arc
 
 - **[Configuration](docs/configuration.md)** — Environment variables, flags, and credentials schema.
 - **[Architecture](docs/architecture.md)** — Request envelopes, streaming translation, and invariants.
+- **[Gateway Integration](docs/gateways.md)** — LiteLLM and Bifrost provider configuration.
 - **[Deployment](docs/deployment.md)** — Homebrew services, systemd units, and upgrades.
 - **[Development](docs/development.md)** — Prerequisites, `just check` gate, and test suite.
 

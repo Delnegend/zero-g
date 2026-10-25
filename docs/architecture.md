@@ -22,7 +22,7 @@ flowchart TD
 - **Auth Manager (`src/auth.rs`):** Loads credentials from `credentials.json` (local or XDG config directory); refreshes access tokens within 60 seconds of expiration.
 - **Login Flow (`src/login.rs`):** Runs the local loopback OAuth listener (`51121`), exchanges authorization codes, and provisions the Cloud Code Assist project via `loadCodeAssist` and `onboardUser`.
 - **Wire Translator (`src/antigravity/`):** Translates message roles, formats system instructions into `role: "user"` parts, merges multi-turn function responses, and injects Antigravity request envelopes.
-- **Stream Parsers (`src/server/chat.rs`, `src/server/responses.rs`):** Decodes upstream CCA chunks and emits OpenAI chat completion chunks or Responses API lifecycle events.
+- **Stream Parsers (`src/antigravity/stream.rs`, `src/server/chat.rs`, `src/server/responses.rs`):** One shared Cloud Code Assist event decoder feeds two thin serializers: OpenAI chat completion chunks or Responses API lifecycle events.
 ## Invariants & Guarantees
 
 - **Token Freshness:** Any request dispatched with a token expiring within 60 seconds triggers a refresh before the upstream connection opens.
