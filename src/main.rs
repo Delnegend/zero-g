@@ -52,8 +52,7 @@ async fn main() {
     match command {
         Commands::Serve => {
             let (host, port) = resolve_bind_config();
-            let api_key = std::env::var("ZERO_G_API_KEY").ok();
-            if let Err(e) = run_server(host, port, api_key).await {
+            if let Err(e) = run_server(host, port).await {
                 error!("Server error: {e}");
                 std::process::exit(1);
             }
@@ -90,7 +89,7 @@ fn resolve_bind_config() -> (String, u16) {
     ("127.0.0.1".to_string(), 8080)
 }
 
-async fn run_server(host: String, port: u16, api_key: Option<String>) -> Result<(), String> {
+async fn run_server(host: String, port: u16) -> Result<(), String> {
     let auth = AuthManager::load()?;
     let client = Arc::new(AntigravityClient::new());
 
@@ -99,17 +98,9 @@ async fn run_server(host: String, port: u16, api_key: Option<String>) -> Result<
     if let Some(email) = &creds.email {
         info!("Signed in as: {}", email);
     }
-    if api_key.is_some() {
-        info!("Bearer API key authentication enabled");
-    } else {
-        info!("No API key required (local access open)");
-    }
+    info!("Localhost-only proxy; place behind an AI gateway for auth");
 
-    let state = AppState {
-        auth,
-        client,
-        api_key,
-    };
+    let state = AppState { auth, client };
 
     let app = create_router(state);
     let addr: SocketAddr = format!("{host}:{port}")

@@ -2,7 +2,7 @@ use std::convert::Infallible;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Json, Response};
 use serde_json::json;
@@ -17,27 +17,22 @@ use crate::openai::ChatCompletionRequest;
 use crate::responses::{
     ResponseContentPart, ResponseCreateRequest, ResponseObject, ResponseOutputItem, ResponseUsage,
 };
-use crate::server::{AppState, check_auth};
+use crate::server::AppState;
 
 pub(crate) async fn responses_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(req): Json<ResponseCreateRequest>,
 ) -> Response {
-    if !check_auth(&headers, state.api_key.as_deref()) {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({ "error": { "message": "Invalid API key" } })),
-        )
-            .into_response();
-    }
-
     let creds = match state.auth.get_credentials().await {
         Ok(c) => c,
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": { "message": e } })),
+                Json(crate::server::error_body(
+                    &e,
+                    "server_error",
+                    Some("internal_error"),
+                )),
             )
                 .into_response();
         }
@@ -95,11 +90,18 @@ pub(crate) async fn responses_handler(
 
                 Json(response_obj).into_response()
             }
-            Err(e) => (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({ "error": { "message": e } })),
-            )
-                .into_response(),
+            Err(e) => {
+                tracing::error!("Upstream request failed: {e}");
+                (
+                    StatusCode::BAD_GATEWAY,
+                    Json(crate::server::error_body(
+                        "Upstream request failed",
+                        "upstream_error",
+                        Some("bad_gateway"),
+                    )),
+                )
+                    .into_response()
+            }
         }
     }
 }
@@ -122,9 +124,14 @@ async fn handle_responses_streaming(
     {
         Ok(r) => r,
         Err(e) => {
+            tracing::error!("Upstream request failed: {e}");
             return (
                 StatusCode::BAD_GATEWAY,
-                Json(json!({ "error": { "message": e } })),
+                Json(crate::server::error_body(
+                    "Upstream request failed",
+                    "upstream_error",
+                    Some("bad_gateway"),
+                )),
             )
                 .into_response();
         }
@@ -157,18 +164,19 @@ async fn handle_responses_streaming(
 
         let mut byte_stream = spawn_event_stream(upstream_resp.bytes_stream());
 
-        let mut item_started = false;
+        let mut message_in_progress = false;
         let mut message_index: Option<usize> = None;
         let mut next_output_index: usize = 0;
         let mut full_text = String::new();
         let mut usage = ResponseUsage::default();
         let mut output_items: Vec<(usize, ResponseOutputItem)> = Vec::new();
+        let mut had_error = false;
 
         while let Some(event) = byte_stream.recv().await {
             match event {
                 Ok(AntigravityEvent::Text(text)) => {
-                    if !item_started {
-                        item_started = true;
+                    if !message_in_progress {
+                        message_in_progress = true;
                         let index = next_output_index;
                         next_output_index += 1;
                         message_index = Some(index);
@@ -223,7 +231,7 @@ async fn handle_responses_streaming(
                 Ok(AntigravityEvent::Reasoning(text)) => {
                     let reasoning_event = json!({
                         "type": "response.reasoning_text.delta",
-                        "output_index": 0,
+                        "output_index": message_index.unwrap_or(0),
                         "content_index": 0,
                         "delta": text
                     });
@@ -238,6 +246,7 @@ async fn handle_responses_streaming(
                     name,
                     arguments,
                 }) => {
+                    message_in_progress = false;
                     let index = next_output_index;
                     next_output_index += 1;
                     let fc_item_id = format!("fc_{}", uuid::Uuid::new_v4().simple());
@@ -306,12 +315,13 @@ async fn handle_responses_streaming(
                 }
                 Err(error) => {
                     error!("Error reading upstream bytes: {error}");
+                    had_error = true;
                     break;
                 }
             }
         }
 
-        if item_started {
+        if !had_error && message_in_progress {
             let index = message_index.unwrap_or(0);
             let done_text_event = json!({
                 "type": "response.output_text.done",
@@ -360,6 +370,18 @@ async fn handle_responses_streaming(
                 .await;
 
             output_items.push((index, msg_item));
+        }
+
+        if had_error {
+            if let Ok(json_str) = serde_json::to_string(&crate::server::error_body(
+                "Upstream request failed",
+                "upstream_error",
+                Some("bad_gateway"),
+            )) {
+                let _ = tx.send(Ok(Event::default().data(json_str))).await;
+            }
+            let _ = tx.send(Ok(Event::default().data("[DONE]"))).await;
+            return;
         }
 
         output_items.sort_by_key(|(index, _)| *index);

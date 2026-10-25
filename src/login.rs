@@ -19,6 +19,7 @@ use crate::auth::{
 struct CallbackQuery {
     code: Option<String>,
     error: Option<String>,
+    state: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -52,12 +53,18 @@ pub(crate) async fn run_login() -> Result<Credentials, String> {
     let (tx, rx) = oneshot::channel::<Result<String, String>>();
     let tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(tx)));
 
+    let expected_state = uuid::Uuid::new_v4().to_string();
+    let expected_state_clone = expected_state.clone();
     let tx_clone = tx.clone();
     let app = Router::new().route(
         OAUTH_CALLBACK_PATH,
         get(move |Query(params): Query<CallbackQuery>| async move {
             let mut sender = tx_clone.lock().await;
             if let Some(s) = sender.take() {
+                if params.state.as_deref() != Some(expected_state_clone.as_str()) {
+                    let _ = s.send(Err("OAuth state mismatch".to_string()));
+                    return Html("<html><body><h2>Authentication failed</h2><p>State mismatch.</p></body></html>".to_string());
+                }
                 if let Some(err) = params.error {
                     let _ = s.send(Err(format!("OAuth error: {err}")));
                     return Html(format!(
@@ -76,7 +83,7 @@ pub(crate) async fn run_login() -> Result<Credentials, String> {
         }),
     );
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], OAUTH_CALLBACK_PORT));
+    let addr = SocketAddr::from(([127, 0, 0, 1], OAUTH_CALLBACK_PORT));
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|e| format!("Failed to bind to callback port {OAUTH_CALLBACK_PORT}: {e}"))?;
@@ -85,10 +92,11 @@ pub(crate) async fn run_login() -> Result<Credentials, String> {
     let client_id = oauth_client_id()?;
     let client_secret = oauth_client_secret()?;
     let auth_url = format!(
-        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent",
+        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}&access_type=offline&prompt=consent",
         urlencoding::encode(&client_id),
         urlencoding::encode(OAUTH_CALLBACK_URL),
-        urlencoding::encode(&scopes_encoded)
+        urlencoding::encode(&scopes_encoded),
+        urlencoding::encode(&expected_state)
     );
 
     println!(

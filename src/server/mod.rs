@@ -5,7 +5,7 @@ mod responses;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json};
 use axum::routing::{get, post};
 use serde_json::json;
@@ -21,7 +21,6 @@ use responses::responses_handler;
 pub(crate) struct AppState {
     pub(crate) auth: AuthManager,
     pub(crate) client: Arc<AntigravityClient>,
-    pub(crate) api_key: Option<String>,
 }
 
 pub(crate) fn create_router(state: AppState) -> Router {
@@ -59,19 +58,13 @@ async fn health_handler() -> impl IntoResponse {
     StatusCode::OK
 }
 
-pub(crate) fn check_auth(headers: &HeaderMap, expected_api_key: Option<&str>) -> bool {
-    let expected = match expected_api_key {
-        Some(k) if !k.is_empty() => k,
-        _ => return true,
-    };
-
-    let auth_header = headers.get("Authorization").and_then(|h| h.to_str().ok());
-
-    match auth_header {
-        Some(h) if h.starts_with("Bearer ") => {
-            let token = h["Bearer ".len()..].trim();
-            token == expected
+pub(crate) fn error_body(message: &str, error_type: &str, code: Option<&str>) -> serde_json::Value {
+    serde_json::json!({
+        "error": {
+            "message": message,
+            "type": error_type,
+            "param": null,
+            "code": code
         }
-        _ => false,
-    }
+    })
 }

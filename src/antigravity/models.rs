@@ -118,3 +118,49 @@ impl AntigravityClient {
         }
     }
 }
+
+pub(crate) const MODEL_ALIASES: &[&str] = &[
+    "claude-3-5-sonnet",
+    "claude-sonnet",
+    "claude-opus",
+    "gemini-flash",
+    "gemini-pro",
+    "gpt-oss",
+];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_common_aliases() {
+        assert_eq!(
+            AntigravityClient::map_model_id("claude-3-5-sonnet"),
+            "claude-sonnet-5-5-medium"
+        );
+        assert_eq!(
+            AntigravityClient::map_model_id("claude-sonnet"),
+            "claude-sonnet-5-5-medium"
+        );
+        assert_eq!(
+            AntigravityClient::map_model_id("claude-opus"),
+            "claude-opus-5-5-medium"
+        );
+        assert_eq!(
+            AntigravityClient::map_model_id("gemini-flash"),
+            "gemini-3.8-flash-low"
+        );
+        assert_eq!(
+            AntigravityClient::map_model_id("gemini-pro"),
+            "gemini-4-argon-low"
+        );
+        assert_eq!(
+            AntigravityClient::map_model_id("gpt-oss"),
+            "gpt-oss-120b-medium"
+        );
+        assert_eq!(
+            AntigravityClient::map_model_id("unknown-model"),
+            "unknown-model"
+        );
+    }
+}

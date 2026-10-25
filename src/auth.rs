@@ -182,7 +182,9 @@ impl AuthManager {
             if let Some(parent) = self.storage_path.parent() {
                 let _ = fs::create_dir_all(parent);
             }
-            let _ = fs::write(&self.storage_path, json);
+            if fs::write(&self.storage_path, &json).is_ok() {
+                restrict_file_permissions(&self.storage_path);
+            }
         }
     }
 
@@ -194,8 +196,9 @@ impl AuthManager {
         }
         let json = serde_json::to_string_pretty(creds)
             .map_err(|e| format!("Failed to serialize credentials: {e}"))?;
-        fs::write(&path, json)
+        fs::write(&path, &json)
             .map_err(|e| format!("Failed to write credentials to {}: {e}", path.display()))?;
+        restrict_file_permissions(&path);
         Ok(path)
     }
 }
@@ -210,6 +213,15 @@ fn get_config_base_dir() -> Option<PathBuf> {
         .ok()
         .map(|h| PathBuf::from(h).join(".config"))
 }
+
+#[cfg(unix)]
+fn restrict_file_permissions(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+}
+
+#[cfg(not(unix))]
+fn restrict_file_permissions(_path: &std::path::Path) {}
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]

@@ -1,29 +1,23 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::response::Json;
-use serde_json::{Value, json};
+use serde_json::Value;
 use tracing::warn;
 
 use crate::openai::{ModelEntry, ModelListResponse};
-use crate::server::{AppState, check_auth};
+use crate::server::AppState;
 
 pub(crate) async fn list_models_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
 ) -> Result<Json<ModelListResponse>, (StatusCode, Json<Value>)> {
-    if !check_auth(&headers, state.api_key.as_deref()) {
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            Json(json!({ "error": { "message": "Invalid API key" } })),
-        ));
-    }
-
     let creds = state.auth.get_credentials().await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": { "message": e } })),
+            Json(crate::server::error_body(
+                &e,
+                "server_error",
+                Some("internal_error"),
+            )),
         )
     })?;
 
@@ -99,34 +93,25 @@ pub(crate) async fn list_models_handler(
         ]
     });
 
-    let now_sec = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
-
     let mut data = Vec::new();
 
-    let aliases = [
-        "claude-3-5-sonnet",
-        "claude-sonnet",
-        "claude-opus",
-        "gemini-flash",
-        "gemini-pro",
-        "gpt-oss",
-    ];
-    for alias in aliases {
+    for alias in crate::antigravity::MODEL_ALIASES {
         data.push(ModelEntry {
             id: alias.to_string(),
             object: "model".to_string(),
-            created: now_sec,
+            created: 0,
             owned_by: "google-antigravity".to_string(),
         });
     }
 
     for (id, _) in models {
+        if crate::antigravity::MODEL_ALIASES.contains(&id.as_str()) {
+            continue;
+        }
         data.push(ModelEntry {
             id,
             object: "model".to_string(),
-            created: now_sec,
+            created: 0,
             owned_by: "google-antigravity".to_string(),
         });
     }

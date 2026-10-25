@@ -2,10 +2,10 @@ use std::convert::Infallible;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Json, Response};
-use serde_json::json;
+
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::error;
@@ -16,27 +16,22 @@ use crate::openai::{
     ChatCompletionChunk, ChatCompletionRequest, ChunkChoice, ChunkDelta, ChunkFunctionCall,
     ChunkToolCall, StreamOptions,
 };
-use crate::server::{AppState, check_auth};
+use crate::server::AppState;
 
 pub(crate) async fn chat_completions_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(req): Json<ChatCompletionRequest>,
 ) -> Response {
-    if !check_auth(&headers, state.api_key.as_deref()) {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({ "error": { "message": "Invalid API key" } })),
-        )
-            .into_response();
-    }
-
     let creds = match state.auth.get_credentials().await {
         Ok(c) => c,
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": { "message": e } })),
+                Json(crate::server::error_body(
+                    &e,
+                    "server_error",
+                    Some("internal_error"),
+                )),
             )
                 .into_response();
         }
@@ -49,11 +44,18 @@ pub(crate) async fn chat_completions_handler(
     } else {
         match state.client.complete_non_streaming(&creds, &req).await {
             Ok(resp) => Json(resp).into_response(),
-            Err(e) => (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({ "error": { "message": e } })),
-            )
-                .into_response(),
+            Err(e) => {
+                tracing::error!("Upstream request failed: {e}");
+                (
+                    StatusCode::BAD_GATEWAY,
+                    Json(crate::server::error_body(
+                        "Upstream request failed",
+                        "upstream_error",
+                        Some("bad_gateway"),
+                    )),
+                )
+                    .into_response()
+            }
         }
     }
 }
@@ -78,9 +80,14 @@ async fn handle_streaming(
     {
         Ok(r) => r,
         Err(e) => {
+            tracing::error!("Upstream request failed: {e}");
             return (
                 StatusCode::BAD_GATEWAY,
-                Json(json!({ "error": { "message": e } })),
+                Json(crate::server::error_body(
+                    "Upstream request failed",
+                    "upstream_error",
+                    Some("bad_gateway"),
+                )),
             )
                 .into_response();
         }
@@ -106,9 +113,10 @@ async fn handle_streaming(
         let mut sent_role = false;
         let mut has_tools = false;
         let mut finish_sent = false;
+        let mut had_error = false;
         let mut tool_call_index: u32 = 0;
         let mut usage = crate::openai::Usage::default();
-
+        let mut saw_usage = false;
         while let Some(event) = events.recv().await {
             match event {
                 Ok(AntigravityEvent::Text(text)) => {
@@ -220,44 +228,56 @@ async fn handle_streaming(
                 }
                 Ok(AntigravityEvent::Usage(value)) => {
                     usage = value;
+                    saw_usage = true;
                 }
                 Err(error) => {
                     error!("Error reading upstream bytes: {error}");
+                    had_error = true;
                     break;
                 }
             }
         }
 
-        if !finish_sent {
-            let chunk = ChatCompletionChunk {
-                id: stream_id.clone(),
-                object: "chat.completion.chunk".to_string(),
-                created,
-                model: req_model.clone(),
-                choices: vec![ChunkChoice {
-                    index: 0,
-                    delta: ChunkDelta::default(),
-                    finish_reason: Some(if has_tools {
-                        "tool_calls".to_string()
-                    } else {
-                        "stop".to_string()
-                    }),
-                }],
-                usage: None,
-            };
-            send_chunk(&tx, &chunk).await;
-        }
+        if had_error {
+            if let Ok(json_str) = serde_json::to_string(&crate::server::error_body(
+                "Upstream request failed",
+                "upstream_error",
+                Some("bad_gateway"),
+            )) {
+                let _ = tx.send(Ok(Event::default().data(json_str))).await;
+            }
+        } else {
+            if !finish_sent {
+                let chunk = ChatCompletionChunk {
+                    id: stream_id.clone(),
+                    object: "chat.completion.chunk".to_string(),
+                    created,
+                    model: req_model.clone(),
+                    choices: vec![ChunkChoice {
+                        index: 0,
+                        delta: ChunkDelta::default(),
+                        finish_reason: Some(if has_tools {
+                            "tool_calls".to_string()
+                        } else {
+                            "stop".to_string()
+                        }),
+                    }],
+                    usage: None,
+                };
+                send_chunk(&tx, &chunk).await;
+            }
 
-        if include_usage {
-            let chunk = ChatCompletionChunk {
-                id: stream_id.clone(),
-                object: "chat.completion.chunk".to_string(),
-                created,
-                model: req_model.clone(),
-                choices: vec![],
-                usage: Some(usage),
-            };
-            send_chunk(&tx, &chunk).await;
+            if include_usage && saw_usage {
+                let chunk = ChatCompletionChunk {
+                    id: stream_id.clone(),
+                    object: "chat.completion.chunk".to_string(),
+                    created,
+                    model: req_model.clone(),
+                    choices: vec![],
+                    usage: Some(usage),
+                };
+                send_chunk(&tx, &chunk).await;
+            }
         }
 
         let _ = tx.send(Ok(Event::default().data("[DONE]"))).await;

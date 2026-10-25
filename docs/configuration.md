@@ -5,7 +5,6 @@
 | Variable | Default | Required | Description |
 |---|---|---|---|
 | `ZERO_G_BIND` | `127.0.0.1:8080` | No | Listening `host:port` bind address |
-| `ZERO_G_API_KEY` | None | No | Bearer token required for proxy client requests |
 | `ZERO_G_OAUTH_CLIENT_ID` | None (reads `.env`) | No | Google OAuth desktop client ID for sign-in/refresh |
 | `ZERO_G_OAUTH_CLIENT_SECRET` | None (reads `.env`) | No | Google OAuth desktop client secret |
 

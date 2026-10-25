@@ -36,6 +36,11 @@ pub(crate) struct EventDecoder {
 
 impl EventDecoder {
     pub(crate) fn push_chunk(&mut self, chunk: &[u8]) -> Vec<AntigravityEvent> {
+        const MAX_BUFFER_BYTES: usize = 1024 * 1024;
+        if self.buffer.len().saturating_add(chunk.len()) > MAX_BUFFER_BYTES {
+            self.buffer.clear();
+            return Vec::new();
+        }
         self.buffer.extend_from_slice(chunk);
 
         let mut events = Vec::new();
@@ -298,6 +303,15 @@ mod tests {
         }
 
         assert_eq!(events, vec![AntigravityEvent::Text("héllo".to_string())]);
+    }
+
+    #[test]
+    fn maps_finish_reasons() {
+        assert_eq!(map_finish_reason("STOP", true), "tool_calls");
+        assert_eq!(map_finish_reason("STOP", false), "stop");
+        assert_eq!(map_finish_reason("MAX_TOKENS", false), "length");
+        assert_eq!(map_finish_reason("SAFETY", false), "content_filter");
+        assert_eq!(map_finish_reason("OTHER", false), "other");
     }
 
     #[test]
