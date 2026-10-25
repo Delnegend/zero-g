@@ -1,5 +1,6 @@
+use axum::Json;
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::response::{IntoResponse, Json, Response};
+use axum::response::{IntoResponse, Response};
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -338,4 +339,19 @@ pub(crate) async fn handle_chat(req: ChatCompletionRequest) -> Response {
         let agg = aggregate_sse(&text);
         Json(agg).into_response()
     }
+}
+
+pub(crate) async fn chat_handler(Json(req): Json<ChatCompletionRequest>) -> Response {
+    handle_chat(req).await
+}
+
+pub(crate) async fn models_handler() -> Json<Value> {
+    Json(models_json())
+}
+
+pub(crate) fn models_json() -> Value {
+    json!({
+        "object": "list",
+        "data": ZEN_MODELS.iter().map(|id| json!({"id": id, "object": "model", "created": 0, "owned_by": "opencode-zen"})).collect::<Vec<_>>()
+    })
 }
