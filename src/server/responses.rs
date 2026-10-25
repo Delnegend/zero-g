@@ -107,7 +107,7 @@ async fn handle_responses_streaming(
     chat_req: ChatCompletionRequest,
     original_model: String,
 ) -> Response {
-    let wire_model = AntigravityClient::map_model_id(&chat_req.model);
+    let wire_model = chat_req.model.clone();
     let is_claude = wire_model.contains("claude");
     let payload =
         AntigravityClient::build_request_payload(&chat_req, &creds.project_id, &wire_model);

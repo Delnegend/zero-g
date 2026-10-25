@@ -62,7 +62,7 @@ impl AntigravityClient {
         creds: &Credentials,
         req: &ChatCompletionRequest,
     ) -> Result<ChatCompletionResponse, String> {
-        let wire_model = Self::map_model_id(&req.model);
+        let wire_model = req.model.clone();
         let is_claude = wire_model.contains("claude");
         let payload = Self::build_request_payload(req, &creds.project_id, &wire_model);
 

@@ -51,15 +51,3 @@ Print the active GCP companion project ID, account email, token expiry, and refr
   "email": "user@example.com"
 }
 ```
-
-## Model Aliases
-
-The proxy maps standard client model names to Antigravity wire routes:
-
-| Client Model Name | Upstream Wire Model | Family |
-|---|---|---|
-| `claude-3-5-sonnet`, `claude-sonnet` | `claude-sonnet-5-5-medium` | Anthropic Claude |
-| `claude-opus` | `claude-opus-5-5-medium` | Anthropic Claude |
-| `gemini-flash` | `gemini-3.8-flash-low` | Google Gemini |
-| `gemini-pro`, `gemini-4-argon` | `gemini-4-argon-low` | Google Gemini |
-| `gpt-oss` | `gpt-oss-120b-medium` | OpenAI GPT-OSS |

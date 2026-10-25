@@ -340,30 +340,6 @@ mod tests {
     use crate::openai::{ChatMessage, MessageContent};
 
     #[test]
-    fn test_map_model_aliases() {
-        assert_eq!(
-            AntigravityClient::map_model_id("claude-3-5-sonnet"),
-            "claude-sonnet-5-5-medium"
-        );
-        assert_eq!(
-            AntigravityClient::map_model_id("gemini-flash"),
-            "gemini-3.8-flash-low"
-        );
-        assert_eq!(
-            AntigravityClient::map_model_id("gemini-pro"),
-            "gemini-4-argon-low"
-        );
-        assert_eq!(
-            AntigravityClient::map_model_id("claude-opus"),
-            "claude-opus-5-5-medium"
-        );
-        assert_eq!(
-            AntigravityClient::map_model_id("claude-sonnet-5-5-high"),
-            "claude-sonnet-5-5-high"
-        );
-    }
-
-    #[test]
     fn test_build_request_payload_system_and_user() {
         let req = ChatCompletionRequest {
             model: "claude-sonnet".to_string(),

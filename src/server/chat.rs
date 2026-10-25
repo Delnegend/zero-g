@@ -60,7 +60,7 @@ async fn handle_streaming(
     creds: crate::auth::Credentials,
     req: ChatCompletionRequest,
 ) -> Response {
-    let wire_model = crate::antigravity::AntigravityClient::map_model_id(&req.model);
+    let wire_model = req.model.clone();
     let is_claude = wire_model.contains("claude");
     let payload = crate::antigravity::AntigravityClient::build_request_payload(
         &req,

@@ -186,12 +186,6 @@ async fn run_models() -> Result<(), String> {
             .map_or("-".to_string(), |t| t.to_string());
         println!("{id:<32} {name:<30} {thinking:<10} {tokens:<10}");
     }
-    println!("\nConvenience aliases supported:");
-    println!("  claude-3-5-sonnet / claude-sonnet -> claude-sonnet-5-5-medium");
-    println!("  claude-opus                     -> claude-opus-5-5-medium");
-    println!("  gemini-flash                    -> gemini-3.8-flash-low");
-    println!("  gemini-pro / gemini-4-argon     -> gemini-4-argon-low");
-    println!("  gpt-oss                         -> gpt-oss-120b-medium");
     Ok(())
 }
 

@@ -42,19 +42,7 @@ pub(crate) async fn list_models_handler(
 
     let mut data = Vec::new();
 
-    for alias in crate::antigravity::MODEL_ALIASES {
-        data.push(ModelEntry {
-            id: alias.to_string(),
-            object: "model".to_string(),
-            created: 0,
-            owned_by: "google-antigravity".to_string(),
-        });
-    }
-
     for id in model_ids {
-        if crate::antigravity::MODEL_ALIASES.contains(&id.as_str()) {
-            continue;
-        }
         data.push(ModelEntry {
             id,
             object: "model".to_string(),
