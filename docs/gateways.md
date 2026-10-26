@@ -15,21 +15,20 @@ Configure each model as an `openai/` deployment with `zero-g` as the API base:
 
 ```yaml
 model_list:
-  - model_name: claude-sonnet
+  - model_name: ag-claude
     litellm_params:
-      model: openai/claude-sonnet
-      api_base: http://zero-g:8080/v1
-      api_key: os.environ/ZERO_G_API_KEY
-  - model_name: gemini-flash
+      model: openai/claude-sonnet-5-5-medium
+      api_base: http://zero-g:8080/ag/v1
+  - model_name: zen-beam
     litellm_params:
-      model: openai/gemini-flash
-      api_base: http://zero-g:8080/v1
-      api_key: os.environ/ZERO_G_API_KEY
+      model: openai/beam-free
+      api_base: http://zero-g:8080/zen/v1
 ```
 
-LiteLLM calls `zero-g`'s `/v1/chat/completions` for chat traffic and forwards
-`/v1/responses` requests to `zero-g`'s `/v1/responses` endpoint. No
-Responses-to-chat bridge is required.
+LiteLLM calls `zero-g`'s `/ag/v1/chat/completions` for chat traffic and
+forwards `/v1/responses` requests to `zero-g`'s `/ag/v1/responses` endpoint. No
+Responses-to-chat bridge is required. `zero-g` accepts no bearer auth;
+authentication lives on the LiteLLM side.
 
 ## Bifrost
 
@@ -41,7 +40,7 @@ because Bifrost appends its OpenAI paths:
   "providers": {
     "zero-g": {
       "keys": [
-        { "name": "zero-g", "value": "env.ZERO_G_API_KEY", "models": ["*"] }
+        { "name": "zero-g", "value": "local-only", "models": ["*"] }
       ],
       "network_config": { "base_url": "http://zero-g:8080" },
       "custom_provider_config": {
@@ -66,9 +65,11 @@ additional configuration.
 
 ## Notes
 
-- Set `ZERO_G_API_KEY` in `zero-g` and reuse that value as the gateway's
-  provider key.
-- Model names may be zero-g aliases (`claude-sonnet`, `gemini-flash`, ...) or
-  upstream wire IDs. `/v1/models` returns both.
-- If `zero-g` is only reachable from the gateway, bind it to a private
+- `zero-g` is keyless and listens on localhost; the provider key above is a
+  placeholder (`zero-g` ignores bearer auth). Enforce authentication at the
+  gateway (virtual keys, tinyauth, etc.).
+- Model names are upstream wire IDs — `/v1/models`, `/ag/v1/models`, and
+  `/zen/v1/models` list exactly what each backend serves. There is no alias
+  layer; do friendly naming in the gateway.
+- Keep `zero-g` reachable only from the gateway: bind it to a private
   interface and let the gateway enforce authentication.

@@ -22,7 +22,7 @@
 
 ### `zero-g serve`
 
-Run the OpenAI-compatible HTTP proxy. All runtime options (bind address, API key authentication) are configured via environment variables (`ZERO_G_BIND`, `ZERO_G_API_KEY`).
+Run the OpenAI-compatible HTTP proxy. All runtime options (bind address, Zen shim URL/key) are configured via environment variables (`ZERO_G_BIND`, `ZERO_G_ZEN_URL`, `ZERO_G_ZEN_API_KEY`).
 ### `zero-g login`
 
 Start a temporary OAuth callback listener on `127.0.0.1:51121`, open the browser consent flow, exchange tokens, and discover the Cloud Code Assist project.
