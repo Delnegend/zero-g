@@ -112,11 +112,8 @@ pub(crate) fn build_codex_payload_from_chat(req: &ChatCompletionRequest) -> Valu
         payload["tool_choice"] = choice.clone();
     }
 
-    // Default reasoning summary to auto
-    payload["reasoning"] = json!({
-        "summary": "auto"
-    });
-
+    payload["reasoning"] =
+        extract_reasoning_payload(req.reasoning_effort.as_deref(), req.reasoning.as_ref());
     payload
 }
 
@@ -233,11 +230,34 @@ pub(crate) fn build_codex_payload_from_responses(req: &ResponseCreateRequest) ->
         payload["tool_choice"] = choice.clone();
     }
 
-    payload["reasoning"] = json!({
-        "summary": "auto"
+    payload["reasoning"] =
+        extract_reasoning_payload(req.reasoning_effort.as_deref(), req.reasoning.as_ref());
+    payload
+}
+fn extract_reasoning_payload(
+    reasoning_effort: Option<&str>,
+    reasoning_val: Option<&Value>,
+) -> Value {
+    let mut reasoning = json!({ "summary": "auto" });
+
+    let effort = reasoning_effort.or_else(|| {
+        reasoning_val
+            .and_then(|v| v.get("effort"))
+            .and_then(Value::as_str)
     });
 
-    payload
+    if let Some(eff) = effort {
+        reasoning["effort"] = json!(eff);
+    }
+
+    if let Some(summary) = reasoning_val
+        .and_then(|v| v.get("summary"))
+        .and_then(Value::as_str)
+    {
+        reasoning["summary"] = json!(summary);
+    }
+
+    reasoning
 }
 
 fn convert_content_to_input_parts(content: Option<&MessageContent>) -> Vec<Value> {
@@ -311,6 +331,8 @@ mod tests {
             stream_options: None,
             tools: None,
             tool_choice: None,
+            reasoning_effort: None,
+            reasoning: None,
         };
 
         let payload = build_codex_payload_from_chat(&req);
@@ -340,6 +362,8 @@ mod tests {
             temperature: Some(0.2),
             top_p: None,
             max_output_tokens: Some(500),
+            reasoning_effort: None,
+            reasoning: None,
         };
 
         let payload = build_codex_payload_from_responses(&req);

@@ -23,6 +23,10 @@ pub(crate) struct ResponseCreateRequest {
     pub(crate) top_p: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) max_output_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) reasoning_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) reasoning: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,6 +101,8 @@ impl ResponseCreateRequest {
             stream_options: None,
             tools: self.tools,
             tool_choice: self.tool_choice,
+            reasoning_effort: self.reasoning_effort,
+            reasoning: self.reasoning,
         }
     }
 }
@@ -266,6 +272,8 @@ mod tests {
             temperature: Some(0.5),
             top_p: None,
             max_output_tokens: Some(1024),
+            reasoning_effort: None,
+            reasoning: None,
         };
 
         let chat_req = req.into_chat_request();

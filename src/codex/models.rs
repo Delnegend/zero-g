@@ -16,6 +16,15 @@ struct CodexModelEntry {
     slug: Option<String>,
     id: Option<String>,
     visibility: Option<String>,
+    display_name: Option<String>,
+    default_reasoning_level: Option<String>,
+    supported_reasoning_levels: Option<Vec<CodexReasoningLevel>>,
+    context_window: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct CodexReasoningLevel {
+    effort: Option<String>,
 }
 
 pub(crate) async fn fetch_codex_models(
@@ -68,15 +77,38 @@ pub(crate) async fn fetch_codex_models(
         {
             continue;
         }
+        let supported_efforts: Option<Vec<String>> = entry
+            .supported_reasoning_levels
+            .map(|levels| {
+                levels
+                    .into_iter()
+                    .filter_map(|l| l.effort)
+                    .filter(|e| !e.trim().is_empty())
+                    .collect()
+            })
+            .filter(|v: &Vec<String>| !v.is_empty());
+
+        let has_reasoning = supported_efforts.is_some()
+            || entry
+                .default_reasoning_level
+                .as_deref()
+                .is_some_and(|l| l != "none");
+
+        let default_effort = entry.default_reasoning_level.filter(|l| l != "none");
 
         models.push(ModelEntry {
             id: model_id,
             object: "model".to_string(),
             created: 1_700_000_000,
             owned_by: "openai-codex".to_string(),
+            display_name: entry.display_name,
+            reasoning: if has_reasoning { Some(true) } else { None },
+            default_reasoning_effort: default_effort,
+            supported_reasoning_efforts: supported_efforts,
+            context_window: entry.context_window,
+            max_output_tokens: None,
         });
     }
-
     Ok(ModelListResponse {
         object: "list".to_string(),
         data: models,

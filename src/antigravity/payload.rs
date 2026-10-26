@@ -367,6 +367,8 @@ mod tests {
             stream_options: None,
             tools: None,
             tool_choice: None,
+            reasoning_effort: None,
+            reasoning: None,
         };
 
         let payload = AntigravityClient::build_request_payload(

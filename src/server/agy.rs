@@ -52,23 +52,67 @@ pub(crate) async fn models_handler(
 
     let data = live_models
         .into_iter()
-        .map(|(id, _)| ModelEntry {
-            id,
-            object: "model".to_string(),
-            created: 0,
-            owned_by: "google-antigravity".to_string(),
+        .map(|(id, info)| {
+            let reasoning = info.supports_thinking.unwrap_or(false);
+            let effort_tier = if id.ends_with("-low") {
+                Some("low".to_string())
+            } else if id.ends_with("-medium") {
+                Some("medium".to_string())
+            } else if id.ends_with("-high") {
+                Some("high".to_string())
+            } else {
+                None
+            };
+
+            let supported_efforts = if let Some(e) = &effort_tier {
+                Some(vec![e.clone()])
+            } else if reasoning {
+                Some(vec![
+                    "low".to_string(),
+                    "medium".to_string(),
+                    "high".to_string(),
+                ])
+            } else {
+                None
+            };
+
+            ModelEntry {
+                id,
+                object: "model".to_string(),
+                created: 0,
+                owned_by: "google-antigravity".to_string(),
+                display_name: info.display_name,
+                reasoning: if reasoning { Some(true) } else { None },
+                default_reasoning_effort: effort_tier,
+                supported_reasoning_efforts: supported_efforts,
+                context_window: None,
+                max_output_tokens: info.max_output_tokens,
+            }
         })
         .collect();
-
     Ok(Json(ModelListResponse {
         object: "list".to_string(),
         data,
     }))
 }
+pub(crate) fn map_agy_model_effort(model: &str, effort: Option<&str>) -> String {
+    let Some(effort) = effort else {
+        return model.to_string();
+    };
+    if model.ends_with("-low") || model.ends_with("-medium") || model.ends_with("-high") {
+        return model.to_string();
+    }
+    match effort.to_lowercase().as_str() {
+        "low" | "minimal" => format!("{model}-low"),
+        "medium" => format!("{model}-medium"),
+        "high" | "xhigh" | "max" | "ultra" => format!("{model}-high"),
+        _ => model.to_string(),
+    }
+}
 
 pub(crate) async fn chat_handler(
     State(state): State<AppState>,
-    Json(req): Json<ChatCompletionRequest>,
+    Json(mut req): Json<ChatCompletionRequest>,
 ) -> Response {
     let Some(auth) = &state.auth else {
         return (
@@ -96,6 +140,14 @@ pub(crate) async fn chat_handler(
                 .into_response();
         }
     };
+
+    let effort = req.reasoning_effort.as_deref().or_else(|| {
+        req.reasoning
+            .as_ref()
+            .and_then(|r| r.get("effort"))
+            .and_then(Value::as_str)
+    });
+    req.model = map_agy_model_effort(&req.model, effort);
 
     let is_streaming = req.stream.unwrap_or(false);
 
@@ -167,7 +219,7 @@ async fn handle_chat_streaming(
 
 pub(crate) async fn responses_handler(
     State(state): State<AppState>,
-    Json(req): Json<ResponseCreateRequest>,
+    Json(mut req): Json<ResponseCreateRequest>,
 ) -> Response {
     let Some(auth) = &state.auth else {
         return (
@@ -195,6 +247,14 @@ pub(crate) async fn responses_handler(
                 .into_response();
         }
     };
+
+    let effort = req.reasoning_effort.as_deref().or_else(|| {
+        req.reasoning
+            .as_ref()
+            .and_then(|r| r.get("effort"))
+            .and_then(Value::as_str)
+    });
+    req.model = map_agy_model_effort(&req.model, effort);
 
     let is_streaming = req.stream.unwrap_or(false);
     let original_model = req.model.clone();
@@ -307,4 +367,29 @@ async fn handle_responses_streaming(
     };
 
     crate::server::sse::spawn_sse(serializer, upstream_resp)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_map_agy_model_effort() {
+        assert_eq!(
+            map_agy_model_effort("gemini-3.8-flash", Some("high")),
+            "gemini-3.8-flash-high"
+        );
+        assert_eq!(
+            map_agy_model_effort("gemini-3.8-flash", Some("low")),
+            "gemini-3.8-flash-low"
+        );
+        assert_eq!(
+            map_agy_model_effort("claude-sonnet-5-5-high", Some("low")),
+            "claude-sonnet-5-5-high"
+        );
+        assert_eq!(
+            map_agy_model_effort("gemini-2.5-flash", None),
+            "gemini-2.5-flash"
+        );
+    }
 }

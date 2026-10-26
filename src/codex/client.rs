@@ -130,6 +130,7 @@ impl CodexClient {
 
         let model = req.model.clone();
         let mut text_acc = String::new();
+        let mut reasoning_acc = String::new();
         let mut tool_calls_map: Vec<(String, String, String)> = Vec::new(); // (id, name, args)
         let mut finish_reason = "stop".to_string();
         let mut usage_acc = Usage::default();
@@ -143,6 +144,7 @@ impl CodexClient {
             for ev in events {
                 match ev {
                     CodexParsedEvent::TextDelta(t) => text_acc.push_str(&t),
+                    CodexParsedEvent::ReasoningDelta(r) => reasoning_acc.push_str(&r),
                     CodexParsedEvent::ToolCallStart { call_id, name } => {
                         tool_calls_map.push((call_id, name, String::new()));
                     }
@@ -184,7 +186,11 @@ impl CodexClient {
             } else {
                 Some(text_acc)
             },
-            reasoning_content: None,
+            reasoning_content: if reasoning_acc.is_empty() {
+                None
+            } else {
+                Some(reasoning_acc)
+            },
             tool_calls,
         };
 
@@ -275,7 +281,7 @@ impl CodexClient {
                         }
                     }
                     CodexParsedEvent::Usage(u) => usage_opt = Some(ResponseUsage::from(u)),
-                    CodexParsedEvent::Finish { .. } => {}
+                    CodexParsedEvent::ReasoningDelta(_) | CodexParsedEvent::Finish { .. } => {}
                 }
             }
         }
@@ -379,6 +385,28 @@ async fn pump_chat_chunks(
                                     index: 0,
                                     delta: ChunkDelta {
                                         content: Some(delta),
+                                        ..Default::default()
+                                    },
+                                    finish_reason: None,
+                                }],
+                                usage: None,
+                            };
+                            if let Ok(data) = serde_json::to_string(&chunk)
+                                && tx.send(Ok(Event::default().data(data))).await.is_err()
+                            {
+                                return;
+                            }
+                        }
+                        CodexParsedEvent::ReasoningDelta(delta) => {
+                            let chunk = ChatCompletionChunk {
+                                id: chunk_id.clone(),
+                                object: "chat.completion.chunk".to_string(),
+                                created: now,
+                                model: model.clone(),
+                                choices: vec![ChunkChoice {
+                                    index: 0,
+                                    delta: ChunkDelta {
+                                        reasoning_content: Some(delta),
                                         ..Default::default()
                                     },
                                     finish_reason: None,
@@ -508,6 +536,7 @@ async fn pump_chat_chunks(
 #[derive(Debug)]
 enum CodexParsedEvent {
     TextDelta(String),
+    ReasoningDelta(String),
     ToolCallStart { call_id: String, name: String },
     ToolCallDelta { call_id: String, delta: String },
     Finish { reason: String },
@@ -563,6 +592,15 @@ impl SseLineDecoder {
             Some("response.text.delta" | "response.output_text.delta") => {
                 if let Some(delta) = val.get("delta").and_then(Value::as_str) {
                     out.push(CodexParsedEvent::TextDelta(delta.to_string()));
+                }
+            }
+            Some(
+                "response.reasoning_text.delta"
+                | "response.reasoning_summary_text.delta"
+                | "response.thought.delta",
+            ) => {
+                if let Some(delta) = val.get("delta").and_then(Value::as_str) {
+                    out.push(CodexParsedEvent::ReasoningDelta(delta.to_string()));
                 }
             }
             Some("response.output_item.added") => {
