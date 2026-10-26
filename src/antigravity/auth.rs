@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 use tokio::sync::RwLock;
 use tracing::info;
 
@@ -38,15 +39,13 @@ pub(crate) const CLOUD_CODE_ASSIST_ENDPOINT: &str = "https://daily-cloudcode-pa.
 pub(crate) const ANTIGRAVITY_USER_AGENT: &str =
     "antigravity/hub/2.19.1 (aidev_client; os_type=linux; arch=x64; cl=963137146)";
 
+#[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Credentials {
     pub access_token: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub refresh_token: Option<String>,
     pub project_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<i64>, // Milliseconds since UNIX epoch
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
 }
 

@@ -1,31 +1,25 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use serde_with::skip_serializing_none;
 
 use crate::openai::{
     ChatCompletionRequest, ChatMessage, FunctionCall, MessageContent, Tool, ToolCall,
 };
 
+#[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ResponseCreateRequest {
     pub(crate) model: String,
     pub(crate) input: ResponseInput,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) instructions: Option<String>,
     #[serde(default)]
     pub(crate) stream: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) tools: Option<Vec<Tool>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) tool_choice: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) temperature: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) top_p: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) max_output_tokens: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) reasoning_effort: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) reasoning: Option<Value>,
 }
 
@@ -197,6 +191,7 @@ impl From<ResponseTaggedItem> for ChatMessage {
     }
 }
 
+#[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ResponseObject {
     pub(crate) id: String,
@@ -206,7 +201,6 @@ pub(crate) struct ResponseObject {
     pub(crate) status: String,
     pub(crate) output: Vec<ResponseOutputItem>,
     pub(crate) output_text: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) usage: Option<ResponseUsage>,
 }
 

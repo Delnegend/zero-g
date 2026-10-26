@@ -7,6 +7,7 @@ use crate::util::{config_base_dir, restrict_file_permissions};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 use tokio::sync::RwLock;
 use tracing::info;
 
@@ -30,20 +31,15 @@ pub(crate) const CODEX_SCOPES: &str =
 const JWT_CLAIM_AUTH: &str = "https://api.openai.com/auth";
 const JWT_CLAIM_PROFILE: &str = "https://api.openai.com/profile";
 
+#[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct CodexCredentials {
     pub access_token: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub refresh_token: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub account_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub plan_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub residency: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<i64>, // Milliseconds since UNIX epoch
 }
 
