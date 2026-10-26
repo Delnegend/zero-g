@@ -8,10 +8,7 @@ use serde_json::Value;
 use crate::antigravity::AntigravityClient;
 use crate::antigravity::chat::ChatStreamSerializer;
 use crate::antigravity::responses::ResponsesStreamSerializer;
-use crate::openai::{
-    ChatCompletionRequest, ModelEntry, ModelListResponse,
-    StreamOptions,
-};
+use crate::openai::{ChatCompletionRequest, ModelEntry, ModelListResponse, StreamOptions};
 use crate::responses::{
     ResponseContentPart, ResponseCreateRequest, ResponseObject, ResponseOutputItem, ResponseUsage,
 };
@@ -130,8 +127,7 @@ async fn handle_chat_streaming(
 ) -> Response {
     let wire_model = req.model.clone();
     let is_claude = wire_model.contains("claude");
-    let payload =
-        AntigravityClient::build_request_payload(&req, &creds.project_id, &wire_model);
+    let payload = AntigravityClient::build_request_payload(&req, &creds.project_id, &wire_model);
 
     let upstream_resp = match state
         .client

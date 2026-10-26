@@ -162,15 +162,27 @@ fn log_endpoints(addr: SocketAddr, tokens: &crate::server::ProviderTokens) {
     info!("zero-g multi-provider proxy running at http://{addr}");
     info!(
         "  Google Antigravity: http://{addr}/agy/v1 (auth: {})",
-        if tokens.agy.is_some() { "protected" } else { "open" }
+        if tokens.agy.is_some() {
+            "protected"
+        } else {
+            "open"
+        }
     );
     info!(
         "  OpenAI Codex:       http://{addr}/codex/v1 (auth: {})",
-        if tokens.codex.is_some() { "protected" } else { "open" }
+        if tokens.codex.is_some() {
+            "protected"
+        } else {
+            "open"
+        }
     );
     info!(
         "  OpenCode Zen:       http://{addr}/zen/v1 (auth: {})",
-        if tokens.zen.is_some() { "protected" } else { "open" }
+        if tokens.zen.is_some() {
+            "protected"
+        } else {
+            "open"
+        }
     );
 }
 async fn shutdown_signal() {

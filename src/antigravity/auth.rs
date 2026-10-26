@@ -80,8 +80,8 @@ impl AuthManager {
     }
 
     fn get_config_path() -> PathBuf {
-        if let Ok(custom) = std::env::var("ZERO_G_CREDENTIALS_AGY")
-            .or_else(|_| std::env::var("ZERO_G_CREDENTIALS"))
+        if let Ok(custom) =
+            std::env::var("ZERO_G_CREDENTIALS_AGY").or_else(|_| std::env::var("ZERO_G_CREDENTIALS"))
             && !custom.trim().is_empty()
         {
             return PathBuf::from(custom);

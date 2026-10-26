@@ -157,9 +157,11 @@ pub(crate) async fn run_login() -> Result<Credentials, String> {
         .await;
 
     let email = match user_info_resp {
-        Ok(resp) if resp.status().is_success() => {
-            resp.json::<UserInfoResponse>().await.ok().and_then(|u| u.email)
-        }
+        Ok(resp) if resp.status().is_success() => resp
+            .json::<UserInfoResponse>()
+            .await
+            .ok()
+            .and_then(|u| u.email),
         _ => None,
     };
 

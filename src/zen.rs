@@ -334,7 +334,6 @@ pub(crate) async fn handle_chat(req: ChatCompletionRequest) -> Response {
     }
 }
 
-
 pub(crate) fn models_json() -> Value {
     json!({
         "object": "list",
