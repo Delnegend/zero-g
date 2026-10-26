@@ -117,6 +117,16 @@ pub(crate) fn create_router(state: AppState) -> Router {
         .nest("/codex", codex_routes)
         .nest("/zen", zen_routes)
         .layer(cors)
+        .layer(axum::middleware::from_fn(
+            |req: axum::extract::Request, next: axum::middleware::Next| async move {
+                let method = req.method().clone();
+                let uri = req.uri().clone();
+                tracing::info!("--> {method} {uri}");
+                let resp = next.run(req).await;
+                tracing::info!("<-- {method} {uri} {}", resp.status());
+                resp
+            },
+        ))
         .with_state(state)
 }
 
