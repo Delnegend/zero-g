@@ -79,11 +79,22 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
 
+      - name: Set up Bun (pinned, gate fingerprint depends on the exact build)
+        uses: oven-sh/setup-bun@4cdda7fb468f028fcc380f5469c4fffb94d91bb298 # v2
+        with:
+          bun-version: "1.4.4"
+
       - name: Build Linux x64 binary
         shell: bash
         run: |
           set -euo pipefail
           cargo build --release --bin zero-g
+
+      - name: Compile Zen TLS shim
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun build --compile ./assets/zen_shim.ts --outfile ./zen-shim
 
       - name: Package artifact
         uses: Delnegend/actions/package-artifact@61325e8e0af53ec1f8731b2bde68cfc622148611 # v1
@@ -92,6 +103,7 @@ jobs:
           version: ${{ needs.prepare.outputs.version }}
           target: x86_64-unknown-linux-gnu
           source: target/release/zero-g
+          extra: zen-shim
 
   build-container:
     name: Build Container Image

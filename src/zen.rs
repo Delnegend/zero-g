@@ -31,7 +31,7 @@ pub(crate) fn zen_models() -> &'static [&'static str] {
 }
 
 fn zen_base_url() -> String {
-    std::env::var("ZERO_G_ZEN_URL").unwrap_or_else(|_| "http://127.0.0.1:8090/v1".to_string())
+    crate::shim::zen_base_url()
 }
 
 fn session_id() -> String {

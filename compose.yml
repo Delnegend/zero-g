@@ -11,5 +11,23 @@ services:
         required: false
     environment:
       - ZERO_G_BIND=0.0.0.0:8080
+      - ZERO_G_ZEN_URL=http://zen-shim:8090/v1
     volumes:
       - ./credentials.json:/app/credentials.json:ro,Z
+    depends_on:
+      - zen-shim
+
+  # Bun TLS proxy for OpenCode Zen free tier. The compiled `zen-shim`
+  # binary segfaults in minimal container runtimes, so the container
+  # setup runs the script on the official Bun image (pinned: the gate
+  # fingerprint depends on the exact Bun/BoringSSL build).
+  zen-shim:
+    image: oven/bun:1.4.4
+    container_name: zen-shim
+    restart: unless-stopped
+    working_dir: /shim
+    volumes:
+      - ./assets/zen_shim.ts:/shim/zen_shim.ts:ro,Z
+    environment:
+      - PORT=8090
+    command: ["bun", "/shim/zen_shim.ts"]

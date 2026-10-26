@@ -4,6 +4,7 @@ mod login;
 mod openai;
 mod responses;
 mod server;
+mod shim;
 mod zen;
 
 use std::net::SocketAddr;
@@ -118,14 +119,45 @@ fn log_endpoints(addr: SocketAddr) {
     info!("Responses: http://{addr}/v1/responses");
 }
 
-async fn bind_and_serve(addr: SocketAddr, app: axum::Router) -> Result<(), String> {
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::SignalKind;
+        match tokio::signal::unix::signal(SignalKind::terminate()) {
+            Ok(mut term) => {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {},
+                    _ = term.recv() => {},
+                }
+            }
+            Err(_) => {
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
+async fn bind_and_serve(
+    addr: SocketAddr,
+    app: axum::Router,
+    mut shim: Option<tokio::process::Child>,
+) -> Result<(), String> {
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|e| format!("Failed to bind to {addr}: {e}"))?;
 
     axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
         .await
         .map_err(|e| format!("Server terminated with error: {e}"))?;
+
+    if let Some(child) = shim.as_mut() {
+        let _ = child.kill().await;
+    }
 
     Ok(())
 }
@@ -135,7 +167,8 @@ async fn run_server(host: String, port: u16) -> Result<(), String> {
     let app = create_router(state);
     let addr = parse_socket_addr(&host, port)?;
     log_endpoints(addr);
-    bind_and_serve(addr, app).await
+    let shim = crate::shim::ensure_zen_shim().await;
+    bind_and_serve(addr, app, shim).await
 }
 
 fn print_login_success(creds: &crate::auth::Credentials, path: &std::path::Path) {

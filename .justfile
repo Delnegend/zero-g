@@ -19,6 +19,11 @@ test:
 build:
     cargo build --release
 
+# Compile the Zen TLS shim to a standalone binary (pinned Bun: the gate
+# fingerprint depends on the exact Bun/BoringSSL build)
+shim:
+    bun build --compile ./assets/zen_shim.ts --outfile ./zen-shim
+
 
 # Language-agnostic version contract for Delnegend/actions/resolve-release.
 # `just version get` prints X.Y.Z; `just version set X.Y.Z` rewrites manifests.

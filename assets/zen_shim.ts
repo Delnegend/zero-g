@@ -9,6 +9,9 @@ Bun.serve({
   idleTimeout: 120,
   async fetch(req) {
     const url = new URL(req.url);
+    if (url.pathname === "/health" || url.pathname === "/v1/health") {
+      return new Response("ok");
+    }
     const target = `${UPSTREAM}${url.pathname.replace(/^\/v1/, "")}${url.search}`;
     const headers = new Headers(req.headers);
     headers.delete("host");
