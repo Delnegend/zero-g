@@ -25,6 +25,7 @@ zero-g serve
 
 # 3. Verify
 curl http://localhost:8080/agy/v1/models
+```
 
 Source builds from checkout: `cargo install --path .` (last resort only).
 
@@ -35,6 +36,7 @@ Source builds from checkout: `cargo install --path .` (last resort only).
 - **Auto-Refresh** — Refreshes expired OAuth tokens in the background automatically.
 - **Claude & Gemini Support** — Formats Anthropic thinking beta headers, system instructions, and tool calling signatures automatically.
 - **Multi-Turn Tool Calling** — End-to-end function declaration, execution, and tool response turn merging.
+
 ## Common Commands
 
 ```bash
@@ -56,7 +58,9 @@ For all environment variables, see **[Configuration Reference](docs/configuratio
 ```mermaid
 flowchart LR
     Client[OpenAI Client] -->|/agy/v1, /codex/v1, /zen/v1| ZeroG[zero-g Proxy]
-    ZeroG -->|OAuth + SSE| CloudCode[Google Cloud Code Assist]
+    ZeroG -->|OAuth| CCA[Google Antigravity]
+    ZeroG -->|OAuth| Codex[OpenAI Codex]
+    ZeroG -->|TLS Proxy| Zen[OpenCode Zen]
 ```
 
 For component boundaries, internal translation, and state invariants, see **[Architecture Guide](docs/architecture.md)**.
