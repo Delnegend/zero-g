@@ -3,7 +3,8 @@ use serde_json::Value;
 use serde_with::skip_serializing_none;
 
 use crate::openai::{
-    ChatCompletionRequest, ChatMessage, FunctionCall, MessageContent, Tool, ToolCall,
+    ChatCompletionRequest, ChatMessage, FunctionCall, FunctionDefinition, MessageContent, Tool,
+    ToolCall,
 };
 
 #[skip_serializing_none]
@@ -14,6 +15,7 @@ pub(crate) struct ResponseCreateRequest {
     pub(crate) instructions: Option<String>,
     #[serde(default)]
     pub(crate) stream: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_tools")]
     pub(crate) tools: Option<Vec<Tool>>,
     pub(crate) tool_choice: Option<Value>,
     pub(crate) temperature: Option<f32>,
@@ -70,6 +72,51 @@ pub(crate) enum ResponseTaggedItem {
 
 fn default_user_role() -> String {
     "user".to_string()
+}
+
+/// Function tools arrive in two shapes. The Responses API puts `name`,
+/// `description`, and `parameters` at the top level; Chat Completions nests
+/// them under `function`. Both normalize to the chat shape used internally,
+/// and `codex::payload` re-emits the flat wire form upstream.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum ToolDefinition {
+    Responses {
+        name: String,
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default)]
+        parameters: Option<Value>,
+    },
+    Chat(Tool),
+}
+
+impl From<ToolDefinition> for Tool {
+    fn from(tool: ToolDefinition) -> Self {
+        match tool {
+            ToolDefinition::Responses {
+                name,
+                description,
+                parameters,
+            } => Self {
+                r#type: "function".to_string(),
+                function: FunctionDefinition {
+                    name,
+                    description,
+                    parameters,
+                },
+            },
+            ToolDefinition::Chat(tool) => tool,
+        }
+    }
+}
+
+fn deserialize_tools<'de, D>(deserializer: D) -> Result<Option<Vec<Tool>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let tools = Option::<Vec<ToolDefinition>>::deserialize(deserializer)?;
+    Ok(tools.map(|tools| tools.into_iter().map(Tool::from).collect()))
 }
 
 impl ResponseCreateRequest {
@@ -353,5 +400,55 @@ mod tests {
             chat_req.messages[2].content.as_ref().unwrap().as_text(),
             "{\"temp\": 20}"
         );
+    }
+
+    #[test]
+    fn test_responses_tools_accept_flat_responses_shape() {
+        let json_val = json!({
+            "model": "gpt-5.6-sol",
+            "input": "say OK",
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "ping",
+                    "description": "Ping the host",
+                    "parameters": {"type": "object", "properties": {}},
+                    "strict": false
+                }
+            ]
+        });
+
+        let req: ResponseCreateRequest = serde_json::from_value(json_val).unwrap();
+        let tools = req.into_chat_request().tools.unwrap();
+
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].r#type, "function");
+        assert_eq!(tools[0].function.name, "ping");
+        assert_eq!(
+            tools[0].function.description.as_deref(),
+            Some("Ping the host")
+        );
+        assert!(tools[0].function.parameters.is_some());
+    }
+
+    #[test]
+    fn test_responses_tools_accept_nested_chat_shape() {
+        let json_val = json!({
+            "model": "gpt-5.6-sol",
+            "input": "say OK",
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {"name": "ping", "parameters": {"type": "object"}}
+                }
+            ]
+        });
+
+        let req: ResponseCreateRequest = serde_json::from_value(json_val).unwrap();
+        let tools = req.into_chat_request().tools.unwrap();
+
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].function.name, "ping");
+        assert!(tools[0].function.description.is_none());
     }
 }

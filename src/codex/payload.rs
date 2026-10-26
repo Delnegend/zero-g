@@ -474,4 +474,29 @@ mod tests {
         assert!(payload.get("temperature").is_none());
         assert!(payload.get("max_output_tokens").is_none());
     }
+
+    #[test]
+    fn test_build_codex_payload_from_responses_flat_tools() {
+        let json_val = json!({
+            "model": "gpt-5.6-sol",
+            "input": "Ping",
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "ping",
+                    "description": "Ping the host",
+                    "parameters": {"type": "object", "properties": {}}
+                }
+            ]
+        });
+        let req: ResponseCreateRequest = serde_json::from_value(json_val).unwrap();
+
+        let payload = build_codex_payload_from_responses(&req);
+        let tools = payload["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["type"], "function");
+        assert_eq!(tools[0]["name"], "ping");
+        assert_eq!(tools[0]["description"], "Ping the host");
+        assert!(tools[0].get("function").is_none());
+    }
 }
