@@ -9,6 +9,10 @@ pub(crate) async fn auth_middleware(
     req: axum::extract::Request,
     next: Next,
 ) -> Response {
+    if req.method() == axum::http::Method::OPTIONS {
+        return next.run(req).await;
+    }
+
     if let Some(expected) = expected_token.as_deref()
         && !verify_bearer(req.headers(), expected)
     {

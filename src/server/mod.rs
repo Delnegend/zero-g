@@ -57,7 +57,8 @@ pub(crate) fn create_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
-        .allow_headers(Any);
+        .allow_headers(Any)
+        .allow_private_network(true);
 
     let agy_routes = Router::new()
         .route("/v1/models", get(agy::models_handler))
