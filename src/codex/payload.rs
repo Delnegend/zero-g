@@ -11,14 +11,8 @@ pub(crate) fn build_codex_payload_from_chat(req: &ChatCompletionRequest) -> Valu
 
     for msg in &req.messages {
         match msg.role.as_str() {
-            "system" => {
-                if let Some(c) = &msg.content {
-                    let content = c.as_text();
-                    if !instructions.is_empty() {
-                        instructions.push_str("\n\n");
-                    }
-                    instructions.push_str(&content);
-                }
+            "system" | "developer" => {
+                append_instructions(&mut instructions, msg.content.as_ref());
             }
             "user" => {
                 let parts = convert_content_to_input_parts(msg.content.as_ref());
@@ -119,6 +113,7 @@ pub(crate) fn build_codex_payload_from_chat(req: &ChatCompletionRequest) -> Valu
 
 pub(crate) fn build_codex_payload_from_responses(req: &ResponseCreateRequest) -> Value {
     let mut input_items = Vec::new();
+    let mut instructions = req.instructions.clone().unwrap_or_default();
 
     match &req.input {
         ResponseInput::Text(prompt) => {
@@ -143,12 +138,16 @@ pub(crate) fn build_codex_payload_from_responses(req: &ResponseCreateRequest) ->
                             name: _,
                             tool_calls: _,
                         } => {
-                            let parts = convert_content_to_input_parts(content.as_ref());
-                            input_items.push(json!({
-                                "type": "message",
-                                "role": role,
-                                "content": parts,
-                            }));
+                            if is_system_role(role) {
+                                append_instructions(&mut instructions, content.as_ref());
+                            } else {
+                                let parts = convert_content_to_input_parts(content.as_ref());
+                                input_items.push(json!({
+                                    "type": "message",
+                                    "role": role,
+                                    "content": parts,
+                                }));
+                            }
                         }
                         ResponseTaggedItem::FunctionCall {
                             call_id,
@@ -184,12 +183,16 @@ pub(crate) fn build_codex_payload_from_responses(req: &ResponseCreateRequest) ->
                         }
                     },
                     ResponseInputItem::Message(msg) => {
-                        let parts = convert_content_to_input_parts(msg.content.as_ref());
-                        input_items.push(json!({
-                            "type": "message",
-                            "role": msg.role,
-                            "content": parts,
-                        }));
+                        if is_system_role(&msg.role) {
+                            append_instructions(&mut instructions, msg.content.as_ref());
+                        } else {
+                            let parts = convert_content_to_input_parts(msg.content.as_ref());
+                            input_items.push(json!({
+                                "type": "message",
+                                "role": msg.role,
+                                "content": parts,
+                            }));
+                        }
                     }
                 }
             }
@@ -203,9 +206,7 @@ pub(crate) fn build_codex_payload_from_responses(req: &ResponseCreateRequest) ->
         "input": input_items,
     });
 
-    if let Some(instructions) = &req.instructions
-        && !instructions.trim().is_empty()
-    {
+    if !instructions.trim().is_empty() {
         payload["instructions"] = json!(instructions);
     }
 
@@ -234,6 +235,22 @@ pub(crate) fn build_codex_payload_from_responses(req: &ResponseCreateRequest) ->
         extract_reasoning_payload(req.reasoning_effort.as_deref(), req.reasoning.as_ref());
     payload
 }
+fn is_system_role(role: &str) -> bool {
+    matches!(role, "system" | "developer")
+}
+
+fn append_instructions(instructions: &mut String, content: Option<&MessageContent>) {
+    let Some(content) = content else { return };
+    let text = content.as_text();
+    if text.trim().is_empty() {
+        return;
+    }
+    if !instructions.is_empty() {
+        instructions.push_str("\n\n");
+    }
+    instructions.push_str(&text);
+}
+
 fn extract_reasoning_payload(
     reasoning_effort: Option<&str>,
     reasoning_val: Option<&Value>,
@@ -276,7 +293,9 @@ fn convert_content_to_input_parts(content: Option<&MessageContent>) -> Vec<Value
         MessageContent::Parts(raw_parts) => {
             for part in raw_parts {
                 match part {
-                    ContentPart::Text { text } => {
+                    ContentPart::Text { text }
+                    | ContentPart::InputText { text }
+                    | ContentPart::OutputText { text } => {
                         if !text.is_empty() {
                             parts.push(json!({
                                 "type": "input_text",
@@ -287,8 +306,16 @@ fn convert_content_to_input_parts(content: Option<&MessageContent>) -> Vec<Value
                     ContentPart::ImageUrl { image_url } => {
                         parts.push(json!({
                             "type": "input_image",
-                            "image_url": { "url": &image_url.url },
+                            "image_url": &image_url.url,
                         }));
+                    }
+                    ContentPart::InputImage { image_url } => {
+                        if let Some(url) = image_url {
+                            parts.push(json!({
+                                "type": "input_image",
+                                "image_url": url,
+                            }));
+                        }
                     }
                 }
             }
@@ -348,6 +375,80 @@ mod tests {
         assert!(payload.get("top_p").is_none());
         assert!(payload.get("max_tokens").is_none());
         assert!(payload.get("max_output_tokens").is_none());
+    }
+
+    #[test]
+    fn test_build_codex_payload_hoists_system_and_developer_messages() {
+        let req = ChatCompletionRequest {
+            model: "gpt-5.6-sol".to_string(),
+            messages: vec![
+                ChatMessage {
+                    role: "system".to_string(),
+                    content: Some(MessageContent::Text("Be concise.".to_string())),
+                    name: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                ChatMessage {
+                    role: "developer".to_string(),
+                    content: Some(MessageContent::Text("Use Rust.".to_string())),
+                    name: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                ChatMessage {
+                    role: "user".to_string(),
+                    content: Some(MessageContent::Text("Hello".to_string())),
+                    name: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            ],
+            temperature: None,
+            top_p: None,
+            max_tokens: None,
+            max_completion_tokens: None,
+            stream: Some(false),
+            stream_options: None,
+            tools: None,
+            tool_choice: None,
+            reasoning_effort: None,
+            reasoning: None,
+        };
+
+        let payload = build_codex_payload_from_chat(&req);
+        assert_eq!(payload["instructions"], "Be concise.\n\nUse Rust.");
+        assert_eq!(payload["input"].as_array().unwrap().len(), 1);
+        assert_eq!(payload["input"][0]["role"], "user");
+    }
+
+    #[test]
+    fn test_build_codex_payload_from_responses_hoists_system_input() {
+        let json_val = serde_json::json!({
+            "model": "gpt-5.6-sol",
+            "instructions": "Base instructions.",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "system",
+                    "content": [{"type": "input_text", "text": "Extra system."}]
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Hi"}]
+                }
+            ]
+        });
+        let req: ResponseCreateRequest = serde_json::from_value(json_val).unwrap();
+
+        let payload = build_codex_payload_from_responses(&req);
+        assert_eq!(
+            payload["instructions"],
+            "Base instructions.\n\nExtra system."
+        );
+        assert_eq!(payload["input"].as_array().unwrap().len(), 1);
+        assert_eq!(payload["input"][0]["role"], "user");
     }
 
     #[test]

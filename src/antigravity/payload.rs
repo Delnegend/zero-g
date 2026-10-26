@@ -142,19 +142,19 @@ impl AntigravityClient {
                 MessageContent::Parts(subparts) => {
                     for part in subparts {
                         match part {
-                            ContentPart::Text { text } => {
+                            ContentPart::Text { text }
+                            | ContentPart::InputText { text }
+                            | ContentPart::OutputText { text } => {
                                 if !text.trim().is_empty() {
                                     parts.push(json!({ "text": text }));
                                 }
                             }
                             ContentPart::ImageUrl { image_url } => {
-                                if let Some((mime, data)) = parse_data_url(&image_url.url) {
-                                    parts.push(json!({
-                                        "inlineData": {
-                                            "mimeType": mime,
-                                            "data": data
-                                        }
-                                    }));
+                                push_inline_image(&mut parts, &image_url.url);
+                            }
+                            ContentPart::InputImage { image_url } => {
+                                if let Some(url) = image_url {
+                                    push_inline_image(&mut parts, url);
                                 }
                             }
                         }
@@ -314,6 +314,17 @@ impl AntigravityClient {
             decls.push(decl);
         }
         decls
+    }
+}
+
+fn push_inline_image(parts: &mut Vec<Value>, url: &str) {
+    if let Some((mime, data)) = parse_data_url(url) {
+        parts.push(json!({
+            "inlineData": {
+                "mimeType": mime,
+                "data": data
+            }
+        }));
     }
 }
 

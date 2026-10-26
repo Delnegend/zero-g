@@ -45,8 +45,11 @@ impl MessageContent {
             MessageContent::Parts(parts) => {
                 let mut out = String::new();
                 for part in parts {
-                    if let ContentPart::Text { text } = part {
-                        out.push_str(text);
+                    match part {
+                        ContentPart::Text { text }
+                        | ContentPart::InputText { text }
+                        | ContentPart::OutputText { text } => out.push_str(text),
+                        ContentPart::ImageUrl { .. } | ContentPart::InputImage { .. } => {}
                     }
                 }
                 out
@@ -60,8 +63,17 @@ impl MessageContent {
 pub(crate) enum ContentPart {
     #[serde(rename = "text")]
     Text { text: String },
+    #[serde(rename = "input_text")]
+    InputText { text: String },
+    #[serde(rename = "output_text")]
+    OutputText { text: String },
     #[serde(rename = "image_url")]
     ImageUrl { image_url: ImageUrl },
+    #[serde(rename = "input_image")]
+    InputImage {
+        #[serde(default)]
+        image_url: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

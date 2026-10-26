@@ -287,6 +287,29 @@ mod tests {
     }
 
     #[test]
+    fn test_responses_input_items_accept_responses_content_parts() {
+        let json_val = json!({
+            "model": "gpt-5.6-sol",
+            "instructions": "You are a coding agent.",
+            "input": [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "say OK"}]
+                }
+            ]
+        });
+
+        let req: ResponseCreateRequest = serde_json::from_value(json_val).unwrap();
+        let chat_req = req.into_chat_request();
+        assert_eq!(chat_req.messages.len(), 2);
+        assert_eq!(chat_req.messages[1].role, "user");
+        assert_eq!(
+            chat_req.messages[1].content.as_ref().unwrap().as_text(),
+            "say OK"
+        );
+    }
+
+    #[test]
     fn test_responses_input_items_conversion() {
         let json_val = json!({
             "model": "gemini-flash",
