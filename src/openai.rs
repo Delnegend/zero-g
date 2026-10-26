@@ -194,6 +194,7 @@ pub(crate) struct ModelEntry {
     pub object: String,
     pub created: u64,
     pub owned_by: String,
+    pub name: Option<String>,
     pub display_name: Option<String>,
     pub reasoning: Option<bool>,
     pub default_reasoning_effort: Option<String>,

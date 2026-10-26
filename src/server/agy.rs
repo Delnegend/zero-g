@@ -79,8 +79,9 @@ pub(crate) async fn models_handler(
             ModelEntry {
                 id,
                 object: "model".to_string(),
-                created: 0,
+                created: 1_700_000_000,
                 owned_by: "google-antigravity".to_string(),
+                name: info.display_name.clone(),
                 display_name: info.display_name,
                 reasoning: if reasoning { Some(true) } else { None },
                 default_reasoning_effort: effort_tier,

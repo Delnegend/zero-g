@@ -101,6 +101,7 @@ pub(crate) async fn fetch_codex_models(
             object: "model".to_string(),
             created: 1_700_000_000,
             owned_by: "openai-codex".to_string(),
+            name: entry.display_name.clone(),
             display_name: entry.display_name,
             reasoning: if has_reasoning { Some(true) } else { None },
             default_reasoning_effort: default_effort,

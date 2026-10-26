@@ -61,11 +61,17 @@ pub(crate) fn create_router(state: AppState) -> Router {
 
     let agy_routes = Router::new()
         .route("/v1/models", get(agy::models_handler))
+        .route("/v1/models/", get(agy::models_handler))
         .route("/models", get(agy::models_handler))
+        .route("/models/", get(agy::models_handler))
         .route("/v1/chat/completions", post(agy::chat_handler))
+        .route("/v1/chat/completions/", post(agy::chat_handler))
         .route("/chat/completions", post(agy::chat_handler))
+        .route("/chat/completions/", post(agy::chat_handler))
         .route("/v1/responses", post(agy::responses_handler))
+        .route("/v1/responses/", post(agy::responses_handler))
         .route("/responses", post(agy::responses_handler))
+        .route("/responses/", post(agy::responses_handler))
         .layer(axum::middleware::from_fn_with_state(
             state.tokens.agy.clone(),
             auth::auth_middleware,
@@ -73,11 +79,17 @@ pub(crate) fn create_router(state: AppState) -> Router {
 
     let codex_routes = Router::new()
         .route("/v1/models", get(codex::models_handler))
+        .route("/v1/models/", get(codex::models_handler))
         .route("/models", get(codex::models_handler))
+        .route("/models/", get(codex::models_handler))
         .route("/v1/chat/completions", post(codex::chat_handler))
+        .route("/v1/chat/completions/", post(codex::chat_handler))
         .route("/chat/completions", post(codex::chat_handler))
+        .route("/chat/completions/", post(codex::chat_handler))
         .route("/v1/responses", post(codex::responses_handler))
+        .route("/v1/responses/", post(codex::responses_handler))
         .route("/responses", post(codex::responses_handler))
+        .route("/responses/", post(codex::responses_handler))
         .layer(axum::middleware::from_fn_with_state(
             state.tokens.codex.clone(),
             auth::auth_middleware,
@@ -85,9 +97,13 @@ pub(crate) fn create_router(state: AppState) -> Router {
 
     let zen_routes = Router::new()
         .route("/v1/models", get(zen::models_handler))
+        .route("/v1/models/", get(zen::models_handler))
         .route("/models", get(zen::models_handler))
+        .route("/models/", get(zen::models_handler))
         .route("/v1/chat/completions", post(zen::chat_handler))
+        .route("/v1/chat/completions/", post(zen::chat_handler))
         .route("/chat/completions", post(zen::chat_handler))
+        .route("/chat/completions/", post(zen::chat_handler))
         .layer(axum::middleware::from_fn_with_state(
             state.tokens.zen.clone(),
             auth::auth_middleware,
