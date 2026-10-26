@@ -2,7 +2,7 @@
 
 ## Overview
 
-`zero-g` translates standard OpenAI Chat Completions and Responses API requests into Google Cloud Code Assist (CCA) requests and decodes upstream server-sent events into OpenAI chunk streams and event notifications. It handles Google OAuth2 lifecycle management, companion project discovery, and model-specific protocol quirks transparently.
+`zero-g` translates standard OpenAI Chat Completions and Responses API requests into Google Cloud Code Assist (CCA) requests and OpenAI Codex backend requests, decoding upstream server-sent events into standard OpenAI chunk streams and event notifications. It handles Google OAuth2 and ChatGPT OAuth PKCE/device lifecycle management, companion project discovery, and model-specific protocol quirks transparently.
 
 ```mermaid
 flowchart TD
@@ -17,12 +17,12 @@ flowchart TD
 
 ## Core Components
 
-- **Axum HTTP Layer (`src/server/`):** Exposes `/v1/chat/completions`, `/v1/responses`, and `/v1/models` with optional Bearer authentication and CORS handling.
+- **Axum HTTP Layer (`src/server/`):** Exposes provider-specific routes (`/agy/v1`, `/codex/v1`, `/zen/v1`) with optional Bearer authentication and CORS handling. Unprefixed routes are rejected.
 - **Protocol Models (`src/openai.rs`, `src/responses.rs`):** Strongly typed Serde models for Chat Completions and Responses API inputs (prompts, messages, tool outputs).
-- **Auth Manager (`src/auth.rs`):** Loads credentials from `credentials.json` (local or XDG config directory); refreshes access tokens within 60 seconds of expiration.
-- **Login Flow (`src/login.rs`):** Runs the local loopback OAuth listener (`51121`), exchanges authorization codes, and provisions the Cloud Code Assist project via `loadCodeAssist` and `onboardUser`.
-- **Wire Translator (`src/antigravity/`):** Translates message roles, formats system instructions into `role: "user"` parts, merges multi-turn function responses, and injects Antigravity request envelopes.
-- **Stream Parsers (`src/antigravity/stream.rs`, `src/server/chat.rs`, `src/server/responses.rs`):** One shared Cloud Code Assist event decoder feeds two thin serializers: OpenAI chat completion chunks or Responses API lifecycle events.
+- **Auth Managers (`src/auth.rs`, `src/codex/auth.rs`):** Loads credentials from `credentials-agy.json` and `credentials-codex.json`; parses JWT claims (`chatgpt_account_id`, residency, plan); refreshes access tokens within 60 seconds of expiration.
+- **Login Flows (`src/login.rs`, `src/codex/login.rs`):** Runs the local loopback OAuth listener (`51121` for Google, `1455` for Codex PKCE) with device-code flow fallback for headless environments.
+- **Wire Translators (`src/antigravity/`, `src/codex/`):** Translates message roles, formats system instructions into appropriate wire parts, strips unsupported sampling parameters for Codex, and injects required backend headers.
+- **Stream Parsers (`src/antigravity/stream.rs`, `src/codex/client.rs`):** Decodes upstream SSE streams into standard OpenAI chat completion chunks or Responses API lifecycle events.
 ## Invariants & Guarantees
 
 - **Token Freshness:** Any request dispatched with a token expiring within 60 seconds triggers a refresh before the upstream connection opens.

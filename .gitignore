@@ -1,5 +1,5 @@
 /target
-/credentials.json
+/credentials-*.json
 /zen-shim
 .env
 !.env.example

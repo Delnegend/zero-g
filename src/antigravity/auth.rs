@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::info;
 
+use crate::util::{config_base_dir, restrict_file_permissions};
+
 pub(crate) fn oauth_client_id() -> Result<String, String> {
     std::env::var("ZERO_G_OAUTH_CLIENT_ID").map_err(|_| {
         "ZERO_G_OAUTH_CLIENT_ID not set. Please set it in .env or environment.".to_string()
@@ -18,9 +20,10 @@ pub(crate) fn oauth_client_secret() -> Result<String, String> {
         "ZERO_G_OAUTH_CLIENT_SECRET not set. Please set it in .env or environment.".to_string()
     })
 }
-pub(crate) const OAUTH_CALLBACK_PORT: u16 = 51121;
+
+pub(crate) const OAUTH_CALLBACK_PORT: u16 = 51123;
 pub(crate) const OAUTH_CALLBACK_PATH: &str = "/oauth-callback";
-pub(crate) const OAUTH_CALLBACK_URL: &str = "http://127.0.0.1:51121/oauth-callback";
+pub(crate) const OAUTH_CALLBACK_URL: &str = "http://127.0.0.1:51123/oauth-callback";
 pub(crate) const OAUTH_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 
 pub(crate) const OAUTH_SCOPES: &[&str] = &[
@@ -71,18 +74,25 @@ impl AuthManager {
         }
 
         Err(
-            "No Google Antigravity credentials found. Run `zero-g login` to authenticate."
+            "No Google Antigravity credentials found. Run `zero-g login agy` to authenticate."
                 .to_string(),
         )
     }
+
     fn get_config_path() -> PathBuf {
-        if Path::new("credentials.json").exists() {
-            return PathBuf::from("credentials.json");
+        if let Ok(custom) = std::env::var("ZERO_G_CREDENTIALS_AGY")
+            .or_else(|_| std::env::var("ZERO_G_CREDENTIALS"))
+            && !custom.trim().is_empty()
+        {
+            return PathBuf::from(custom);
         }
-        if let Some(base) = get_config_base_dir() {
-            return base.join("zero-g/credentials.json");
+        if Path::new("credentials-agy.json").exists() {
+            return PathBuf::from("credentials-agy.json");
         }
-        PathBuf::from("credentials.json")
+        if let Some(base) = config_base_dir() {
+            return base.join("zero-g/credentials-agy.json");
+        }
+        PathBuf::from("credentials-agy.json")
     }
 
     fn load_from_file(path: &Path) -> Option<Credentials> {
@@ -200,37 +210,5 @@ impl AuthManager {
             .map_err(|e| format!("Failed to write credentials to {}: {e}", path.display()))?;
         restrict_file_permissions(&path);
         Ok(path)
-    }
-}
-
-fn get_config_base_dir() -> Option<PathBuf> {
-    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME")
-        && !xdg.trim().is_empty()
-    {
-        return Some(PathBuf::from(xdg));
-    }
-    std::env::var("HOME")
-        .ok()
-        .map(|h| PathBuf::from(h).join(".config"))
-}
-
-#[cfg(unix)]
-fn restrict_file_permissions(path: &std::path::Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
-}
-
-#[cfg(not(unix))]
-fn restrict_file_permissions(_path: &std::path::Path) {}
-
-#[cfg(test)]
-#[allow(clippy::unwrap_used)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_get_config_base_dir() {
-        let base = get_config_base_dir();
-        assert!(base.is_some());
     }
 }

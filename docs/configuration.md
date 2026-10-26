@@ -9,7 +9,9 @@
 | `ZERO_G_ZEN_API_KEY` | `public` | No | Bearer token for OpenCode Zen upstream (`public` for keyless free tier, or a Zen API key) |
 | `ZERO_G_OAUTH_CLIENT_ID` | None (reads `.env`) | No | Google OAuth desktop client ID for sign-in/refresh |
 | `ZERO_G_OAUTH_CLIENT_SECRET` | None (reads `.env`) | No | Google OAuth desktop client secret |
-
+| `ZERO_G_API_TOKEN_AGY` | None | No | Optional bearer token protecting `/agy/v1/*` routes |
+| `ZERO_G_API_TOKEN_CODEX` | None | No | Optional bearer token protecting `/codex/v1/*` routes |
+| `ZERO_G_API_TOKEN_ZEN` | None | No | Optional bearer token protecting `/zen/v1/*` routes |
 ## Obtaining OAuth Credentials
 
 `zero-g login` requires desktop OAuth client credentials to authenticate with Google:
@@ -39,10 +41,13 @@ Print the active GCP companion project ID, account email, token expiry, and refr
 
 `zero-g` looks for credentials in the following order:
 
-1. Local configuration file: `credentials.json` in the current working directory.
-2. User configuration file: `$XDG_CONFIG_HOME/zero-g/credentials.json` (falling back to `~/.config/zero-g/credentials.json`).
+### Google Antigravity
 
-### Credentials JSON Schema
+1. Environment override: `ZERO_G_CREDENTIALS_AGY` or `ZERO_G_CREDENTIALS`.
+2. Local file: `credentials-agy.json` in the current working directory.
+3. User file: `$XDG_CONFIG_HOME/zero-g/credentials-agy.json` (falling back to `~/.config/zero-g/credentials-agy.json`).
+
+#### Antigravity Schema (`credentials-agy.json`)
 
 ```json
 {
@@ -51,5 +56,25 @@ Print the active GCP companion project ID, account email, token expiry, and refr
   "project_id": "aicode-consumers",
   "expires_at": 1792820000000,
   "email": "user@example.com"
+}
+```
+
+### OpenAI Codex (ChatGPT OAuth)
+
+1. Environment override: `ZERO_G_CREDENTIALS_CODEX` (or token via `OPENAI_CODEX_OAUTH_TOKEN`).
+2. Local file: `credentials-codex.json` in the current working directory.
+3. User file: `$XDG_CONFIG_HOME/zero-g/credentials-codex.json` (falling back to `~/.config/zero-g/credentials-codex.json`).
+
+#### Codex Schema (`credentials-codex.json`)
+
+```json
+{
+  "access_token": "eyJhbGci...",
+  "refresh_token": "rt_...",
+  "account_id": "acc_123456",
+  "email": "user@example.com",
+  "plan_type": "pro",
+  "residency": "us",
+  "expires_at": 1792820000000
 }
 ```

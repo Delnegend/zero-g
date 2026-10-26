@@ -2,7 +2,7 @@
 
 # zero-g
 
-**OpenAI-compatible proxy for Google Antigravity subscriptions.**
+**OpenAI-compatible proxy for Google Antigravity and OpenAI Codex subscriptions.**
 
 [![CI](https://img.shields.io/github/actions/workflow/status/Delnegend/zero-g/ci.yml?branch=main&style=flat-square)](https://github.com/Delnegend/zero-g/actions)
 [![Release](https://img.shields.io/github/v/release/Delnegend/zero-g?style=flat-square)](https://github.com/Delnegend/zero-g/releases)
@@ -24,18 +24,17 @@ brew install Delnegend/tap/zero-g
 zero-g serve
 
 # 3. Verify
-curl http://localhost:8080/v1/models
-```
+curl http://localhost:8080/agy/v1/models
 
 Source builds from checkout: `cargo install --path .` (last resort only).
 
 ## Highlights
 
-- **Standard OpenAI API** — Native `/v1/chat/completions`, `/v1/responses`, and `/v1/models` routes for modern AI tools and agents.
-- **Auto-Refresh** — Refreshes expired Antigravity OAuth tokens in the background automatically.
+- **Standard OpenAI API per Provider** — Explicit `/agy/v1`, `/codex/v1`, and `/zen/v1` routes supporting `chat/completions`, `responses`, and `models`.
+- **Multi-Provider Backends** — Seamless proxying for Google Antigravity (`/agy`), OpenAI Codex (`/codex`), and OpenCode Zen (`/zen`).
+- **Auto-Refresh** — Refreshes expired OAuth tokens in the background automatically.
 - **Claude & Gemini Support** — Formats Anthropic thinking beta headers, system instructions, and tool calling signatures automatically.
 - **Multi-Turn Tool Calling** — End-to-end function declaration, execution, and tool response turn merging.
-
 ## Common Commands
 
 ```bash
@@ -46,9 +45,9 @@ zero-g serve
 | Command | Description |
 |---|---|
 | `serve` | Start HTTP proxy server (default) |
-| `login` | Interactive browser OAuth sign-in flow |
-| `models` | List available models and quotas |
-| `status` | Print token validity and project ID |
+| `login <provider>` | Interactive OAuth sign-in flow (`zero-g login agy` or `zero-g login codex`) |
+| `models <provider>` | List available models (`zero-g models agy`, `zero-g models codex`, `zero-g models zen`) |
+| `status [provider]` | Print token validity, project ID, and account status |
 
 For all environment variables, see **[Configuration Reference](docs/configuration.md)**.
 
@@ -56,7 +55,7 @@ For all environment variables, see **[Configuration Reference](docs/configuratio
 
 ```mermaid
 flowchart LR
-    Client[OpenAI Client] -->|/v1/chat/completions| ZeroG[zero-g Proxy]
+    Client[OpenAI Client] -->|/agy/v1, /codex/v1, /zen/v1| ZeroG[zero-g Proxy]
     ZeroG -->|OAuth + SSE| CloudCode[Google Cloud Code Assist]
 ```
 

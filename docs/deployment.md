@@ -24,10 +24,10 @@ cp .env.example .env
 Run the sign-in command to authenticate:
 
 ```bash
-zero-g login
+zero-g login agy
 ```
 
-After authentication, credentials are saved to `~/.config/zero-g/credentials.json`.
+After authentication, credentials are saved to `~/.config/zero-g/credentials-agy.json` (or `credentials-codex.json`).
 ## Run as a Service
 
 ### Homebrew Services (macOS & Linux)
@@ -74,21 +74,29 @@ journalctl --user -u zero-g -f
 
 `zero-g` ships a static distroless container image based on `gcr.io/distroless/static-debian13:nonroot` (<10 MB), published to GitHub Packages (`ghcr.io/delnegend/zero-g`).
 
-### 1. Seed `credentials.json`
+### 1. Seed Credentials
 
-Authenticate and seed credentials using a temporary one-off container:
+Authenticate and seed credentials for Google Antigravity and/or OpenAI Codex using a temporary one-off container:
 
 ```bash
 mkdir -p /tmp/zero-g && chmod 777 /tmp/zero-g
 
+# For Google Antigravity:
 podman run --rm -it \
   --net=host \
   --env-file .env \
   -v /tmp/zero-g:/home/nonroot/.config/zero-g:Z \
-  ghcr.io/delnegend/zero-g:latest login
+  ghcr.io/delnegend/zero-g:latest login agy
 
-mv /tmp/zero-g/credentials.json ./credentials.json
-chmod 644 ./credentials.json
+# For OpenAI Codex (device flow in headless containers):
+podman run --rm -it \
+  --net=host \
+  -v /tmp/zero-g:/home/nonroot/.config/zero-g:Z \
+  ghcr.io/delnegend/zero-g:latest login codex --device
+
+# Copy seeded credentials into compose directory:
+[ -f /tmp/zero-g/credentials-agy.json ] && cp /tmp/zero-g/credentials-agy.json ./credentials-agy.json && chmod 644 ./credentials-agy.json
+[ -f /tmp/zero-g/credentials-codex.json ] && cp /tmp/zero-g/credentials-codex.json ./credentials-codex.json && chmod 644 ./credentials-codex.json
 rm -rf /tmp/zero-g
 ```
 

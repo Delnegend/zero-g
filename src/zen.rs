@@ -22,14 +22,6 @@ const ZEN_MODELS: &[&str] = &[
     "nemotron-3.5-super-vl-free",
 ];
 
-pub(crate) fn is_zen_model(model: &str) -> bool {
-    ZEN_MODELS.contains(&model)
-}
-
-pub(crate) fn zen_models() -> &'static [&'static str] {
-    ZEN_MODELS
-}
-
 fn zen_base_url() -> String {
     crate::shim::zen_base_url()
 }
@@ -342,13 +334,6 @@ pub(crate) async fn handle_chat(req: ChatCompletionRequest) -> Response {
     }
 }
 
-pub(crate) async fn chat_handler(Json(req): Json<ChatCompletionRequest>) -> Response {
-    handle_chat(req).await
-}
-
-pub(crate) async fn models_handler() -> Json<Value> {
-    Json(models_json())
-}
 
 pub(crate) fn models_json() -> Value {
     json!({

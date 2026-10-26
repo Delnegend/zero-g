@@ -9,11 +9,12 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::oneshot;
 
-use crate::auth::{
+use crate::antigravity::auth::{
     ANTIGRAVITY_USER_AGENT, CLOUD_CODE_ASSIST_ENDPOINT, Credentials, OAUTH_CALLBACK_PATH,
     OAUTH_CALLBACK_PORT, OAUTH_CALLBACK_URL, OAUTH_SCOPES, OAUTH_TOKEN_URL, oauth_client_id,
     oauth_client_secret,
 };
+use crate::util::urlencode;
 
 #[derive(Deserialize)]
 struct CallbackQuery {
@@ -93,10 +94,10 @@ pub(crate) async fn run_login() -> Result<Credentials, String> {
     let client_secret = oauth_client_secret()?;
     let auth_url = format!(
         "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}&access_type=offline&prompt=consent",
-        urlencoding::encode(&client_id),
-        urlencoding::encode(OAUTH_CALLBACK_URL),
-        urlencoding::encode(&scopes_encoded),
-        urlencoding::encode(&expected_state)
+        urlencode(&client_id),
+        urlencode(OAUTH_CALLBACK_URL),
+        urlencode(&scopes_encoded),
+        urlencode(&expected_state)
     );
 
     println!(
@@ -133,8 +134,9 @@ pub(crate) async fn run_login() -> Result<Credentials, String> {
         .map_err(|e| format!("Failed to request token: {e}"))?;
 
     if !token_resp.status().is_success() {
-        let err = token_resp.text().await.unwrap_or_default();
-        return Err(format!("Token exchange failed: {err}"));
+        let status = token_resp.status();
+        let body = token_resp.text().await.unwrap_or_default();
+        return Err(format!("Token exchange failed ({status}): {body}"));
     }
 
     let token_data: TokenExchangeResponse = token_resp
@@ -142,139 +144,172 @@ pub(crate) async fn run_login() -> Result<Credentials, String> {
         .await
         .map_err(|e| format!("Failed to parse token response: {e}"))?;
 
-    let now_ms = std::time::SystemTime::now()
+    let expires_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as i64);
-    let expires_at = now_ms + token_data.expires_in * 1000;
+        .map_or(0, |d| d.as_millis() as i64)
+        + token_data.expires_in * 1000;
 
-    // Fetch user email
+    println!("Fetching account identity...");
     let user_info_resp = client
-        .get("https://www.googleapis.com/oauth2/v1/userinfo?alt=json")
-        .header(
-            "Authorization",
-            format!("Bearer {}", token_data.access_token),
-        )
+        .get("https://www.googleapis.com/oauth2/v2/userinfo")
+        .bearer_auth(&token_data.access_token)
         .send()
         .await;
-    let mut email = None;
-    if let Ok(resp) = user_info_resp
-        && let Ok(info) = resp.json::<UserInfoResponse>().await
-    {
-        email = info.email;
-    }
 
-    println!("Resolving Cloud Code Assist project...");
-    let project_id = discover_project(&client, &token_data.access_token).await?;
+    let email = match user_info_resp {
+        Ok(resp) if resp.status().is_success() => {
+            resp.json::<UserInfoResponse>().await.ok().and_then(|u| u.email)
+        }
+        _ => None,
+    };
 
-    let creds = Credentials {
+    println!("Discovering Cloud Code Assist project...");
+    let project_id =
+        match fetch_or_onboard_project(&client, &token_data.access_token, email.as_deref()).await {
+            Ok(pid) => pid,
+            Err(e) => {
+                return Err(format!("Failed to configure companion project: {e}"));
+            }
+        };
+
+    Ok(Credentials {
         access_token: token_data.access_token,
         refresh_token: token_data.refresh_token,
         project_id,
         expires_at: Some(expires_at),
         email,
-    };
-
-    Ok(creds)
+    })
 }
 
-async fn discover_project(client: &reqwest::Client, access_token: &str) -> Result<String, String> {
+async fn fetch_or_onboard_project(
+    client: &reqwest::Client,
+    access_token: &str,
+    email: Option<&str>,
+) -> Result<String, String> {
     let load_url = format!("{CLOUD_CODE_ASSIST_ENDPOINT}/v1internal:loadCodeAssist");
-    let resp = client
+    let load_body = json!({
+        "metadata": {
+            "ideType": "IDE_UNSPECIFIED",
+            "pluginType": "GEMINI"
+        }
+    });
+
+    let load_resp = client
         .post(&load_url)
-        .header("Authorization", format!("Bearer {access_token}"))
-        .header("Content-Type", "application/json")
+        .bearer_auth(access_token)
         .header("User-Agent", ANTIGRAVITY_USER_AGENT)
-        .json(&json!({
-            "metadata": { "ideType": "ANTIGRAVITY" }
-        }))
+        .json(&load_body)
         .send()
         .await
-        .map_err(|e| format!("loadCodeAssist request failed: {e}"))?;
+        .map_err(|e| format!("Failed to call loadCodeAssist: {e}"))?;
 
-    if !resp.status().is_success() {
-        let err = resp.text().await.unwrap_or_default();
-        return Err(format!("loadCodeAssist failed: {err}"));
-    }
-
-    let mut data: LoadCodeAssistResponse = resp
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse loadCodeAssist: {e}"))?;
-
-    if data.current_tier.is_none() {
-        println!("Provisioning Antigravity tier...");
-        onboard_user(client, access_token).await?;
-
-        // Re-query after onboarding
-        let resp = client
-            .post(&load_url)
-            .header("Authorization", format!("Bearer {access_token}"))
-            .header("Content-Type", "application/json")
-            .header("User-Agent", ANTIGRAVITY_USER_AGENT)
-            .json(&json!({
-                "metadata": { "ideType": "ANTIGRAVITY" }
-            }))
-            .send()
-            .await
-            .map_err(|e| format!("Second loadCodeAssist failed: {e}"))?;
-
-        data = resp
+    if load_resp.status().is_success() {
+        let load_data: LoadCodeAssistResponse = load_resp
             .json()
             .await
-            .map_err(|e| format!("Failed to parse second loadCodeAssist: {e}"))?;
+            .map_err(|e| format!("Failed to parse loadCodeAssist response: {e}"))?;
+
+        if let Some(pid) = load_data.cloudaicompanion_project
+            && !pid.is_empty()
+        {
+            return Ok(pid);
+        }
+
+        if let Some(tier) = load_data.current_tier
+            && let Some(name) = tier.get("name").and_then(|n| n.as_str())
+            && !name.is_empty()
+        {
+            return Ok(name.to_string());
+        }
     }
 
-    if let Some(pid) = data.cloudaicompanion_project
-        && !pid.is_empty()
-    {
-        return Ok(pid);
+    println!("Attempting to provision a companion project via onboardUser...");
+    onboard_user(client, access_token).await?;
+
+    let retry_resp = client
+        .post(&load_url)
+        .bearer_auth(access_token)
+        .header("User-Agent", ANTIGRAVITY_USER_AGENT)
+        .json(&load_body)
+        .send()
+        .await
+        .map_err(|e| format!("loadCodeAssist retry failed: {e}"))?;
+
+    if retry_resp.status().is_success() {
+        let load_data: LoadCodeAssistResponse = retry_resp
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse loadCodeAssist retry: {e}"))?;
+
+        if let Some(pid) = load_data.cloudaicompanion_project
+            && !pid.is_empty()
+        {
+            return Ok(pid);
+        }
     }
 
-    Err("loadCodeAssist did not return a valid cloudaicompanionProject".to_string())
+    if let Some(email) = email {
+        let clean = email.replace(['@', '.'], "-");
+        let fallback = format!("ag-{clean}");
+        println!("Using derived project name fallback: {fallback}");
+        return Ok(fallback);
+    }
+
+    Err("Could not discover or onboard project ID".to_string())
 }
 
 async fn onboard_user(client: &reqwest::Client, access_token: &str) -> Result<(), String> {
     let onboard_url = format!("{CLOUD_CODE_ASSIST_ENDPOINT}/v1internal:onboardUser");
+    let onboard_body = json!({
+        "tierType": "TIER_FREE"
+    });
+
     let resp = client
         .post(&onboard_url)
-        .header("Authorization", format!("Bearer {access_token}"))
-        .header("Content-Type", "application/json")
+        .bearer_auth(access_token)
         .header("User-Agent", ANTIGRAVITY_USER_AGENT)
-        .json(&json!({
-            "tierId": "free-tier",
-            "metadata": { "ideType": "ANTIGRAVITY" }
-        }))
+        .json(&onboard_body)
         .send()
         .await
         .map_err(|e| format!("onboardUser request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("onboardUser endpoint failed ({status}): {body}"));
+    }
 
     let mut op: OnboardOperation = resp
         .json()
         .await
         .map_err(|e| format!("Failed to parse onboardUser response: {e}"))?;
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let poll_interval = Duration::from_secs(2);
+    let max_polls = 15;
 
-    while op.done != Some(true) {
-        if std::time::Instant::now() >= deadline {
-            return Err("onboardUser timed out after 30 seconds".to_string());
+    for _ in 0..max_polls {
+        if op.done == Some(true) {
+            break;
         }
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        tokio::time::sleep(poll_interval).await;
 
-        let op_name = op.name.as_deref().unwrap_or_default();
-        if op_name.is_empty() {
-            return Err("onboardUser returned operation with no name".to_string());
-        }
+        let Some(op_name) = &op.name else {
+            break;
+        };
 
-        let op_url = format!("{CLOUD_CODE_ASSIST_ENDPOINT}/v1internal/{op_name}");
+        let poll_url = format!("{CLOUD_CODE_ASSIST_ENDPOINT}/v1internal/{op_name}");
         let poll_resp = client
-            .get(&op_url)
-            .header("Authorization", format!("Bearer {access_token}"))
+            .get(&poll_url)
+            .bearer_auth(access_token)
             .header("User-Agent", ANTIGRAVITY_USER_AGENT)
             .send()
             .await
             .map_err(|e| format!("Failed to poll operation: {e}"))?;
+
+        if !poll_resp.status().is_success() {
+            break;
+        }
 
         op = poll_resp
             .json()
@@ -287,20 +322,4 @@ async fn onboard_user(client: &reqwest::Client, access_token: &str) -> Result<()
     }
 
     Ok(())
-}
-
-mod urlencoding {
-    use std::fmt::Write;
-
-    pub(super) fn encode(s: &str) -> String {
-        let mut out = String::new();
-        for b in s.bytes() {
-            if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'~' {
-                out.push(b as char);
-            } else {
-                let _ = write!(out, "%{b:02X}");
-            }
-        }
-        out
-    }
 }

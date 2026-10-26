@@ -1,163 +1,21 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use axum::extract::State;
-use axum::http::StatusCode;
 use axum::response::sse::Event;
-use axum::response::{IntoResponse, Json, Response};
 use serde_json::json;
 
-use crate::antigravity::AntigravityClient;
 use crate::antigravity::AntigravityEvent;
-use crate::openai::ChatCompletionRequest;
-use crate::responses::{
-    ResponseContentPart, ResponseCreateRequest, ResponseObject, ResponseOutputItem, ResponseUsage,
-};
-use crate::server::AppState;
-
-pub(crate) async fn responses_handler(
-    State(state): State<AppState>,
-    Json(req): Json<ResponseCreateRequest>,
-) -> Response {
-    let creds = match state.auth.get_credentials().await {
-        Ok(c) => c,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(crate::server::error_body(
-                    &e,
-                    "server_error",
-                    Some("internal_error"),
-                )),
-            )
-                .into_response();
-        }
-    };
-
-    let is_streaming = req.stream.unwrap_or(false);
-    let original_model = req.model.clone();
-    let chat_req = req.into_chat_request();
-
-    if is_streaming {
-        handle_responses_streaming(state, creds, chat_req, original_model).await
-    } else {
-        match state.client.complete_non_streaming(&creds, &chat_req).await {
-            Ok(resp) => {
-                let mut output_items = Vec::new();
-                let mut output_text = String::new();
-
-                for choice in &resp.choices {
-                    if let Some(content) = &choice.message.content {
-                        output_text.push_str(content);
-                        output_items.push(ResponseOutputItem::Message {
-                            id: format!("msg_{}", uuid::Uuid::new_v4().simple()),
-                            status: "completed".to_string(),
-                            role: choice.message.role.clone(),
-                            content: vec![ResponseContentPart::OutputText {
-                                text: content.clone(),
-                            }],
-                        });
-                    }
-                    if let Some(tool_calls) = &choice.message.tool_calls {
-                        for tc in tool_calls {
-                            output_items.push(ResponseOutputItem::FunctionCall {
-                                id: format!("fc_{}", uuid::Uuid::new_v4().simple()),
-                                status: "completed".to_string(),
-                                name: tc.function.name.clone(),
-                                call_id: tc.id.clone(),
-                                arguments: tc.function.arguments.clone(),
-                            });
-                        }
-                    }
-                }
-
-                let usage = resp.usage.map(ResponseUsage::from);
-
-                let response_obj = ResponseObject {
-                    id: format!("resp_{}", uuid::Uuid::new_v4().simple()),
-                    object: "response".to_string(),
-                    created_at: resp.created,
-                    model: original_model,
-                    status: "completed".to_string(),
-                    output: output_items,
-                    output_text,
-                    usage,
-                };
-
-                Json(response_obj).into_response()
-            }
-            Err(e) => {
-                tracing::error!("Upstream request failed: {e}");
-                (
-                    StatusCode::BAD_GATEWAY,
-                    Json(crate::server::error_body(
-                        "Upstream request failed",
-                        "upstream_error",
-                        Some("bad_gateway"),
-                    )),
-                )
-                    .into_response()
-            }
-        }
-    }
-}
-
-async fn handle_responses_streaming(
-    state: AppState,
-    creds: crate::auth::Credentials,
-    chat_req: ChatCompletionRequest,
-    original_model: String,
-) -> Response {
-    let wire_model = chat_req.model.clone();
-    let is_claude = wire_model.contains("claude");
-    let payload =
-        AntigravityClient::build_request_payload(&chat_req, &creds.project_id, &wire_model);
-
-    let upstream_resp = match state
-        .client
-        .stream_request(&creds, &payload, is_claude)
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::error!("Upstream request failed: {e}");
-            return crate::server::sse::bad_gateway_response();
-        }
-    };
-
-    let resp_id = format!("resp_{}", uuid::Uuid::new_v4().simple());
-    let msg_id = format!("msg_{}", uuid::Uuid::new_v4().simple());
-    let created = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_secs());
-
-    let serializer = ResponsesStreamSerializer {
-        resp_id,
-        msg_id,
-        created,
-        original_model,
-        message_in_progress: false,
-        message_index: None,
-        next_output_index: 0,
-        full_text: String::new(),
-        usage: ResponseUsage::default(),
-        output_items: Vec::new(),
-    };
-
-    crate::server::sse::spawn_sse(serializer, upstream_resp)
-}
+use crate::responses::{ResponseContentPart, ResponseObject, ResponseOutputItem, ResponseUsage};
 
 #[allow(clippy::struct_excessive_bools)]
-struct ResponsesStreamSerializer {
-    resp_id: String,
-    msg_id: String,
-    created: u64,
-    original_model: String,
-    message_in_progress: bool,
-    message_index: Option<usize>,
-    next_output_index: usize,
-    full_text: String,
-    usage: ResponseUsage,
-    output_items: Vec<(usize, ResponseOutputItem)>,
+pub(crate) struct ResponsesStreamSerializer {
+    pub(crate) resp_id: String,
+    pub(crate) msg_id: String,
+    pub(crate) created: u64,
+    pub(crate) original_model: String,
+    pub(crate) message_in_progress: bool,
+    pub(crate) message_index: Option<usize>,
+    pub(crate) next_output_index: usize,
+    pub(crate) full_text: String,
+    pub(crate) usage: ResponseUsage,
+    pub(crate) output_items: Vec<(usize, ResponseOutputItem)>,
 }
 
 impl crate::server::sse::SseSerializer for ResponsesStreamSerializer {

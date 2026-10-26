@@ -1,125 +1,24 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use axum::extract::State;
-use axum::http::StatusCode;
 use axum::response::sse::Event;
-use axum::response::{IntoResponse, Json, Response};
+use serde_json::json;
 
 use crate::antigravity::AntigravityEvent;
 use crate::antigravity::map_finish_reason;
 use crate::openai::{
-    ChatCompletionChunk, ChatCompletionRequest, ChunkChoice, ChunkDelta, ChunkFunctionCall,
-    ChunkToolCall, StreamOptions,
+    ChatCompletionChunk, ChunkChoice, ChunkDelta, ChunkFunctionCall, ChunkToolCall, Usage,
 };
-use crate::server::AppState;
-
-pub(crate) async fn chat_completions_handler(
-    State(state): State<AppState>,
-    Json(req): Json<ChatCompletionRequest>,
-) -> Response {
-    if crate::zen::is_zen_model(&req.model) {
-        return crate::zen::handle_chat(req).await;
-    }
-
-    let creds = match state.auth.get_credentials().await {
-        Ok(c) => c,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(crate::server::error_body(
-                    &e,
-                    "server_error",
-                    Some("internal_error"),
-                )),
-            )
-                .into_response();
-        }
-    };
-
-    let is_streaming = req.stream.unwrap_or(false);
-
-    if is_streaming {
-        handle_streaming(state, creds, req).await
-    } else {
-        match state.client.complete_non_streaming(&creds, &req).await {
-            Ok(resp) => Json(resp).into_response(),
-            Err(e) => {
-                tracing::error!("Upstream request failed: {e}");
-                (
-                    StatusCode::BAD_GATEWAY,
-                    Json(crate::server::error_body(
-                        "Upstream request failed",
-                        "upstream_error",
-                        Some("bad_gateway"),
-                    )),
-                )
-                    .into_response()
-            }
-        }
-    }
-}
-
-async fn handle_streaming(
-    state: AppState,
-    creds: crate::auth::Credentials,
-    req: ChatCompletionRequest,
-) -> Response {
-    let wire_model = req.model.clone();
-    let is_claude = wire_model.contains("claude");
-    let payload = crate::antigravity::AntigravityClient::build_request_payload(
-        &req,
-        &creds.project_id,
-        &wire_model,
-    );
-
-    let upstream_resp = match state
-        .client
-        .stream_request(&creds, &payload, is_claude)
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::error!("Upstream request failed: {e}");
-            return crate::server::sse::bad_gateway_response();
-        }
-    };
-
-    let include_usage = req
-        .stream_options
-        .as_ref()
-        .and_then(|options: &StreamOptions| options.include_usage)
-        .unwrap_or(false);
-
-    let serializer = ChatStreamSerializer {
-        stream_id: format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()),
-        req_model: req.model.clone(),
-        created: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |duration| duration.as_secs()),
-        include_usage,
-        sent_role: false,
-        has_tools: false,
-        finish_sent: false,
-        tool_call_index: 0,
-        usage: crate::openai::Usage::default(),
-        saw_usage: false,
-    };
-
-    crate::server::sse::spawn_sse(serializer, upstream_resp)
-}
 
 #[allow(clippy::struct_excessive_bools)]
-struct ChatStreamSerializer {
-    stream_id: String,
-    req_model: String,
-    created: u64,
-    include_usage: bool,
-    sent_role: bool,
-    has_tools: bool,
-    finish_sent: bool,
-    tool_call_index: u32,
-    usage: crate::openai::Usage,
-    saw_usage: bool,
+pub(crate) struct ChatStreamSerializer {
+    pub(crate) stream_id: String,
+    pub(crate) req_model: String,
+    pub(crate) created: u64,
+    pub(crate) include_usage: bool,
+    pub(crate) sent_role: bool,
+    pub(crate) has_tools: bool,
+    pub(crate) finish_sent: bool,
+    pub(crate) tool_call_index: u32,
+    pub(crate) usage: Usage,
+    pub(crate) saw_usage: bool,
 }
 
 impl crate::server::sse::SseSerializer for ChatStreamSerializer {
@@ -148,7 +47,11 @@ impl crate::server::sse::SseSerializer for ChatStreamSerializer {
                     }],
                     usage: None,
                 };
-                vec![event_from_chunk(&chunk)]
+                if let Ok(data) = serde_json::to_string(&chunk) {
+                    vec![Event::default().data(data)]
+                } else {
+                    Vec::new()
+                }
             }
             AntigravityEvent::Reasoning(text) => {
                 let chunk = ChatCompletionChunk {
@@ -173,7 +76,11 @@ impl crate::server::sse::SseSerializer for ChatStreamSerializer {
                     }],
                     usage: None,
                 };
-                vec![event_from_chunk(&chunk)]
+                if let Ok(data) = serde_json::to_string(&chunk) {
+                    vec![Event::default().data(data)]
+                } else {
+                    Vec::new()
+                }
             }
             AntigravityEvent::ToolCall {
                 id,
@@ -181,9 +88,6 @@ impl crate::server::sse::SseSerializer for ChatStreamSerializer {
                 arguments,
             } => {
                 self.has_tools = true;
-                let index = self.tool_call_index;
-                self.tool_call_index = self.tool_call_index.saturating_add(1);
-
                 let chunk = ChatCompletionChunk {
                     id: self.stream_id.clone(),
                     object: "chat.completion.chunk".to_string(),
@@ -201,7 +105,7 @@ impl crate::server::sse::SseSerializer for ChatStreamSerializer {
                             content: None,
                             reasoning_content: None,
                             tool_calls: Some(vec![ChunkToolCall {
-                                index,
+                                index: self.tool_call_index,
                                 id: Some(id),
                                 r#type: Some("function".to_string()),
                                 function: Some(ChunkFunctionCall {
@@ -214,10 +118,16 @@ impl crate::server::sse::SseSerializer for ChatStreamSerializer {
                     }],
                     usage: None,
                 };
-                vec![event_from_chunk(&chunk)]
+                self.tool_call_index += 1;
+                if let Ok(data) = serde_json::to_string(&chunk) {
+                    vec![Event::default().data(data)]
+                } else {
+                    Vec::new()
+                }
             }
             AntigravityEvent::Finish { reason } => {
                 self.finish_sent = true;
+                let mapped = map_finish_reason(&reason, self.has_tools);
                 let chunk = ChatCompletionChunk {
                     id: self.stream_id.clone(),
                     object: "chat.completion.chunk".to_string(),
@@ -226,14 +136,18 @@ impl crate::server::sse::SseSerializer for ChatStreamSerializer {
                     choices: vec![ChunkChoice {
                         index: 0,
                         delta: ChunkDelta::default(),
-                        finish_reason: Some(map_finish_reason(&reason, self.has_tools)),
+                        finish_reason: Some(mapped),
                     }],
                     usage: None,
                 };
-                vec![event_from_chunk(&chunk)]
+                if let Ok(data) = serde_json::to_string(&chunk) {
+                    vec![Event::default().data(data)]
+                } else {
+                    Vec::new()
+                }
             }
-            AntigravityEvent::Usage(value) => {
-                self.usage = value;
+            AntigravityEvent::Usage(usage) => {
+                self.usage = usage;
                 self.saw_usage = true;
                 Vec::new()
             }
@@ -242,7 +156,9 @@ impl crate::server::sse::SseSerializer for ChatStreamSerializer {
 
     fn finish(&mut self) -> Vec<Event> {
         let mut events = Vec::new();
+
         if !self.finish_sent {
+            let reason = if self.has_tools { "tool_calls" } else { "stop" };
             let chunk = ChatCompletionChunk {
                 id: self.stream_id.clone(),
                 object: "chat.completion.chunk".to_string(),
@@ -251,34 +167,31 @@ impl crate::server::sse::SseSerializer for ChatStreamSerializer {
                 choices: vec![ChunkChoice {
                     index: 0,
                     delta: ChunkDelta::default(),
-                    finish_reason: Some(if self.has_tools {
-                        "tool_calls".to_string()
-                    } else {
-                        "stop".to_string()
-                    }),
+                    finish_reason: Some(reason.to_string()),
                 }],
                 usage: None,
             };
-            events.push(event_from_chunk(&chunk));
+            if let Ok(data) = serde_json::to_string(&chunk) {
+                events.push(Event::default().data(data));
+            }
         }
 
         if self.include_usage && self.saw_usage {
-            let chunk = ChatCompletionChunk {
-                id: self.stream_id.clone(),
-                object: "chat.completion.chunk".to_string(),
-                created: self.created,
-                model: self.req_model.clone(),
-                choices: vec![],
-                usage: Some(self.usage.clone()),
-            };
-            events.push(event_from_chunk(&chunk));
+            let chunk = json!({
+                "id": self.stream_id,
+                "object": "chat.completion.chunk",
+                "created": self.created,
+                "model": self.req_model,
+                "choices": [],
+                "usage": {
+                    "prompt_tokens": self.usage.prompt_tokens,
+                    "completion_tokens": self.usage.completion_tokens,
+                    "total_tokens": self.usage.total_tokens
+                }
+            });
+            events.push(Event::default().data(chunk.to_string()));
         }
 
         events
     }
-}
-
-fn event_from_chunk(chunk: &ChatCompletionChunk) -> Event {
-    let json_str = serde_json::to_string(chunk).unwrap_or_default();
-    Event::default().data(json_str)
 }

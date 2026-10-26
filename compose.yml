@@ -13,7 +13,8 @@ services:
       - ZERO_G_BIND=0.0.0.0:8080
       - ZERO_G_ZEN_URL=http://zen-shim:8090/v1
     volumes:
-      - ./credentials.json:/app/credentials.json:ro,Z
+      - ./credentials-agy.json:/app/credentials-agy.json:ro,Z
+      - ./credentials-codex.json:/app/credentials-codex.json:ro,Z
     depends_on:
       - zen-shim
 
