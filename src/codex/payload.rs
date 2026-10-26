@@ -15,7 +15,7 @@ pub(crate) fn build_codex_payload_from_chat(req: &ChatCompletionRequest) -> Valu
                 append_instructions(&mut instructions, msg.content.as_ref());
             }
             "user" => {
-                let parts = convert_content_to_input_parts(msg.content.as_ref());
+                let parts = convert_content_to_input_parts(msg.content.as_ref(), "user");
                 if !parts.is_empty() {
                     input_items.push(json!({
                         "type": "message",
@@ -141,7 +141,7 @@ pub(crate) fn build_codex_payload_from_responses(req: &ResponseCreateRequest) ->
                             if is_system_role(role) {
                                 append_instructions(&mut instructions, content.as_ref());
                             } else {
-                                let parts = convert_content_to_input_parts(content.as_ref());
+                                let parts = convert_content_to_input_parts(content.as_ref(), role);
                                 input_items.push(json!({
                                     "type": "message",
                                     "role": role,
@@ -186,7 +186,8 @@ pub(crate) fn build_codex_payload_from_responses(req: &ResponseCreateRequest) ->
                         if is_system_role(&msg.role) {
                             append_instructions(&mut instructions, msg.content.as_ref());
                         } else {
-                            let parts = convert_content_to_input_parts(msg.content.as_ref());
+                            let parts =
+                                convert_content_to_input_parts(msg.content.as_ref(), &msg.role);
                             input_items.push(json!({
                                 "type": "message",
                                 "role": msg.role,
@@ -277,15 +278,24 @@ fn extract_reasoning_payload(
     reasoning
 }
 
-fn convert_content_to_input_parts(content: Option<&MessageContent>) -> Vec<Value> {
+fn convert_content_to_input_parts(content: Option<&MessageContent>, role: &str) -> Vec<Value> {
     let mut parts = Vec::new();
     let Some(c) = content else { return parts };
+
+    // Upstream only accepts `output_text`/`refusal` parts in assistant turns and
+    // `input_text` elsewhere, so the part type follows the message role.
+    let is_assistant = role == "assistant";
+    let text_type = if is_assistant {
+        "output_text"
+    } else {
+        "input_text"
+    };
 
     match c {
         MessageContent::Text(text) => {
             if !text.is_empty() {
                 parts.push(json!({
-                    "type": "input_text",
+                    "type": text_type,
                     "text": text,
                 }));
             }
@@ -298,19 +308,21 @@ fn convert_content_to_input_parts(content: Option<&MessageContent>) -> Vec<Value
                     | ContentPart::OutputText { text } => {
                         if !text.is_empty() {
                             parts.push(json!({
-                                "type": "input_text",
+                                "type": text_type,
                                 "text": text,
                             }));
                         }
                     }
                     ContentPart::ImageUrl { image_url } => {
-                        parts.push(json!({
-                            "type": "input_image",
-                            "image_url": &image_url.url,
-                        }));
+                        if !is_assistant {
+                            parts.push(json!({
+                                "type": "input_image",
+                                "image_url": &image_url.url,
+                            }));
+                        }
                     }
                     ContentPart::InputImage { image_url } => {
-                        if let Some(url) = image_url {
+                        if let (false, Some(url)) = (is_assistant, image_url) {
                             parts.push(json!({
                                 "type": "input_image",
                                 "image_url": url,
@@ -498,5 +510,47 @@ mod tests {
         assert_eq!(tools[0]["name"], "ping");
         assert_eq!(tools[0]["description"], "Ping the host");
         assert!(tools[0].get("function").is_none());
+    }
+
+    #[test]
+    fn test_build_codex_payload_from_responses_assistant_parts_are_output_text() {
+        let json_val = json!({
+            "model": "gpt-5.6-sol",
+            "input": [
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+                {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "hello"}]},
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "say OK"}]}
+            ]
+        });
+        let req: ResponseCreateRequest = serde_json::from_value(json_val).unwrap();
+
+        let payload = build_codex_payload_from_responses(&req);
+        let input = payload["input"].as_array().unwrap();
+        assert_eq!(input.len(), 3);
+        assert_eq!(input[0]["content"][0]["type"], "input_text");
+        assert_eq!(input[1]["role"], "assistant");
+        assert_eq!(input[1]["content"][0]["type"], "output_text");
+        assert_eq!(input[1]["content"][0]["text"], "hello");
+        assert_eq!(input[2]["content"][0]["type"], "input_text");
+    }
+
+    #[test]
+    fn test_build_codex_payload_from_responses_chat_shaped_assistant() {
+        let json_val = json!({
+            "model": "gpt-5.6-sol",
+            "input": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "hello"},
+                {"role": "user", "content": "say OK"}
+            ]
+        });
+        let req: ResponseCreateRequest = serde_json::from_value(json_val).unwrap();
+
+        let payload = build_codex_payload_from_responses(&req);
+        let input = payload["input"].as_array().unwrap();
+        assert_eq!(input[1]["role"], "assistant");
+        assert_eq!(input[1]["content"][0]["type"], "output_text");
+        assert_eq!(input[1]["content"][0]["text"], "hello");
+        assert_eq!(input[0]["content"][0]["type"], "input_text");
     }
 }
