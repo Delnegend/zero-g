@@ -135,8 +135,9 @@ pub(crate) fn transform(req: &ChatCompletionRequest) -> (Value, Vec<(String, Str
     }
 
     let s = session_id();
+    let zen_key = std::env::var("ZERO_G_ZEN_API_KEY").unwrap_or_else(|_| "public".to_string());
     let headers = vec![
-        ("Authorization".to_string(), "Bearer public".to_string()),
+        ("Authorization".to_string(), format!("Bearer {zen_key}")),
         ("Content-Type".to_string(), "application/json".to_string()),
         (
             "User-Agent".to_string(),
