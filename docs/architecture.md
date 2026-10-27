@@ -22,6 +22,7 @@ flowchart TD
 - **Auth Managers (`src/auth.rs`, `src/codex/auth.rs`):** Loads credentials from `credentials-agy.json` and `credentials-codex.json`; parses JWT claims (`chatgpt_account_id`, residency, plan); refreshes access tokens within 60 seconds of expiration.
 - **Login Flows (`src/login.rs`, `src/codex/login.rs`):** Runs the local loopback OAuth listener (`51121` for Google, `1455` for Codex PKCE) with device-code flow fallback for headless environments.
 - **Wire Translators (`src/antigravity/`, `src/codex/`):** Translates message roles, formats system instructions into appropriate wire parts, strips unsupported sampling parameters for Codex, and injects required backend headers.
+- **Codex tool history:** Function-call arguments are sent upstream as JSON strings, including when a Responses request supplies an object.
 - **Stream Parsers (`src/antigravity/stream.rs`, `src/codex/client.rs`):** Decodes upstream SSE streams into standard OpenAI chat completion chunks or Responses API lifecycle events.
 ## Invariants & Guarantees
 

@@ -38,18 +38,11 @@ pub(crate) fn build_codex_payload_from_chat(req: &ChatCompletionRequest) -> Valu
                 }
                 if let Some(tool_calls) = &msg.tool_calls {
                     for tc in tool_calls {
-                        let args = if let Ok(parsed) =
-                            serde_json::from_str::<Value>(&tc.function.arguments)
-                        {
-                            parsed
-                        } else {
-                            Value::String(tc.function.arguments.clone())
-                        };
                         input_items.push(json!({
                             "type": "function_call",
                             "call_id": tc.id,
                             "name": tc.function.name,
-                            "arguments": args,
+                            "arguments": tc.function.arguments,
                         }));
                     }
                 }
@@ -159,11 +152,14 @@ pub(crate) fn build_codex_payload_from_responses(req: &ResponseCreateRequest) ->
                                 .clone()
                                 .or_else(|| id.clone())
                                 .unwrap_or_else(|| "call_unknown".to_string());
+                            let args = arguments
+                                .as_str()
+                                .map_or_else(|| arguments.to_string(), str::to_owned);
                             input_items.push(json!({
                                 "type": "function_call",
                                 "call_id": cid,
                                 "name": name,
-                                "arguments": arguments,
+                                "arguments": args,
                             }));
                         }
                         ResponseTaggedItem::FunctionCallOutput { call_id, output } => {
@@ -390,7 +386,7 @@ mod tests {
     }
 
     #[test]
-    fn test_build_codex_payload_parses_tool_call_arguments_when_valid_json() {
+    fn test_build_codex_payload_keeps_tool_call_arguments_as_string() {
         let req = ChatCompletionRequest {
             model: "gpt-6.1-terra".to_string(),
             messages: vec![ChatMessage {
@@ -422,8 +418,8 @@ mod tests {
         let payload = build_codex_payload_from_chat(&req);
         assert_eq!(payload["input"][0]["type"], "function_call");
         assert_eq!(
-            payload["input"][0]["arguments"],
-            json!({"path": "src/main.rs"})
+            payload["input"][0]["arguments"].as_str(),
+            Some(r#"{"path":"src/main.rs"}"#)
         );
     }
 
@@ -523,6 +519,23 @@ mod tests {
         assert_eq!(payload["input"][0]["content"][0]["text"], "Ping");
         assert!(payload.get("temperature").is_none());
         assert!(payload.get("max_output_tokens").is_none());
+    }
+
+    #[test]
+    fn test_responses_function_call_arguments_are_strings() {
+        let req: ResponseCreateRequest = serde_json::from_value(json!({
+            "model": "gpt-6.1-terra",
+            "input": [
+                {"type": "function_call", "call_id": "call_1", "name": "read", "arguments": {"path": "Cargo.toml"}},
+                {"type": "function_call", "call_id": "call_2", "name": "read", "arguments": "{\"path\":\"src/main.rs\"}"}
+            ]
+        })).unwrap();
+        let payload = build_codex_payload_from_responses(&req);
+        assert_eq!(payload["input"][0]["arguments"], r#"{"path":"Cargo.toml"}"#);
+        assert_eq!(
+            payload["input"][1]["arguments"],
+            r#"{"path":"src/main.rs"}"#
+        );
     }
 
     #[test]
