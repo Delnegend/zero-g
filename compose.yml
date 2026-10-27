@@ -5,16 +5,11 @@ services:
     container_name: zero-g
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     env_file:
-      - path: .env
-        required: false
-    environment:
-      - ZERO_G_BIND=0.0.0.0:8080
-      - ZERO_G_ZEN_URL=http://zen-shim:8090/v1
+      - .env
     volumes:
-      - ./credentials-agy.json:/app/credentials-agy.json:ro,Z
-      - ./credentials-codex.json:/app/credentials-codex.json:ro,Z
+      - zero-g-data:/app/data
     depends_on:
       - zen-shim
 
@@ -32,3 +27,7 @@ services:
     environment:
       - PORT=8090
     command: ["bun", "/shim/zen_shim.ts"]
+
+volumes:
+  zero-g-data:
+    name: zero-g-data

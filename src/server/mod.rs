@@ -1,56 +1,33 @@
 mod agy;
-pub(crate) mod auth;
 pub(crate) mod codex;
+pub(crate) mod dashboard_auth;
+pub(crate) mod observability;
+pub(crate) mod provider_login;
+pub(crate) mod settings;
 pub(crate) mod sse;
+mod web;
 mod zen;
 
 use std::sync::Arc;
 
 use axum::Router;
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Json};
+use axum::response::IntoResponse;
 use axum::routing::{get, post};
-use serde_json::json;
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::antigravity::{AntigravityClient, AuthManager};
 use crate::codex::{CodexAuthManager, CodexClient};
 
-#[derive(Debug, Clone, Default)]
-pub(crate) struct ProviderTokens {
-    pub(crate) agy: Option<String>,
-    pub(crate) codex: Option<String>,
-    pub(crate) zen: Option<String>,
-}
-
-impl ProviderTokens {
-    pub(crate) fn from_env() -> Self {
-        let read_token = |keys: &[&str]| -> Option<String> {
-            for key in keys {
-                if let Ok(val) = std::env::var(key)
-                    && !val.trim().is_empty()
-                {
-                    return Some(val.trim().to_string());
-                }
-            }
-            None
-        };
-
-        Self {
-            agy: read_token(&["ZERO_G_API_TOKEN_AGY", "ZERO_G_TOKEN_AGY"]),
-            codex: read_token(&["ZERO_G_API_TOKEN_CODEX", "ZERO_G_TOKEN_CODEX"]),
-            zen: read_token(&["ZERO_G_API_TOKEN_ZEN", "ZERO_G_TOKEN_ZEN"]),
-        }
-    }
-}
-
 #[derive(Clone)]
 pub(crate) struct AppState {
-    pub(crate) auth: Option<AuthManager>,
+    pub(crate) auth: Arc<tokio::sync::RwLock<Option<AuthManager>>>,
     pub(crate) client: Arc<AntigravityClient>,
-    pub(crate) codex_auth: Option<CodexAuthManager>,
+    pub(crate) codex_auth: Arc<tokio::sync::RwLock<Option<CodexAuthManager>>>,
     pub(crate) codex_client: Arc<CodexClient>,
-    pub(crate) tokens: Arc<ProviderTokens>,
+    pub(crate) settings: settings::SettingsStore,
+    pub(crate) logs: observability::LogStore,
+    pub(crate) dashboard_auth: dashboard_auth::DashboardAuth,
 }
 
 pub(crate) fn create_router(state: AppState) -> Router {
@@ -74,8 +51,8 @@ pub(crate) fn create_router(state: AppState) -> Router {
         .route("/responses", post(agy::responses_handler))
         .route("/responses/", post(agy::responses_handler))
         .layer(axum::middleware::from_fn_with_state(
-            state.tokens.agy.clone(),
-            auth::auth_middleware,
+            (state.settings.clone(), "agy"),
+            settings::virtual_key_auth,
         ));
 
     let codex_routes = Router::new()
@@ -92,8 +69,8 @@ pub(crate) fn create_router(state: AppState) -> Router {
         .route("/responses", post(codex::responses_handler))
         .route("/responses/", post(codex::responses_handler))
         .layer(axum::middleware::from_fn_with_state(
-            state.tokens.codex.clone(),
-            auth::auth_middleware,
+            (state.settings.clone(), "codex"),
+            settings::virtual_key_auth,
         ));
 
     let zen_routes = Router::new()
@@ -106,40 +83,82 @@ pub(crate) fn create_router(state: AppState) -> Router {
         .route("/chat/completions", post(zen::chat_handler))
         .route("/chat/completions/", post(zen::chat_handler))
         .layer(axum::middleware::from_fn_with_state(
-            state.tokens.zen.clone(),
-            auth::auth_middleware,
+            (state.settings.clone(), "zen"),
+            settings::virtual_key_auth,
         ));
 
+    let login_state = (state.clone(), provider_login::OAuthFlows::default());
+    let dashboard = Router::new()
+        .route("/", get(web::index))
+        .route(
+            "/api/observability",
+            get(observability::dashboard).with_state(state.logs.clone()),
+        )
+        .route(
+            "/api/settings",
+            get(settings::get_settings)
+                .put(settings::put_settings)
+                .with_state(state.settings.clone()),
+        )
+        .route(
+            "/api/providers/status",
+            get(provider_login::status).with_state(login_state.clone()),
+        )
+        .route(
+            "/api/providers/agy/start",
+            post(provider_login::agy_start).with_state(login_state.clone()),
+        )
+        .route(
+            "/api/providers/agy/finish",
+            post(provider_login::agy_finish).with_state(login_state.clone()),
+        )
+        .route(
+            "/api/providers/agy/poll",
+            post(provider_login::agy_poll).with_state(login_state.clone()),
+        )
+        .route(
+            "/api/providers/codex/start",
+            post(provider_login::codex_start).with_state(login_state.clone()),
+        )
+        .route(
+            "/api/providers/codex/poll",
+            post(provider_login::codex_poll).with_state(login_state),
+        )
+        .route(
+            "/api/keys",
+            get(settings::list_keys)
+                .post(settings::create_key)
+                .with_state(state.settings.clone()),
+        )
+        .route(
+            "/api/keys/{id}",
+            axum::routing::delete(settings::revoke_key).with_state(state.settings.clone()),
+        )
+        .fallback(get(web::fallback));
+    let dashboard = state.dashboard_auth.protect(dashboard);
+
     Router::new()
-        .route("/", get(root_handler))
         .route("/health", get(health_handler))
         .nest("/agy", agy_routes)
         .nest("/codex", codex_routes)
         .nest("/zen", zen_routes)
         .layer(cors)
+        .layer(axum::middleware::from_fn_with_state(
+            state.logs.clone(),
+            observability::capture,
+        ))
+        .with_state(state)
+        .merge(dashboard)
         .layer(axum::middleware::from_fn(
             |req: axum::extract::Request, next: axum::middleware::Next| async move {
                 let method = req.method().clone();
-                let uri = req.uri().clone();
+                let uri = req.uri().path().to_owned();
                 tracing::info!("--> {method} {uri}");
                 let resp = next.run(req).await;
                 tracing::info!("<-- {method} {uri} {}", resp.status());
                 resp
             },
         ))
-        .with_state(state)
-}
-
-async fn root_handler() -> impl IntoResponse {
-    Json(json!({
-        "service": "zero-g",
-        "description": "Multi-provider AI proxy (Google Antigravity, OpenAI Codex, OpenCode Zen)",
-        "prefixes": [
-            "/agy/v1 (Google Antigravity)",
-            "/codex/v1 (OpenAI Codex)",
-            "/zen/v1 (OpenCode Zen)"
-        ]
-    }))
 }
 
 async fn health_handler() -> impl IntoResponse {

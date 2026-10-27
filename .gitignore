@@ -4,3 +4,7 @@
 .env
 !.env.example
 *.log
+node_modules
+/web/dist
+.bun
+/zero-g-logs.db*

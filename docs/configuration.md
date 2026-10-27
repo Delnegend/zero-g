@@ -1,80 +1,38 @@
 # Configuration Reference
 
-## Environment Variables
+## Bootstrap environment
 
-| Variable | Default | Required | Description |
-|---|---|---|---|
-| `ZERO_G_BIND` | `127.0.0.1:8080` | No | Listening `host:port` bind address |
-| `ZERO_G_ZEN_URL` | `http://127.0.0.1:8090/v1` | No | Base URL of the OpenCode Zen shim. On startup zero-g probes this URL and auto-spawns a sibling `zen-shim` binary when nothing answers; set it explicitly when the shim runs elsewhere (e.g. `http://zen-shim:8090/v1` in compose) |
-| `ZERO_G_ZEN_API_KEY` | `public` | No | Bearer token for OpenCode Zen upstream (`public` for keyless free tier, or a Zen API key) |
-| `ZERO_G_OAUTH_CLIENT_ID` | None (reads `.env`) | No | Google OAuth desktop client ID for sign-in/refresh |
-| `ZERO_G_OAUTH_CLIENT_SECRET` | None (reads `.env`) | No | Google OAuth desktop client secret |
-| `ZERO_G_API_TOKEN_AGY` | None | No | Optional bearer token protecting `/agy/v1/*` routes |
-| `ZERO_G_API_TOKEN_CODEX` | None | No | Optional bearer token protecting `/codex/v1/*` routes |
-| `ZERO_G_API_TOKEN_ZEN` | None | No | Optional bearer token protecting `/zen/v1/*` routes |
-## Obtaining OAuth Credentials
+All commands require `ZERO_G_ENCRYPTION_KEY`: standard Base64 encoding of exactly 32 random bytes. Generate it once with `openssl rand -base64 32`, keep it stable, and back it up securely. Changing or losing it makes encrypted secrets unreadable. The application also reads a `.env` file in its working directory; protect that file.
 
-`zero-g login` requires desktop OAuth client credentials to authenticate with Google:
+| Variable | Default | Purpose |
+|---|---|---|
+| `ZERO_G_ENCRYPTION_KEY` | None | Required encryption key for stored secrets |
+| `ZERO_G_LOG_DB` | `zero-g-logs.db` | Local Turso database path; container default `/app/data/zero-g-logs.db` |
+| `ZERO_G_DASHBOARD_AUTH` | None | Required for `serve`: `basic`, `oidc`, or explicit `disabled` |
+| `ZERO_G_DASHBOARD_ORIGIN` | None | Required for `serve` in every mode: exact dashboard origin, HTTPS except loopback HTTP locally; protects dashboard writes |
+| `ZERO_G_DASHBOARD_USERNAME`, `ZERO_G_DASHBOARD_PASSWORD` | None | Required in Basic mode; username cannot contain `:` |
+| `ZERO_G_OIDC_ISSUER`, `ZERO_G_OIDC_CLIENT_ID`, `ZERO_G_OIDC_CLIENT_SECRET` | None | Required in OIDC mode |
+| `ZERO_G_OIDC_ALLOWED_EMAILS` | None | OIDC comma-separated allowlist of verified email addresses |
+| `ZERO_G_OIDC_REDIRECT_URL` | None | OIDC callback URL ending in `/auth/callback`: HTTPS except loopback HTTP for local development |
 
-1. Navigate to [Google Cloud Console](https://console.cloud.google.com/) $\to$ **APIs & Services** $\to$ **Credentials**.
-2. Click **Create Credentials** $\to$ **OAuth client ID** $\to$ select Application type: **Desktop app**.
-3. Add the required scopes (`cloud-platform`, `userinfo.email`, `userinfo.profile`, `cclog`, `experimentsandconfigs`).
-4. Copy the Client ID and Client Secret into `.env` as `ZERO_G_OAUTH_CLIENT_ID` and `ZERO_G_OAUTH_CLIENT_SECRET`.
-## CLI Commands and Flags
+Register the exact redirect URL with the identity provider. OIDC sessions expire after eight hours and are lost on restart. Never disable dashboard authentication on an untrusted network; use HTTPS outside localhost.
 
-### `zero-g serve`
+## Dashboard settings and virtual keys
 
-Run the OpenAI-compatible HTTP proxy. All runtime options (bind address, Zen shim URL/key) are configured via environment variables (`ZERO_G_BIND`, `ZERO_G_ZEN_URL`, `ZERO_G_ZEN_API_KEY`).
-### `zero-g login`
+Sign in to the dashboard and open **Settings** to configure the persisted listening address (default `127.0.0.1:8080`), log retention (default 30 days, range 1–36500), Zen upstream URL and API key, and Google OAuth desktop client ID and secret. Bind changes require a restart. Secrets are encrypted at rest; blank secret fields retain the existing value unless explicitly cleared. The Zen URL may be set to `http://zen-shim:8090/v1` for the supplied Compose setup.
 
-Start a temporary OAuth callback listener on `127.0.0.1:51121`, open the browser consent flow, exchange tokens, and discover the Cloud Code Assist project.
+Create a key under **Virtual keys**, copy it when displayed (it cannot be retrieved later), and supply `Authorization: Bearer <key>` to all provider inference and model endpoints. Choose provider and model restrictions as needed; selecting no providers or models permits all. Revoke compromised keys in the same screen. Dashboard authentication and virtual keys are separate controls.
 
-### `zero-g models`
+## Google OAuth
 
-Query the active Antigravity subscription and display all available wire model IDs, token limits, and reasoning capabilities.
+Create a Desktop app OAuth client in [Google Cloud Console](https://console.cloud.google.com/) under **APIs & Services → Credentials**, with the required `cloud-platform`, `userinfo.email`, `userinfo.profile`, `cclog` and `experimentsandconfigs` scopes. Enter its client ID and secret in Settings. Legacy `ZERO_G_OAUTH_CLIENT_ID` and `ZERO_G_OAUTH_CLIENT_SECRET` are imported once on first startup when corresponding settings are absent; subsequent changes belong in the dashboard.
 
-### `zero-g status`
+Open **Providers**, start Google sign-in, and follow the authorization link. When your browser is on the server machine, the local callback can complete sign-in automatically. If the browser is on another machine, copy the entire redirected loopback URL from its address bar and paste it into the dashboard, even if the loopback page does not load. The URL contains a temporary authorization code; keep it private. For Codex, start sign-in under **Providers**, open the device authorization link, and enter the displayed code; the dashboard waits for completion.
 
-Print the active GCP companion project ID, account email, token expiry, and refresh token presence.
+## Commands and credentials
 
-## Credentials Storage
+`zero-g serve` starts the server. As an alternative to dashboard sign-in, `zero-g login agy` and `zero-g login codex` perform provider sign-in (Codex also supports `--device`). `zero-g models <provider>` lists models and `zero-g status [provider]` shows authentication status. Commands share the configured database and encryption key.
 
-`zero-g` looks for credentials in the following order:
+Existing plaintext Antigravity and Codex credential files are imported once into encrypted database storage when no stored credential exists. The importer checks `ZERO_G_CREDENTIALS_AGY` (or `ZERO_G_CREDENTIALS`) and `ZERO_G_CREDENTIALS_CODEX` overrides respectively, then a `credentials-agy.json` or `credentials-codex.json` in the working directory, then the corresponding file under `$XDG_CONFIG_HOME/zero-g` (or `~/.config/zero-g`). Make the files available before the first provider load; an absent file is also recorded as an import attempt. Imported files are retained, not deleted; protect or securely dispose of them yourself after confirming the migration. Subsequent login and refresh use the database.
 
-### Google Antigravity
-
-1. Environment override: `ZERO_G_CREDENTIALS_AGY` or `ZERO_G_CREDENTIALS`.
-2. Local file: `credentials-agy.json` in the current working directory.
-3. User file: `$XDG_CONFIG_HOME/zero-g/credentials-agy.json` (falling back to `~/.config/zero-g/credentials-agy.json`).
-
-#### Antigravity Schema (`credentials-agy.json`)
-
-```json
-{
-  "access_token": "ya29...",
-  "refresh_token": "1//0...",
-  "project_id": "aicode-consumers",
-  "expires_at": 1792820000000,
-  "email": "user@example.com"
-}
-```
-
-### OpenAI Codex (ChatGPT OAuth)
-
-1. Environment override: `ZERO_G_CREDENTIALS_CODEX` (or token via `OPENAI_CODEX_OAUTH_TOKEN`).
-2. Local file: `credentials-codex.json` in the current working directory.
-3. User file: `$XDG_CONFIG_HOME/zero-g/credentials-codex.json` (falling back to `~/.config/zero-g/credentials-codex.json`).
-
-#### Codex Schema (`credentials-codex.json`)
-
-```json
-{
-  "access_token": "eyJhbGci...",
-  "refresh_token": "rt_...",
-  "account_id": "acc_123456",
-  "email": "user@example.com",
-  "plan_type": "pro",
-  "residency": "us",
-  "expires_at": 1792820000000
-}
-```
+The database contains sensitive full request and response bodies as well as settings and encrypted secrets. Restrict filesystem access, protect backups, and use TLS for dashboard access. Token counts are recorded only when the provider includes usage in its response.

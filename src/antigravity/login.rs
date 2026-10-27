@@ -14,6 +14,7 @@ use crate::antigravity::auth::{
     OAUTH_CALLBACK_PORT, OAUTH_CALLBACK_URL, OAUTH_SCOPES, OAUTH_TOKEN_URL, oauth_client_id,
     oauth_client_secret,
 };
+use crate::server::settings::SettingsStore;
 use crate::util::urlencode;
 
 #[derive(Deserialize)]
@@ -50,7 +51,7 @@ struct OnboardOperation {
     error: Option<serde_json::Value>,
 }
 
-pub(crate) async fn run_login() -> Result<Credentials, String> {
+pub(crate) async fn run_login(store: &SettingsStore) -> Result<Credentials, String> {
     let (tx, rx) = oneshot::channel::<Result<String, String>>();
     let tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(tx)));
 
@@ -90,8 +91,8 @@ pub(crate) async fn run_login() -> Result<Credentials, String> {
         .map_err(|e| format!("Failed to bind to callback port {OAUTH_CALLBACK_PORT}: {e}"))?;
 
     let scopes_encoded = OAUTH_SCOPES.join(" ");
-    let client_id = oauth_client_id()?;
-    let client_secret = oauth_client_secret()?;
+    let client_id = oauth_client_id(store).await?;
+    let client_secret = oauth_client_secret(store).await?;
     let auth_url = format!(
         "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}&access_type=offline&prompt=consent",
         urlencode(&client_id),
@@ -183,7 +184,7 @@ pub(crate) async fn run_login() -> Result<Credentials, String> {
     })
 }
 
-async fn fetch_or_onboard_project(
+pub(crate) async fn fetch_or_onboard_project(
     client: &reqwest::Client,
     access_token: &str,
     email: Option<&str>,

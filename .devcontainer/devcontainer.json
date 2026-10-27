@@ -3,8 +3,10 @@
 	"build": {
 		"dockerfile": "Dockerfile"
 	},
+	"postCreateCommand": ".devcontainer/postinstall.sh",
 	"containerUser": "dev",
 	"remoteUser": "dev",
+	"forwardPorts": [8080],
 	"runArgs": [
 		"--hostname=zero-g",
 		"--security-opt",

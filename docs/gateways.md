@@ -1,9 +1,9 @@
 # Gateway Integration
 
 `zero-g` is designed to sit behind an OpenAI-compatible gateway such as
-LiteLLM or Bifrost. The gateway owns routing, virtual keys, budgets,
-observability, and failover; `zero-g` owns Antigravity OAuth refresh and
-protocol translation.
+LiteLLM or Bifrost. The gateway can own routing, budgets, observability, and
+failover; `zero-g` owns provider authentication and protocol translation. Create
+a `zero-g` virtual key in its dashboard for the gateway's upstream requests.
 
 Both `/v1/chat/completions` and `/v1/responses` are exposed so the gateway can
 use direct pass-through in either direction. `/v1/models` is also exposed for
@@ -19,30 +19,32 @@ model_list:
     litellm_params:
       model: openai/claude-sonnet-5-5-medium
       api_base: http://zero-g:8080/agy/v1
+      api_key: os.environ/ZERO_G_VIRTUAL_KEY
   - model_name: zen-beam
     litellm_params:
       model: openai/beam-free
       api_base: http://zero-g:8080/zen/v1
+      api_key: os.environ/ZERO_G_VIRTUAL_KEY
 ```
 
 LiteLLM calls `zero-g`'s `/agy/v1/chat/completions` for chat traffic and
 forwards `/v1/responses` requests to `zero-g`'s `/agy/v1/responses` endpoint. No
-Responses-to-chat bridge is required. `zero-g` accepts no bearer auth;
-authentication lives on the LiteLLM side.
+Responses-to-chat bridge is required. Supply the created key securely via the
+gateway environment.
 
 ## Bifrost
 
-Configure `zero-g` as a custom OpenAI-base provider. `base_url` omits `/v1`
-because Bifrost appends its OpenAI paths:
+Configure each provider as a custom OpenAI-base provider. Set the appropriate
+provider prefix in `base_url` because Bifrost appends its OpenAI paths:
 
 ```json
 {
   "providers": {
     "zero-g": {
       "keys": [
-        { "name": "zero-g", "value": "local-only", "models": ["*"] }
+        { "name": "zero-g", "value": "<zero-g-virtual-key>", "models": ["*"] }
       ],
-      "network_config": { "base_url": "http://zero-g:8080" },
+      "network_config": { "base_url": "http://zero-g:8080/agy" },
       "custom_provider_config": {
         "base_provider_type": "openai",
         "allowed_requests": {
@@ -65,9 +67,8 @@ additional configuration.
 
 ## Notes
 
-- `zero-g` is keyless and listens on localhost; the provider key above is a
-  placeholder (`zero-g` ignores bearer auth). Enforce authentication at the
-  gateway (virtual keys, tinyauth, etc.).
+- The provider key must be a valid `zero-g` virtual key; restrict it to the
+  providers and models needed by the gateway. Keep the value secret.
 - Model names are upstream wire IDs — `/agy/v1/models`, `/codex/v1/models`, and
   `/zen/v1/models` list exactly what each backend serves. There is no alias
   layer; do friendly naming in the gateway.

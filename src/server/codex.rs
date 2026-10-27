@@ -1,3 +1,4 @@
+use axum::Extension;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
@@ -6,6 +7,19 @@ use crate::codex::models::fetch_codex_models;
 use crate::openai::ChatCompletionRequest;
 use crate::responses::ResponseCreateRequest;
 use crate::server::AppState;
+use crate::server::settings::Permissions;
+
+fn model_forbidden() -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        Json(crate::server::error_body(
+            "Model is not allowed for this virtual key",
+            "permission_error",
+            Some("model_not_allowed"),
+        )),
+    )
+        .into_response()
+}
 
 pub(crate) fn strip_codex_prefix(model: &str) -> String {
     if let Some(rest) = model.strip_prefix("openai-codex/") {
@@ -17,8 +31,12 @@ pub(crate) fn strip_codex_prefix(model: &str) -> String {
     }
 }
 
-pub(crate) async fn models_handler(State(state): State<AppState>) -> Response {
-    let Some(codex_auth) = &state.codex_auth else {
+pub(crate) async fn models_handler(
+    State(state): State<AppState>,
+    Extension(permissions): Extension<Permissions>,
+) -> Response {
+    let auth_guard = state.codex_auth.read().await;
+    let Some(codex_auth) = auth_guard.as_ref() else {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(crate::server::error_body(
@@ -31,7 +49,12 @@ pub(crate) async fn models_handler(State(state): State<AppState>) -> Response {
     };
 
     match fetch_codex_models(codex_auth).await {
-        Ok(models) => Json(models).into_response(),
+        Ok(mut models) => {
+            models
+                .data
+                .retain(|model| permissions.allows_model(&strip_codex_prefix(&model.id)));
+            Json(models).into_response()
+        }
         Err(e) => (
             StatusCode::BAD_GATEWAY,
             Json(crate::server::error_body(
@@ -46,9 +69,16 @@ pub(crate) async fn models_handler(State(state): State<AppState>) -> Response {
 
 pub(crate) async fn chat_handler(
     State(state): State<AppState>,
+    Extension(permissions): Extension<Permissions>,
     Json(mut req): Json<ChatCompletionRequest>,
 ) -> Response {
-    let Some(codex_auth) = &state.codex_auth else {
+    req.model = strip_codex_prefix(&req.model);
+    if !permissions.allows_model(&req.model) {
+        return model_forbidden();
+    }
+
+    let auth_guard = state.codex_auth.read().await;
+    let Some(codex_auth) = auth_guard.as_ref() else {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(crate::server::error_body(
@@ -74,8 +104,8 @@ pub(crate) async fn chat_handler(
                 .into_response();
         }
     };
+    drop(auth_guard);
 
-    req.model = strip_codex_prefix(&req.model);
     let is_streaming = req.stream.unwrap_or(false);
 
     if is_streaming {
@@ -102,9 +132,16 @@ pub(crate) async fn chat_handler(
 
 pub(crate) async fn responses_handler(
     State(state): State<AppState>,
+    Extension(permissions): Extension<Permissions>,
     Json(mut req): Json<ResponseCreateRequest>,
 ) -> Response {
-    let Some(codex_auth) = &state.codex_auth else {
+    req.model = strip_codex_prefix(&req.model);
+    if !permissions.allows_model(&req.model) {
+        return model_forbidden();
+    }
+
+    let auth_guard = state.codex_auth.read().await;
+    let Some(codex_auth) = auth_guard.as_ref() else {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(crate::server::error_body(
@@ -130,8 +167,8 @@ pub(crate) async fn responses_handler(
                 .into_response();
         }
     };
+    drop(auth_guard);
 
-    req.model = strip_codex_prefix(&req.model);
     let is_streaming = req.stream.unwrap_or(false);
 
     if is_streaming {
@@ -160,6 +197,18 @@ pub(crate) async fn responses_handler(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn policy_checks_effective_model_for_all_aliases() {
+        let permissions = Permissions {
+            providers: vec![],
+            models: vec!["gpt-5.5".into()],
+        };
+        for model in ["gpt-5.5", "codex/gpt-5.5", "openai-codex/gpt-5.5"] {
+            assert!(permissions.allows_model(&strip_codex_prefix(model)));
+        }
+        assert!(!permissions.allows_model(&strip_codex_prefix("codex/gpt-5.6")));
+    }
 
     #[test]
     fn test_strip_codex_prefix() {

@@ -84,6 +84,9 @@ jobs:
         with:
           bun-version: "1.4.4"
 
+      - name: Build frontend
+        run: (cd web && bun install --frozen-lockfile) && just web-build
+
       - name: Build Linux x64 binary
         shell: bash
         run: |

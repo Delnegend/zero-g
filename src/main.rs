@@ -1,9 +1,11 @@
 mod antigravity;
 mod codex;
+mod legacy_import;
 mod openai;
 mod responses;
 mod server;
 mod shim;
+mod storage;
 mod util;
 mod zen;
 
@@ -16,7 +18,32 @@ use tracing_subscriber::FmtSubscriber;
 
 use crate::antigravity::{AntigravityClient, AuthManager};
 use crate::codex::{CodexAuthManager, CodexClient};
+use crate::server::observability::LogStore;
+use crate::server::settings::SettingsStore;
 use crate::server::{AppState, create_router};
+
+#[derive(Debug, thiserror::Error)]
+enum ServerError {
+    #[error("log_retention_days must be a positive integer")]
+    InvalidLogRetention(#[source] std::num::ParseIntError),
+    #[error("log_retention_days must be between 1 and 36500")]
+    LogRetentionOutOfRange,
+    #[error("{0}")]
+    LogStore(String),
+    #[error("{0}")]
+    DashboardAuth(String),
+    #[error("Invalid bind address: {0}")]
+    InvalidBindAddress(#[source] std::net::AddrParseError),
+    #[error("Failed to bind to {addr}: {source}")]
+    Bind {
+        addr: SocketAddr,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("Server terminated with error: {0}")]
+    Serve(#[source] std::io::Error),
+}
+
 #[derive(Parser)]
 #[command(name = "zero-g")]
 #[command(
@@ -51,6 +78,13 @@ enum Commands {
         /// Provider to check status for ("agy", "codex", or "zen")
         provider: Option<String>,
     },
+    /// Copy a stopped legacy database into a new migrated database
+    ImportLegacy {
+        /// Existing database path
+        source: std::path::PathBuf,
+        /// New database path (must not exist)
+        destination: std::path::PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -65,59 +99,118 @@ async fn main() {
     let cli = Cli::parse();
     let command = cli.command.unwrap_or(Commands::Serve);
 
+    if let Commands::ImportLegacy {
+        source,
+        destination,
+    } = &command
+    {
+        if let Err(e) = legacy_import::import(source, destination).await {
+            error!("Legacy import failed: {e}");
+            std::process::exit(1);
+        }
+        println!("Imported legacy database into {}", destination.display());
+        return;
+    }
+
+    let (settings, logs) = match open_stores().await {
+        Ok(stores) => stores,
+        Err(e) => {
+            error!("Storage error: {e}");
+            std::process::exit(1);
+        }
+    };
     match command {
         Commands::Serve => {
-            let (host, port) = resolve_bind_config();
-            if let Err(e) = run_server(host, port).await {
+            if let Err(e) = run_server(settings, logs).await {
                 error!("Server error: {e}");
                 std::process::exit(1);
             }
         }
         Commands::Login { provider, device } => {
-            if let Err(e) = run_login(provider, device).await {
+            if let Err(e) = run_login(&settings, provider, device).await {
                 error!("Login failed: {e}");
                 std::process::exit(1);
             }
         }
         Commands::Models { provider } => {
-            if let Err(e) = run_models(provider).await {
+            if let Err(e) = run_models(&settings, provider).await {
                 error!("Failed to fetch models: {e}");
                 std::process::exit(1);
             }
         }
         Commands::Status { provider } => {
-            if let Err(e) = run_status(provider).await {
+            if let Err(e) = run_status(&settings, provider).await {
                 error!("Status check failed: {e}");
                 std::process::exit(1);
             }
         }
+        Commands::ImportLegacy { .. } => {}
     }
 }
 
-fn resolve_bind_config() -> (String, u16) {
-    if let Ok(bind) = std::env::var("ZERO_G_BIND")
-        && let Some((h, p)) = bind.rsplit_once(':')
-        && let Ok(port) = p.parse::<u16>()
+async fn migrate_legacy_settings(settings: &SettingsStore) -> Result<(), String> {
+    for (name, env_name) in [
+        ("bind", "ZERO_G_BIND"),
+        ("log_retention_days", "ZERO_G_LOG_RETENTION_DAYS"),
+        ("zen_url", "ZERO_G_ZEN_URL"),
+    ] {
+        let marker = format!("{name}.imported");
+        if settings.setting_get(&marker).await?.is_none() {
+            if settings.setting_get(name).await?.is_none()
+                && let Ok(value) = std::env::var(env_name)
+                && !value.trim().is_empty()
+            {
+                settings.setting_put(name, &value).await?;
+            }
+            settings.setting_put(&marker, "1").await?;
+        }
+    }
+    if settings
+        .setting_get("zen_api_key.imported")
+        .await?
+        .is_none()
     {
-        let host = if h.is_empty() { "127.0.0.1" } else { h };
-        return (host.to_string(), port);
+        if settings.secret_get("zen_api_key").await?.is_none()
+            && let Ok(value) = std::env::var("ZERO_G_ZEN_API_KEY")
+            && !value.trim().is_empty()
+        {
+            settings.secret_put("zen_api_key", &value).await?;
+        }
+        settings.setting_put("zen_api_key.imported", "1").await?;
     }
-    ("127.0.0.1".to_string(), 8080)
+    Ok(())
 }
 
-async fn init_state() -> Result<AppState, String> {
-    let auth = AuthManager::load().ok();
-    let client = Arc::new(AntigravityClient::new());
-    let codex_auth = CodexAuthManager::load().ok();
-    let codex_client = Arc::new(CodexClient::new());
-
-    if auth.is_none() && codex_auth.is_none() {
-        return Err(
-            "No credentials found for Google Antigravity or OpenAI Codex.\nRun `zero-g login agy` or `zero-g login codex` to authenticate."
-                .to_string(),
-        );
+async fn open_stores() -> Result<(SettingsStore, LogStore), String> {
+    let path = std::env::var("ZERO_G_LOG_DB").unwrap_or_else(|_| "zero-g-logs.db".into());
+    let key = std::env::var("ZERO_G_ENCRYPTION_KEY")
+        .map_err(|_| "ZERO_G_ENCRYPTION_KEY is required".to_string())?;
+    let mut logs = LogStore::open_unpruned(&path).await?;
+    let settings = SettingsStore::new(logs.clone(), &key).await?;
+    migrate_legacy_settings(&settings).await?;
+    let retention = settings
+        .setting_get("log_retention_days")
+        .await?
+        .unwrap_or_else(|| "30".into())
+        .parse::<i64>()
+        .map_err(|e| ServerError::InvalidLogRetention(e).to_string())?;
+    if !(1..=36500).contains(&retention) {
+        return Err(ServerError::LogRetentionOutOfRange.to_string());
     }
+    logs.set_retention(retention).await?;
+    antigravity::auth::migrate_oauth_settings(&settings).await?;
+    Ok((settings, logs))
+}
 
+async fn init_state(settings: SettingsStore, logs: LogStore) -> Result<AppState, ServerError> {
+    let auth = AuthManager::load(settings.clone())
+        .await
+        .map_err(ServerError::LogStore)?;
+    let client = Arc::new(AntigravityClient::new());
+    let codex_auth = CodexAuthManager::load(settings.clone())
+        .await
+        .map_err(ServerError::LogStore)?;
+    let codex_client = Arc::new(CodexClient::new());
     if let Some(a) = &auth
         && let Ok(creds) = a.get_credentials().await
     {
@@ -141,49 +234,27 @@ async fn init_state() -> Result<AppState, String> {
         }
     }
 
-    let tokens = Arc::new(crate::server::ProviderTokens::from_env());
+    let dashboard_auth = crate::server::dashboard_auth::DashboardAuth::from_env()
+        .await
+        .map_err(ServerError::DashboardAuth)?;
 
     Ok(AppState {
-        auth,
+        auth: Arc::new(tokio::sync::RwLock::new(auth)),
         client,
-        codex_auth,
+        codex_auth: Arc::new(tokio::sync::RwLock::new(codex_auth)),
         codex_client,
-        tokens,
+        settings,
+        logs,
+        dashboard_auth,
     })
 }
 
-fn parse_socket_addr(host: &str, port: u16) -> Result<SocketAddr, String> {
-    format!("{host}:{port}")
-        .parse()
-        .map_err(|e| format!("Invalid bind address: {e}"))
-}
-
-fn log_endpoints(addr: SocketAddr, tokens: &crate::server::ProviderTokens) {
+fn log_endpoints(addr: SocketAddr) {
     info!("zero-g multi-provider proxy running at http://{addr}");
-    info!(
-        "  Google Antigravity: http://{addr}/agy/v1 (auth: {})",
-        if tokens.agy.is_some() {
-            "protected"
-        } else {
-            "open"
-        }
-    );
-    info!(
-        "  OpenAI Codex:       http://{addr}/codex/v1 (auth: {})",
-        if tokens.codex.is_some() {
-            "protected"
-        } else {
-            "open"
-        }
-    );
-    info!(
-        "  OpenCode Zen:       http://{addr}/zen/v1 (auth: {})",
-        if tokens.zen.is_some() {
-            "protected"
-        } else {
-            "open"
-        }
-    );
+    info!("  Google Antigravity: http://{addr}/agy/v1");
+    info!("  OpenAI Codex:       http://{addr}/codex/v1");
+    info!("  OpenCode Zen:       http://{addr}/zen/v1");
+    info!("  Inference routes require a virtual key");
 }
 async fn shutdown_signal() {
     #[cfg(unix)]
@@ -211,15 +282,15 @@ async fn bind_and_serve(
     addr: SocketAddr,
     app: axum::Router,
     mut shim: Option<tokio::process::Child>,
-) -> Result<(), String> {
+) -> Result<(), ServerError> {
     let listener = tokio::net::TcpListener::bind(addr)
         .await
-        .map_err(|e| format!("Failed to bind to {addr}: {e}"))?;
+        .map_err(|source| ServerError::Bind { addr, source })?;
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
-        .map_err(|e| format!("Server terminated with error: {e}"))?;
+        .map_err(ServerError::Serve)?;
 
     if let Some(child) = shim.as_mut() {
         let _ = child.kill().await;
@@ -228,23 +299,35 @@ async fn bind_and_serve(
     Ok(())
 }
 
-async fn run_server(host: String, port: u16) -> Result<(), String> {
-    let state = init_state().await?;
-    let addr = parse_socket_addr(&host, port)?;
-    log_endpoints(addr, &state.tokens);
+async fn run_server(settings: SettingsStore, logs: LogStore) -> Result<(), ServerError> {
+    let bind = settings
+        .setting_get("bind")
+        .await
+        .map_err(ServerError::LogStore)?
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "127.0.0.1:8080".into());
+    let addr = bind.parse().map_err(ServerError::InvalidBindAddress)?;
+    let zen_url = settings
+        .setting_get("zen_url")
+        .await
+        .map_err(ServerError::LogStore)?
+        .filter(|url| !url.is_empty())
+        .unwrap_or_else(|| "http://127.0.0.1:8090/v1".into());
+    let state = init_state(settings, logs).await?;
+    log_endpoints(addr);
     let app = create_router(state);
-    let shim = crate::shim::ensure_zen_shim().await;
+    let shim = crate::shim::ensure_zen_shim(&zen_url).await;
     bind_and_serve(addr, app, shim).await
 }
 
-async fn run_login(provider: String, device: bool) -> Result<(), String> {
+async fn run_login(settings: &SettingsStore, provider: String, device: bool) -> Result<(), String> {
     let prov = provider.to_lowercase();
     match prov.as_str() {
         "codex" | "openai-codex" => {
             let creds = codex::login::run_login(device).await?;
-            let path = CodexAuthManager::save_to_file(&creds)?;
+            CodexAuthManager::save(settings, &creds).await?;
             println!("\nOpenAI Codex login successful!");
-            println!("Credentials saved to: {}", path.display());
+            println!("Credentials saved to encrypted storage.");
             if let Some(email) = &creds.email {
                 println!("Account: {email}");
             }
@@ -258,10 +341,10 @@ async fn run_login(provider: String, device: bool) -> Result<(), String> {
             Ok(())
         }
         "agy" | "antigravity" => {
-            let creds = antigravity::login::run_login().await?;
-            let path = AuthManager::save_to_file(&creds)?;
+            let creds = antigravity::login::run_login(settings).await?;
+            AuthManager::save(settings, &creds).await?;
             println!("\nLogin successful!");
-            println!("Credentials saved to: {}", path.display());
+            println!("Credentials saved to encrypted storage.");
             println!("GCP Project ID: {}", creds.project_id);
             if let Some(email) = &creds.email {
                 println!("Account: {email}");
@@ -276,11 +359,11 @@ async fn run_login(provider: String, device: bool) -> Result<(), String> {
     }
 }
 
-async fn run_models(provider: String) -> Result<(), String> {
+async fn run_models(settings: &SettingsStore, provider: String) -> Result<(), String> {
     let prov = provider.to_lowercase();
     match prov.as_str() {
-        "codex" | "openai-codex" => run_codex_models().await,
-        "agy" | "antigravity" => run_antigravity_models().await,
+        "codex" | "openai-codex" => run_codex_models(settings).await,
+        "agy" | "antigravity" => run_antigravity_models(settings).await,
         "zen" | "opencode-zen" => {
             run_zen_models();
             Ok(())
@@ -304,8 +387,10 @@ fn run_zen_models() {
     }
 }
 
-async fn run_antigravity_models() -> Result<(), String> {
-    let auth = AuthManager::load()?;
+async fn run_antigravity_models(settings: &SettingsStore) -> Result<(), String> {
+    let auth = AuthManager::load(settings.clone())
+        .await?
+        .ok_or_else(|| "No Antigravity credentials found; run `zero-g login agy`".to_string())?;
     let client = AntigravityClient::new();
     let creds = auth.get_credentials().await?;
 
@@ -336,8 +421,10 @@ async fn run_antigravity_models() -> Result<(), String> {
     Ok(())
 }
 
-async fn run_codex_models() -> Result<(), String> {
-    let codex_auth = CodexAuthManager::load()?;
+async fn run_codex_models(settings: &SettingsStore) -> Result<(), String> {
+    let codex_auth = CodexAuthManager::load(settings.clone())
+        .await?
+        .ok_or_else(|| "No Codex credentials found; run `zero-g login codex`".to_string())?;
     println!("\nFetching OpenAI Codex models...");
     let models_resp = codex::models::fetch_codex_models(&codex_auth).await?;
 
@@ -353,48 +440,47 @@ async fn run_codex_models() -> Result<(), String> {
     Ok(())
 }
 
-async fn run_status(provider: Option<String>) -> Result<(), String> {
+async fn run_status(settings: &SettingsStore, provider: Option<String>) -> Result<(), String> {
     let prov = provider.map(|p| p.to_lowercase());
 
     if prov.as_deref() == Some("codex") || prov.as_deref() == Some("openai-codex") {
-        print_codex_status();
-        return Ok(());
+        return print_codex_status(settings).await;
     }
 
     if prov.as_deref() == Some("antigravity") || prov.as_deref() == Some("agy") {
-        return print_antigravity_status().await;
+        return print_antigravity_status(settings).await;
     }
 
     if prov.as_deref() == Some("zen") || prov.as_deref() == Some("opencode-zen") {
-        print_zen_status();
+        print_zen_status(settings).await?;
         return Ok(());
     }
 
-    let _ = print_antigravity_status().await;
-    print_codex_status();
-    print_zen_status();
+    print_antigravity_status(settings).await?;
+    print_codex_status(settings).await?;
+    print_zen_status(settings).await?;
     Ok(())
 }
 
-fn print_zen_status() {
+async fn print_zen_status(settings: &SettingsStore) -> Result<(), String> {
     println!("\n--- OpenCode Zen ---");
     println!("Status: Active (free tier)");
-    println!("Base URL: {}", crate::shim::zen_base_url());
+    let url = settings
+        .setting_get("zen_url")
+        .await?
+        .filter(|url| !url.is_empty())
+        .unwrap_or_else(|| "http://127.0.0.1:8090/v1".into());
+    println!("Base URL: {url}");
+    Ok(())
 }
-async fn print_antigravity_status() -> Result<(), String> {
+async fn print_antigravity_status(settings: &SettingsStore) -> Result<(), String> {
     println!("\n--- Google Antigravity ---");
-    let Ok(auth) = AuthManager::load() else {
+    let Some(auth) = AuthManager::load(settings.clone()).await? else {
         println!("Status: Not configured");
         return Ok(());
     };
 
-    let creds = match auth.get_credentials().await {
-        Ok(c) => c,
-        Err(e) => {
-            println!("Status: Error loading credentials ({e})");
-            return Ok(());
-        }
-    };
+    let creds = auth.get_credentials().await?;
 
     println!("Status: Authenticated");
     println!("GCP Project ID: {}", creds.project_id);
@@ -420,24 +506,13 @@ async fn print_antigravity_status() -> Result<(), String> {
     Ok(())
 }
 
-fn print_codex_status() {
+async fn print_codex_status(settings: &SettingsStore) -> Result<(), String> {
     println!("\n--- OpenAI Codex (ChatGPT OAuth) ---");
-    let Ok(ca) = CodexAuthManager::load() else {
+    let Some(ca) = CodexAuthManager::load(settings.clone()).await? else {
         println!("Status: Not configured");
-        return;
+        return Ok(());
     };
-
-    let creds = match futures_util::FutureExt::now_or_never(ca.get_credentials()) {
-        Some(Ok(c)) => c,
-        Some(Err(e)) => {
-            println!("Status: Error loading credentials ({e})");
-            return;
-        }
-        None => {
-            println!("Status: Pending refresh");
-            return;
-        }
-    };
+    let creds = ca.get_credentials().await?;
     println!("Status: Authenticated");
     if let Some(email) = &creds.email {
         println!("Account: {email}");
@@ -467,17 +542,5 @@ fn print_codex_status() {
         }
     }
     println!("Has refresh token: {}", creds.refresh_token.is_some());
-}
-
-#[cfg(test)]
-#[allow(clippy::unwrap_used)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_resolve_bind_config() {
-        let (h, p) = resolve_bind_config();
-        assert_ne!(h, "");
-        assert!(p > 0);
-    }
+    Ok(())
 }

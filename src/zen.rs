@@ -22,10 +22,6 @@ const ZEN_MODELS: &[&str] = &[
     "nemotron-3.5-super-vl-free",
 ];
 
-fn zen_base_url() -> String {
-    crate::shim::zen_base_url()
-}
-
 fn session_id() -> String {
     const ALNUM: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     let ts = SystemTime::now()
@@ -44,7 +40,10 @@ fn session_id() -> String {
     format!("ses_{hex}{rand}")
 }
 
-pub(crate) fn transform(req: &ChatCompletionRequest) -> (Value, Vec<(String, String)>) {
+pub(crate) fn transform(
+    req: &ChatCompletionRequest,
+    zen_key: &str,
+) -> (Value, Vec<(String, String)>) {
     let caller_system = req
         .messages
         .iter()
@@ -127,7 +126,6 @@ pub(crate) fn transform(req: &ChatCompletionRequest) -> (Value, Vec<(String, Str
     }
 
     let s = session_id();
-    let zen_key = std::env::var("ZERO_G_ZEN_API_KEY").unwrap_or_else(|_| "public".to_string());
     let headers = vec![
         ("Authorization".to_string(), format!("Bearer {zen_key}")),
         ("Content-Type".to_string(), "application/json".to_string()),
@@ -267,10 +265,14 @@ fn aggregate_sse(sse: &str) -> Value {
     resp
 }
 
-pub(crate) async fn handle_chat(req: ChatCompletionRequest) -> Response {
-    let (body, headers) = transform(&req);
+pub(crate) async fn handle_chat(
+    req: ChatCompletionRequest,
+    zen_base_url: &str,
+    zen_key: &str,
+) -> Response {
+    let (body, headers) = transform(&req, zen_key);
     let client = reqwest::Client::new();
-    let url = format!("{}/chat/completions", zen_base_url().trim_end_matches('/'));
+    let url = format!("{}/chat/completions", zen_base_url.trim_end_matches('/'));
 
     let mut rb = client.post(&url);
     for (k, v) in &headers {

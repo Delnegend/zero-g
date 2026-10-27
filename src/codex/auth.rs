@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::util::{config_base_dir, restrict_file_permissions};
+use crate::server::settings::SettingsStore;
+use crate::util::config_base_dir;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
@@ -46,7 +47,7 @@ pub(crate) struct CodexCredentials {
 #[derive(Clone)]
 pub(crate) struct CodexAuthManager {
     creds: Arc<RwLock<CodexCredentials>>,
-    storage_path: PathBuf,
+    store: SettingsStore,
 }
 
 #[derive(Deserialize)]
@@ -122,41 +123,44 @@ fn decode_jwt_payload(token: &str) -> Option<serde_json::Value> {
 }
 
 impl CodexAuthManager {
-    pub(crate) fn load() -> Result<Self, String> {
-        let storage_path = Self::get_config_path();
-        if let Some(creds) = Self::load_from_file(&storage_path) {
-            info!("Loaded Codex credentials from file: {:?}", storage_path);
-            return Ok(Self {
-                creds: Arc::new(RwLock::new(creds)),
-                storage_path,
-            });
-        }
-
-        // Also check OPENAI_CODEX_OAUTH_TOKEN env var
-        if let Ok(token) = std::env::var("OPENAI_CODEX_OAUTH_TOKEN")
-            .or_else(|_| std::env::var("ZERO_G_CODEX_TOKEN"))
-            && !token.trim().is_empty()
-        {
-            let profile = decode_jwt_profile(&token, None);
-            let creds = CodexCredentials {
-                access_token: token,
-                refresh_token: None,
-                account_id: profile.account_id,
-                email: profile.email,
-                plan_type: profile.plan_type,
-                residency: profile.residency,
-                expires_at: None,
-            };
-            return Ok(Self {
-                creds: Arc::new(RwLock::new(creds)),
-                storage_path,
-            });
-        }
-
-        Err(
-            "No OpenAI Codex credentials found. Run `zero-g login codex` to authenticate."
-                .to_string(),
-        )
+    pub(crate) async fn load(store: SettingsStore) -> Result<Option<Self>, String> {
+        let creds = match store.secret_get("provider.codex").await? {
+            Some(json) => Some(
+                serde_json::from_str(&json)
+                    .map_err(|e| format!("Failed to parse stored Codex credentials: {e}"))?,
+            ),
+            None if store.secret_get("provider.codex.imported").await?.is_none() => {
+                let path = Self::get_config_path();
+                match fs::read_to_string(&path) {
+                    Ok(content) => {
+                        let creds = serde_json::from_str(&content).map_err(|e| {
+                            format!(
+                                "Failed to parse legacy Codex credentials {}: {e}",
+                                path.display()
+                            )
+                        })?;
+                        Self::save(&store, &creds).await?;
+                        info!("Imported Codex credentials from {}", path.display());
+                        Some(creds)
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        store.secret_put("provider.codex.imported", "1").await?;
+                        None
+                    }
+                    Err(e) => {
+                        return Err(format!(
+                            "Failed to read legacy Codex credentials {}: {e}",
+                            path.display()
+                        ));
+                    }
+                }
+            }
+            None => None,
+        };
+        Ok(creds.map(|creds| Self {
+            creds: Arc::new(RwLock::new(creds)),
+            store,
+        }))
     }
 
     pub(crate) fn get_config_path() -> PathBuf {
@@ -172,16 +176,6 @@ impl CodexAuthManager {
             return base.join("zero-g/credentials-codex.json");
         }
         PathBuf::from("credentials-codex.json")
-    }
-
-    fn load_from_file(path: &Path) -> Option<CodexCredentials> {
-        if path.exists()
-            && let Ok(content) = fs::read_to_string(path)
-            && let Ok(creds) = serde_json::from_str::<CodexCredentials>(&content)
-        {
-            return Some(creds);
-        }
-        None
     }
 
     pub(crate) async fn get_credentials(&self) -> Result<CodexCredentials, String> {
@@ -207,10 +201,14 @@ impl CodexAuthManager {
     }
 
     pub(crate) async fn refresh(&self) -> Result<(), String> {
-        let refresh_token = {
-            let r = self.creds.read().await;
-            r.refresh_token.clone()
-        };
+        let stored = self
+            .store
+            .secret_get("provider.codex")
+            .await?
+            .ok_or_else(|| "Codex credentials no longer exist in the store".to_string())?;
+        let mut updated: CodexCredentials = serde_json::from_str(&stored)
+            .map_err(|e| format!("Failed to parse stored Codex credentials: {e}"))?;
+        let refresh_token = updated.refresh_token.clone();
 
         let Some(rt) = refresh_token else {
             return Err("Cannot refresh Codex token: no refresh_token present".to_string());
@@ -249,60 +247,38 @@ impl CodexAuthManager {
             .map_or(0, |d| d.as_millis() as i64);
         let new_expires_at = now_ms + token_data.expires_in * 1000;
 
-        {
-            let mut w = self.creds.write().await;
-            w.access_token = token_data.access_token;
-            if let Some(new_rt) = token_data.refresh_token {
-                w.refresh_token = Some(new_rt);
-            }
-            if profile.account_id.is_some() {
-                w.account_id = profile.account_id;
-            }
-            if profile.email.is_some() {
-                w.email = profile.email;
-            }
-            if profile.plan_type.is_some() {
-                w.plan_type = profile.plan_type;
-            }
-            if profile.residency.is_some() {
-                w.residency = profile.residency;
-            }
-            w.expires_at = Some(new_expires_at);
+        updated.access_token = token_data.access_token;
+        if let Some(new_rt) = token_data.refresh_token {
+            updated.refresh_token = Some(new_rt);
         }
-
-        self.save_updated_credentials().await;
+        if profile.account_id.is_some() {
+            updated.account_id = profile.account_id;
+        }
+        if profile.email.is_some() {
+            updated.email = profile.email;
+        }
+        if profile.plan_type.is_some() {
+            updated.plan_type = profile.plan_type;
+        }
+        if profile.residency.is_some() {
+            updated.residency = profile.residency;
+        }
+        updated.expires_at = Some(new_expires_at);
+        Self::save(&self.store, &updated).await?;
+        *self.creds.write().await = updated;
         info!("OpenAI Codex access token refreshed successfully.");
         Ok(())
     }
 
-    async fn save_updated_credentials(&self) {
-        let creds = self.creds.read().await.clone();
-        if let Ok(json) = serde_json::to_string_pretty(&creds) {
-            if let Some(parent) = self.storage_path.parent() {
-                let _ = fs::create_dir_all(parent);
-            }
-            if fs::write(&self.storage_path, &json).is_ok() {
-                restrict_file_permissions(&self.storage_path);
-            }
-        }
-    }
-
-    pub(crate) fn save_to_file(creds: &CodexCredentials) -> Result<PathBuf, String> {
-        let path = Self::get_config_path();
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create config dir {}: {e}", parent.display()))?;
-        }
-        let json = serde_json::to_string_pretty(creds)
+    pub(crate) async fn save(
+        store: &SettingsStore,
+        creds: &CodexCredentials,
+    ) -> Result<(), String> {
+        store.secret_get("provider.codex").await?;
+        let json = serde_json::to_string(creds)
             .map_err(|e| format!("Failed to serialize Codex credentials: {e}"))?;
-        fs::write(&path, &json).map_err(|e| {
-            format!(
-                "Failed to write Codex credentials to {}: {e}",
-                path.display()
-            )
-        })?;
-        restrict_file_permissions(&path);
-        Ok(path)
+        store.secret_put("provider.codex", &json).await?;
+        store.secret_put("provider.codex.imported", "1").await
     }
 }
 

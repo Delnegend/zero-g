@@ -229,7 +229,7 @@ pub(crate) async fn run_device_login() -> Result<CodexCredentials, String> {
     Err("Device authorization timed out (user did not complete login in time)".to_string())
 }
 
-async fn exchange_token(
+pub(crate) async fn exchange_token(
     code: &str,
     verifier: &str,
     redirect_uri: &str,

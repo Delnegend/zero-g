@@ -14,20 +14,28 @@
 
 ## Quick Start
 
-Get running in less than 60 seconds:
-
 ```bash
-# 1. Install (Linux and macOS)
 brew install Delnegend/tap/zero-g
 
-# 2. Run
+# Generate once; keep the same key for every subsequent run and back it up.
+export ZERO_G_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+export ZERO_G_DASHBOARD_AUTH=basic
+export ZERO_G_DASHBOARD_ORIGIN=http://127.0.0.1:8080
+export ZERO_G_DASHBOARD_USERNAME=admin
+export ZERO_G_DASHBOARD_PASSWORD='replace-with-a-strong-password'
 zero-g serve
-
-# 3. Verify
-curl http://localhost:8080/agy/v1/models
 ```
 
-Source builds from checkout: `cargo install --path .` (last resort only).
+Open `http://127.0.0.1:8080/` and sign in. Under **Virtual keys**, create a key and copy it immediately; it is shown only once. Set `ZERO_G_VIRTUAL_KEY` to the copied value and use it as the bearer token for every inference request, including model discovery:
+
+```bash
+curl -H "Authorization: Bearer $ZERO_G_VIRTUAL_KEY" http://127.0.0.1:8080/agy/v1/models
+```
+
+Configure provider credentials and persisted bind, retention, Zen and Google OAuth settings in the dashboard. Full request and response bodies are stored locally for 30 days by default. See [configuration](docs/configuration.md) and [deployment](docs/deployment.md) for secure setup and backups.
+
+
+Source builds from checkout: run `(cd web && bun install --frozen-lockfile) && just web-build` before `cargo install --path .`.
 
 ## Highlights
 
@@ -40,7 +48,7 @@ Source builds from checkout: `cargo install --path .` (last resort only).
 ## Common Commands
 
 ```bash
-# Start proxy (configured via .env or defaults to 127.0.0.1:8080)
+# Start proxy (defaults to 127.0.0.1:8080 until changed in Settings)
 zero-g serve
 ```
 

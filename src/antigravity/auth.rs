@@ -8,18 +8,57 @@ use serde_with::skip_serializing_none;
 use tokio::sync::RwLock;
 use tracing::info;
 
-use crate::util::{config_base_dir, restrict_file_permissions};
+use crate::server::settings::SettingsStore;
+use crate::util::config_base_dir;
 
-pub(crate) fn oauth_client_id() -> Result<String, String> {
-    std::env::var("ZERO_G_OAUTH_CLIENT_ID").map_err(|_| {
-        "ZERO_G_OAUTH_CLIENT_ID not set. Please set it in .env or environment.".to_string()
-    })
+pub(crate) async fn migrate_oauth_settings(store: &SettingsStore) -> Result<(), String> {
+    if store
+        .setting_get("oauth_client_id.imported")
+        .await?
+        .is_none()
+    {
+        if store.setting_get("oauth_client_id").await?.is_none()
+            && let Ok(value) = std::env::var("ZERO_G_OAUTH_CLIENT_ID")
+            && !value.trim().is_empty()
+        {
+            store.setting_put("oauth_client_id", &value).await?;
+        }
+        store.setting_put("oauth_client_id.imported", "1").await?;
+    }
+    if store
+        .setting_get("oauth_client_secret.imported")
+        .await?
+        .is_none()
+    {
+        if store.secret_get("oauth_client_secret").await?.is_none()
+            && let Ok(value) = std::env::var("ZERO_G_OAUTH_CLIENT_SECRET")
+            && !value.trim().is_empty()
+        {
+            store.secret_put("oauth_client_secret", &value).await?;
+        }
+        store
+            .setting_put("oauth_client_secret.imported", "1")
+            .await?;
+    }
+    Ok(())
 }
 
-pub(crate) fn oauth_client_secret() -> Result<String, String> {
-    std::env::var("ZERO_G_OAUTH_CLIENT_SECRET").map_err(|_| {
-        "ZERO_G_OAUTH_CLIENT_SECRET not set. Please set it in .env or environment.".to_string()
-    })
+pub(crate) async fn oauth_client_id(store: &SettingsStore) -> Result<String, String> {
+    migrate_oauth_settings(store).await?;
+    store
+        .setting_get("oauth_client_id")
+        .await?
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "Google OAuth client ID is not configured".to_string())
+}
+
+pub(crate) async fn oauth_client_secret(store: &SettingsStore) -> Result<String, String> {
+    migrate_oauth_settings(store).await?;
+    store
+        .secret_get("oauth_client_secret")
+        .await?
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "Google OAuth client secret is not configured".to_string())
 }
 
 pub(crate) const OAUTH_CALLBACK_PORT: u16 = 51123;
@@ -52,7 +91,7 @@ pub(crate) struct Credentials {
 #[derive(Clone)]
 pub(crate) struct AuthManager {
     creds: Arc<RwLock<Credentials>>,
-    storage_path: PathBuf,
+    store: SettingsStore,
 }
 
 #[derive(Deserialize)]
@@ -62,20 +101,47 @@ struct TokenRefreshResponse {
 }
 
 impl AuthManager {
-    pub(crate) fn load() -> Result<Self, String> {
-        let storage_path = Self::get_config_path();
-        if let Some(creds) = Self::load_from_file(&storage_path) {
-            info!("Loaded credentials from file: {:?}", storage_path);
-            return Ok(Self {
-                creds: Arc::new(RwLock::new(creds)),
-                storage_path,
-            });
-        }
-
-        Err(
-            "No Google Antigravity credentials found. Run `zero-g login agy` to authenticate."
-                .to_string(),
-        )
+    pub(crate) async fn load(store: SettingsStore) -> Result<Option<Self>, String> {
+        let creds = match store.secret_get("provider.antigravity").await? {
+            Some(json) => Some(
+                serde_json::from_str(&json)
+                    .map_err(|e| format!("Failed to parse stored Antigravity credentials: {e}"))?,
+            ),
+            None if store
+                .secret_get("provider.antigravity.imported")
+                .await?
+                .is_none() =>
+            {
+                let path = Self::get_config_path();
+                match fs::read_to_string(&path) {
+                    Ok(content) => {
+                        let creds = serde_json::from_str(&content).map_err(|e| {
+                            format!("Failed to parse legacy credentials {}: {e}", path.display())
+                        })?;
+                        Self::save(&store, &creds).await?;
+                        info!("Imported Antigravity credentials from {}", path.display());
+                        Some(creds)
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        store
+                            .secret_put("provider.antigravity.imported", "1")
+                            .await?;
+                        None
+                    }
+                    Err(e) => {
+                        return Err(format!(
+                            "Failed to read legacy credentials {}: {e}",
+                            path.display()
+                        ));
+                    }
+                }
+            }
+            None => None,
+        };
+        Ok(creds.map(|creds| Self {
+            creds: Arc::new(RwLock::new(creds)),
+            store,
+        }))
     }
 
     fn get_config_path() -> PathBuf {
@@ -92,16 +158,6 @@ impl AuthManager {
             return base.join("zero-g/credentials-agy.json");
         }
         PathBuf::from("credentials-agy.json")
-    }
-
-    fn load_from_file(path: &Path) -> Option<Credentials> {
-        if path.exists()
-            && let Ok(content) = fs::read_to_string(path)
-            && let Ok(creds) = serde_json::from_str::<Credentials>(&content)
-        {
-            return Some(creds);
-        }
-        None
     }
 
     pub(crate) async fn get_credentials(&self) -> Result<Credentials, String> {
@@ -127,10 +183,14 @@ impl AuthManager {
     }
 
     pub(crate) async fn refresh(&self) -> Result<(), String> {
-        let refresh_token = {
-            let r = self.creds.read().await;
-            r.refresh_token.clone()
-        };
+        let stored = self
+            .store
+            .secret_get("provider.antigravity")
+            .await?
+            .ok_or_else(|| "Antigravity credentials no longer exist in the store".to_string())?;
+        let current: Credentials = serde_json::from_str(&stored)
+            .map_err(|e| format!("Failed to parse stored Antigravity credentials: {e}"))?;
+        let refresh_token = current.refresh_token.clone();
 
         let refresh_token = match refresh_token {
             Some(t) if !t.is_empty() => t,
@@ -140,8 +200,8 @@ impl AuthManager {
         info!("Refreshing Google Antigravity access token...");
 
         let client = reqwest::Client::new();
-        let client_id = oauth_client_id()?;
-        let client_secret = oauth_client_secret()?;
+        let client_id = oauth_client_id(&self.store).await?;
+        let client_secret = oauth_client_secret(&self.store).await?;
         let params = [
             ("client_id", client_id.as_str()),
             ("client_secret", client_secret.as_str()),
@@ -172,42 +232,20 @@ impl AuthManager {
             .map_or(0, |d| d.as_millis() as i64);
         let new_expires_at = now_ms + token_resp.expires_in * 1000;
 
-        {
-            let mut w = self.creds.write().await;
-            w.access_token = token_resp.access_token;
-            w.expires_at = Some(new_expires_at);
-        }
-
-        // Persist update
-        self.save_updated_credentials().await;
+        let mut updated = current;
+        updated.access_token = token_resp.access_token;
+        updated.expires_at = Some(new_expires_at);
+        Self::save(&self.store, &updated).await?;
+        *self.creds.write().await = updated;
         info!("Access token refreshed successfully.");
         Ok(())
     }
 
-    async fn save_updated_credentials(&self) {
-        let creds = self.creds.read().await.clone();
-
-        if let Ok(json) = serde_json::to_string_pretty(&creds) {
-            if let Some(parent) = self.storage_path.parent() {
-                let _ = fs::create_dir_all(parent);
-            }
-            if fs::write(&self.storage_path, &json).is_ok() {
-                restrict_file_permissions(&self.storage_path);
-            }
-        }
-    }
-
-    pub(crate) fn save_to_file(creds: &Credentials) -> Result<PathBuf, String> {
-        let path = Self::get_config_path();
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create config dir {}: {e}", parent.display()))?;
-        }
-        let json = serde_json::to_string_pretty(creds)
-            .map_err(|e| format!("Failed to serialize credentials: {e}"))?;
-        fs::write(&path, &json)
-            .map_err(|e| format!("Failed to write credentials to {}: {e}", path.display()))?;
-        restrict_file_permissions(&path);
-        Ok(path)
+    pub(crate) async fn save(store: &SettingsStore, creds: &Credentials) -> Result<(), String> {
+        store.secret_get("provider.antigravity").await?;
+        let json = serde_json::to_string(creds)
+            .map_err(|e| format!("Failed to serialize Antigravity credentials: {e}"))?;
+        store.secret_put("provider.antigravity", &json).await?;
+        store.secret_put("provider.antigravity.imported", "1").await
     }
 }

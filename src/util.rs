@@ -1,5 +1,5 @@
 use std::fmt::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub(crate) fn urlencode(s: &str) -> String {
     let mut out = String::new();
@@ -23,15 +23,6 @@ pub(crate) fn config_base_dir() -> Option<PathBuf> {
         .ok()
         .map(|h| PathBuf::from(h).join(".config"))
 }
-
-#[cfg(unix)]
-pub(crate) fn restrict_file_permissions(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
-}
-
-#[cfg(not(unix))]
-pub(crate) fn restrict_file_permissions(_path: &Path) {}
 
 #[cfg(test)]
 mod tests {

@@ -6,10 +6,6 @@ const READY_TIMEOUT: Duration = Duration::from_secs(10);
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
-pub(crate) fn zen_base_url() -> String {
-    std::env::var("ZERO_G_ZEN_URL").unwrap_or_else(|_| "http://127.0.0.1:8090/v1".to_string())
-}
-
 /// Extract the TCP port from an http(s) base URL like `http://127.0.0.1:8090/v1`.
 fn shim_port(base_url: &str) -> Option<u16> {
     let authority = base_url
@@ -47,11 +43,10 @@ fn sibling_shim() -> Option<std::path::PathBuf> {
 /// Ensure something answers at the Zen shim URL, spawning the bundled
 /// `zen-shim` sibling binary when needed. Returns the child when we spawned
 /// it so the caller can terminate it on shutdown.
-pub(crate) async fn ensure_zen_shim() -> Option<tokio::process::Child> {
-    let base_url = zen_base_url();
+pub(crate) async fn ensure_zen_shim(base_url: &str) -> Option<tokio::process::Child> {
     let client = reqwest::Client::new();
 
-    if is_alive(&client, &base_url).await {
+    if is_alive(&client, base_url).await {
         info!("Zen shim already running at {base_url}");
         return None;
     }
@@ -62,8 +57,8 @@ pub(crate) async fn ensure_zen_shim() -> Option<tokio::process::Child> {
         );
         return None;
     };
-    let Some(port) = shim_port(&base_url) else {
-        warn!("Cannot parse port from ZERO_G_ZEN_URL={base_url}; skipping shim auto-spawn");
+    let Some(port) = shim_port(base_url) else {
+        warn!("Cannot parse port from Zen URL {base_url}; skipping shim auto-spawn");
         return None;
     };
 
@@ -82,7 +77,7 @@ pub(crate) async fn ensure_zen_shim() -> Option<tokio::process::Child> {
 
     let deadline = tokio::time::Instant::now() + READY_TIMEOUT;
     while tokio::time::Instant::now() < deadline {
-        if is_alive(&client, &base_url).await {
+        if is_alive(&client, base_url).await {
             info!("Zen shim ready at {base_url}");
             return Some(child);
         }

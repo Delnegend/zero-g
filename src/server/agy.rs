@@ -1,5 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use axum::Extension;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
@@ -14,11 +15,26 @@ use crate::responses::{
     ResponseContentPart, ResponseCreateRequest, ResponseObject, ResponseOutputItem, ResponseUsage,
 };
 use crate::server::AppState;
+use crate::server::settings::Permissions;
+
+fn model_forbidden() -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        Json(crate::server::error_body(
+            "Model is not allowed for this virtual key",
+            "permission_error",
+            Some("model_not_allowed"),
+        )),
+    )
+        .into_response()
+}
 
 pub(crate) async fn models_handler(
     State(state): State<AppState>,
+    Extension(permissions): Extension<Permissions>,
 ) -> Result<Json<ModelListResponse>, (StatusCode, Json<Value>)> {
-    let Some(auth) = &state.auth else {
+    let auth_guard = state.auth.read().await;
+    let Some(auth) = auth_guard.as_ref() else {
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(crate::server::error_body(
@@ -39,6 +55,7 @@ pub(crate) async fn models_handler(
             )),
         )
     })?;
+    drop(auth_guard);
 
     let live_models = state.client.fetch_models(&creds).await.map_err(|e| {
         (
@@ -53,6 +70,7 @@ pub(crate) async fn models_handler(
 
     let data = live_models
         .into_iter()
+        .filter(|(id, _)| permissions.allows_model(id))
         .map(|(id, info)| to_model_entry(id, info))
         .collect();
     Ok(Json(ModelListResponse {
@@ -120,9 +138,22 @@ pub(crate) fn map_agy_model_effort(model: &str, effort: Option<&str>) -> String 
 
 pub(crate) async fn chat_handler(
     State(state): State<AppState>,
+    Extension(permissions): Extension<Permissions>,
     Json(mut req): Json<ChatCompletionRequest>,
 ) -> Response {
-    let Some(auth) = &state.auth else {
+    let effort = req.reasoning_effort.as_deref().or_else(|| {
+        req.reasoning
+            .as_ref()
+            .and_then(|r| r.get("effort"))
+            .and_then(Value::as_str)
+    });
+    req.model = map_agy_model_effort(&req.model, effort);
+    if !permissions.allows_model(&req.model) {
+        return model_forbidden();
+    }
+
+    let auth_guard = state.auth.read().await;
+    let Some(auth) = auth_guard.as_ref() else {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(crate::server::error_body(
@@ -148,14 +179,7 @@ pub(crate) async fn chat_handler(
                 .into_response();
         }
     };
-
-    let effort = req.reasoning_effort.as_deref().or_else(|| {
-        req.reasoning
-            .as_ref()
-            .and_then(|r| r.get("effort"))
-            .and_then(Value::as_str)
-    });
-    req.model = map_agy_model_effort(&req.model, effort);
+    drop(auth_guard);
 
     let is_streaming = req.stream.unwrap_or(false);
 
@@ -227,9 +251,22 @@ async fn handle_chat_streaming(
 
 pub(crate) async fn responses_handler(
     State(state): State<AppState>,
+    Extension(permissions): Extension<Permissions>,
     Json(mut req): Json<ResponseCreateRequest>,
 ) -> Response {
-    let Some(auth) = &state.auth else {
+    let effort = req.reasoning_effort.as_deref().or_else(|| {
+        req.reasoning
+            .as_ref()
+            .and_then(|r| r.get("effort"))
+            .and_then(Value::as_str)
+    });
+    req.model = map_agy_model_effort(&req.model, effort);
+    if !permissions.allows_model(&req.model) {
+        return model_forbidden();
+    }
+
+    let auth_guard = state.auth.read().await;
+    let Some(auth) = auth_guard.as_ref() else {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(crate::server::error_body(
@@ -255,14 +292,7 @@ pub(crate) async fn responses_handler(
                 .into_response();
         }
     };
-
-    let effort = req.reasoning_effort.as_deref().or_else(|| {
-        req.reasoning
-            .as_ref()
-            .and_then(|r| r.get("effort"))
-            .and_then(Value::as_str)
-    });
-    req.model = map_agy_model_effort(&req.model, effort);
+    drop(auth_guard);
 
     let is_streaming = req.stream.unwrap_or(false);
     let original_model = req.model.clone();
@@ -380,6 +410,17 @@ async fn handle_responses_streaming(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn policy_checks_mapped_effort() {
+        let permissions = Permissions {
+            providers: vec![],
+            models: vec!["model-low".into()],
+        };
+        assert!(permissions.allows_model(&map_agy_model_effort("model", Some("low"))));
+        assert!(!permissions.allows_model(&map_agy_model_effort("model", Some("high"))));
+        assert!(!permissions.allows_model(&map_agy_model_effort("model-high", Some("low"))));
+    }
 
     #[test]
     fn test_to_model_entry_reports_upstream_context_window() {

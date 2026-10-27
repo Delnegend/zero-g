@@ -18,12 +18,20 @@ futures-util = "0.3.34"
 tokio-stream = "0.1.19"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+thiserror = "2.0.21"
 uuid = { version = "1.29.0", features = ["v4"] }
 rand = "0.9.5"
 dotenvy = "0.15.7"
 sha2 = "0.11.1"
 base64 = "0.22.1"
 serde_with = "3.24.0"
+rust-embed = { version = "8.13.0", features = ["debug-embed", "include-exclude"] }
+mime_guess = "2.0.5"
+toasty = { version = "0.11", features = ["turso", "migration"] }
+toasty-cli = "0.11"
+jsonwebtoken = "9"
+http-body-util = "0.1.5"
+ring = "0.17.14"
 
 [lints.rust]
 unreachable_pub = "warn"
