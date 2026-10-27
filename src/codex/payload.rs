@@ -38,13 +38,18 @@ pub(crate) fn build_codex_payload_from_chat(req: &ChatCompletionRequest) -> Valu
                 }
                 if let Some(tool_calls) = &msg.tool_calls {
                     for tc in tool_calls {
-                        // Codex expects function_call arguments as the raw JSON
-                        // string from the chat tool call, not a parsed object.
+                        let args = if let Ok(parsed) =
+                            serde_json::from_str::<Value>(&tc.function.arguments)
+                        {
+                            parsed
+                        } else {
+                            Value::String(tc.function.arguments.clone())
+                        };
                         input_items.push(json!({
                             "type": "function_call",
                             "call_id": tc.id,
                             "name": tc.function.name,
-                            "arguments": tc.function.arguments,
+                            "arguments": args,
                         }));
                     }
                 }
@@ -385,7 +390,7 @@ mod tests {
     }
 
     #[test]
-    fn test_build_codex_payload_keeps_tool_call_arguments_as_string() {
+    fn test_build_codex_payload_parses_tool_call_arguments_when_valid_json() {
         let req = ChatCompletionRequest {
             model: "gpt-6.1-terra".to_string(),
             messages: vec![ChatMessage {
@@ -417,8 +422,8 @@ mod tests {
         let payload = build_codex_payload_from_chat(&req);
         assert_eq!(payload["input"][0]["type"], "function_call");
         assert_eq!(
-            payload["input"][0]["arguments"].as_str(),
-            Some(r#"{"path":"src/main.rs"}"#)
+            payload["input"][0]["arguments"],
+            json!({"path": "src/main.rs"})
         );
     }
 

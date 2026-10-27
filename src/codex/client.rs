@@ -650,8 +650,21 @@ fn chunk_tool_index(index: usize) -> u32 {
 fn function_call_key(val: &Value) -> Option<String> {
     val.get("item_id")
         .or_else(|| val.get("call_id"))
+        .or_else(|| val.get("id"))
+        .or_else(|| val.pointer("/item/call_id"))
+        .or_else(|| val.pointer("/item/id"))
         .and_then(Value::as_str)
         .map(str::to_string)
+}
+
+fn extract_arguments(val: &Value) -> Option<String> {
+    match val.get("arguments") {
+        Some(Value::String(s)) => Some(s.clone()),
+        Some(v) if v.is_object() || v.is_array() || v.is_number() || v.is_boolean() => {
+            Some(v.to_string())
+        }
+        _ => None,
+    }
 }
 
 /// Folds a tool-call event into the calls seen so far. Deltas append; the
@@ -707,12 +720,12 @@ impl SseLineDecoder {
                 continue;
             }
 
-            if let Some(ev) = line.strip_prefix("event: ") {
+            if let Some(ev) = line.strip_prefix("event:") {
                 self.current_event_name = Some(ev.trim().to_string());
                 continue;
             }
 
-            if let Some(data) = line.strip_prefix("data: ") {
+            if let Some(data) = line.strip_prefix("data:") {
                 let data = data.trim();
                 if data == "[DONE]" {
                     continue;
@@ -764,9 +777,17 @@ impl SseLineDecoder {
                             .to_string();
                         out.push(CodexParsedEvent::ToolCallStart {
                             call_id,
-                            item_id,
+                            item_id: item_id.clone(),
                             name,
                         });
+                        if let Some(arguments) = extract_arguments(item)
+                            && !arguments.is_empty()
+                        {
+                            out.push(CodexParsedEvent::ToolCallDone {
+                                key: item_id,
+                                arguments,
+                            });
+                        }
                     }
                 }
             }
@@ -779,22 +800,21 @@ impl SseLineDecoder {
                 }
             }
             Some("response.function_call_arguments.done") => {
-                if let Some(arguments) = val.get("arguments").and_then(Value::as_str) {
+                if let Some(arguments) = extract_arguments(val) {
                     out.push(CodexParsedEvent::ToolCallDone {
                         key: function_call_key(val),
-                        arguments: arguments.to_string(),
+                        arguments,
                     });
                 }
             }
             Some("response.output_item.done") => {
                 if let Some(item) = val.get("item")
                     && item.get("type").and_then(Value::as_str) == Some("function_call")
-                    && let Some(arguments) = item.get("arguments").and_then(Value::as_str)
                 {
-                    out.push(CodexParsedEvent::ToolCallDone {
-                        key: item.get("id").and_then(Value::as_str).map(str::to_string),
-                        arguments: arguments.to_string(),
-                    });
+                    let key = function_call_key(val).or_else(|| function_call_key(item));
+                    if let Some(arguments) = extract_arguments(item) {
+                        out.push(CodexParsedEvent::ToolCallDone { key, arguments });
+                    }
                 }
             }
             Some("response.completed" | "response.done") => {
@@ -964,5 +984,16 @@ mod tests {
         let calls = collect(&sse);
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].arguments, "{\"text\":\"hi\"}");
+    }
+
+    #[test]
+    fn test_tool_call_arguments_as_json_object() {
+        let mut sse = String::new();
+        sse += "event:response.output_item.added\ndata:{\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"read\"}}\n\n";
+        sse += "event:response.output_item.done\ndata:{\"type\":\"response.output_item.done\",\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"read\",\"arguments\":{\"path\":\"Cargo.toml\"}}}\n\n";
+
+        let calls = collect(&sse);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].arguments, "{\"path\":\"Cargo.toml\"}");
     }
 }
