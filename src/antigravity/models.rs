@@ -21,6 +21,8 @@ pub(crate) struct AntigravityModelInfo {
     pub(crate) display_name: Option<String>,
     #[serde(default, rename = "supportsThinking")]
     pub(crate) supports_thinking: Option<bool>,
+    #[serde(default, rename = "maxTokens")]
+    pub(crate) max_tokens: Option<u64>,
     #[serde(default, rename = "maxOutputTokens")]
     pub(crate) max_output_tokens: Option<u32>,
     #[serde(default)]

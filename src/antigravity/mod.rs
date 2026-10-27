@@ -8,6 +8,7 @@ pub(crate) mod responses;
 mod stream;
 
 pub(crate) use auth::{AuthManager, Credentials};
+pub(crate) use models::AntigravityModelInfo;
 pub(crate) use stream::{AntigravityEvent, map_finish_reason, spawn_event_stream};
 
 pub(crate) struct AntigravityClient {

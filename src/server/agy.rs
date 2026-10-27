@@ -6,6 +6,7 @@ use axum::response::{IntoResponse, Json, Response};
 use serde_json::Value;
 
 use crate::antigravity::AntigravityClient;
+use crate::antigravity::AntigravityModelInfo;
 use crate::antigravity::chat::ChatStreamSerializer;
 use crate::antigravity::responses::ResponsesStreamSerializer;
 use crate::openai::{ChatCompletionRequest, ModelEntry, ModelListResponse, StreamOptions};
@@ -52,50 +53,56 @@ pub(crate) async fn models_handler(
 
     let data = live_models
         .into_iter()
-        .map(|(id, info)| {
-            let reasoning = info.supports_thinking.unwrap_or(false);
-            let effort_tier = if id.ends_with("-low") {
-                Some("low".to_string())
-            } else if id.ends_with("-medium") {
-                Some("medium".to_string())
-            } else if id.ends_with("-high") {
-                Some("high".to_string())
-            } else {
-                None
-            };
-
-            let supported_efforts = if let Some(e) = &effort_tier {
-                Some(vec![e.clone()])
-            } else if reasoning {
-                Some(vec![
-                    "low".to_string(),
-                    "medium".to_string(),
-                    "high".to_string(),
-                ])
-            } else {
-                None
-            };
-
-            ModelEntry {
-                id,
-                object: "model".to_string(),
-                created: 1_700_000_000,
-                owned_by: "google-antigravity".to_string(),
-                name: info.display_name.clone(),
-                display_name: info.display_name,
-                reasoning: if reasoning { Some(true) } else { None },
-                default_reasoning_effort: effort_tier,
-                supported_reasoning_efforts: supported_efforts,
-                context_window: None,
-                max_output_tokens: info.max_output_tokens,
-            }
-        })
+        .map(|(id, info)| to_model_entry(id, info))
         .collect();
     Ok(Json(ModelListResponse {
         object: "list".to_string(),
         data,
     }))
 }
+
+/// Upstream reports the context window as `maxTokens`, separate from
+/// `maxOutputTokens`; callers that only see `max_output_tokens` fall back to
+/// their own defaults, so both are carried through.
+pub(crate) fn to_model_entry(id: String, info: AntigravityModelInfo) -> ModelEntry {
+    let reasoning = info.supports_thinking.unwrap_or(false);
+    let effort_tier = if id.ends_with("-low") {
+        Some("low".to_string())
+    } else if id.ends_with("-medium") {
+        Some("medium".to_string())
+    } else if id.ends_with("-high") {
+        Some("high".to_string())
+    } else {
+        None
+    };
+
+    let supported_efforts = if let Some(e) = &effort_tier {
+        Some(vec![e.clone()])
+    } else if reasoning {
+        Some(vec![
+            "low".to_string(),
+            "medium".to_string(),
+            "high".to_string(),
+        ])
+    } else {
+        None
+    };
+
+    ModelEntry {
+        id,
+        object: "model".to_string(),
+        created: 1_700_000_000,
+        owned_by: "google-antigravity".to_string(),
+        name: info.display_name.clone(),
+        display_name: info.display_name,
+        reasoning: if reasoning { Some(true) } else { None },
+        default_reasoning_effort: effort_tier,
+        supported_reasoning_efforts: supported_efforts,
+        context_window: info.max_tokens,
+        max_output_tokens: info.max_output_tokens,
+    }
+}
+
 pub(crate) fn map_agy_model_effort(model: &str, effort: Option<&str>) -> String {
     let Some(effort) = effort else {
         return model.to_string();
@@ -373,6 +380,25 @@ async fn handle_responses_streaming(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_to_model_entry_reports_upstream_context_window() {
+        let info = AntigravityModelInfo {
+            display_name: Some("Claude Sonnet 5.5 (High)".to_string()),
+            supports_thinking: Some(true),
+            max_tokens: Some(1_000_000),
+            max_output_tokens: Some(128_000),
+            disabled: None,
+        };
+        let entry = to_model_entry("claude-sonnet-5-5-high".to_string(), info);
+        assert_eq!(entry.context_window, Some(1_000_000));
+        assert_eq!(entry.max_output_tokens, Some(128_000));
+        assert_eq!(entry.default_reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(
+            entry.supported_reasoning_efforts,
+            Some(vec!["high".to_string()])
+        );
+    }
 
     #[test]
     fn test_map_agy_model_effort() {
