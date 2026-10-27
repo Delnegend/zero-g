@@ -38,18 +38,13 @@ pub(crate) fn build_codex_payload_from_chat(req: &ChatCompletionRequest) -> Valu
                 }
                 if let Some(tool_calls) = &msg.tool_calls {
                     for tc in tool_calls {
-                        let args = if let Ok(parsed) =
-                            serde_json::from_str::<Value>(&tc.function.arguments)
-                        {
-                            parsed
-                        } else {
-                            Value::String(tc.function.arguments.clone())
-                        };
+                        // Codex expects function_call arguments as the raw JSON
+                        // string from the chat tool call, not a parsed object.
                         input_items.push(json!({
                             "type": "function_call",
                             "call_id": tc.id,
                             "name": tc.function.name,
-                            "arguments": args,
+                            "arguments": tc.function.arguments,
                         }));
                     }
                 }
@@ -387,6 +382,44 @@ mod tests {
         assert!(payload.get("top_p").is_none());
         assert!(payload.get("max_tokens").is_none());
         assert!(payload.get("max_output_tokens").is_none());
+    }
+
+    #[test]
+    fn test_build_codex_payload_keeps_tool_call_arguments_as_string() {
+        let req = ChatCompletionRequest {
+            model: "gpt-6.1-terra".to_string(),
+            messages: vec![ChatMessage {
+                role: "assistant".to_string(),
+                content: None,
+                name: None,
+                tool_calls: Some(vec![crate::openai::ToolCall {
+                    id: "call_1".to_string(),
+                    r#type: "function".to_string(),
+                    function: crate::openai::FunctionCall {
+                        name: "read".to_string(),
+                        arguments: r#"{"path":"src/main.rs"}"#.to_string(),
+                    },
+                }]),
+                tool_call_id: None,
+            }],
+            temperature: None,
+            top_p: None,
+            max_tokens: None,
+            max_completion_tokens: None,
+            stream: Some(false),
+            stream_options: None,
+            tools: None,
+            tool_choice: None,
+            reasoning_effort: None,
+            reasoning: None,
+        };
+
+        let payload = build_codex_payload_from_chat(&req);
+        assert_eq!(payload["input"][0]["type"], "function_call");
+        assert_eq!(
+            payload["input"][0]["arguments"].as_str(),
+            Some(r#"{"path":"src/main.rs"}"#)
+        );
     }
 
     #[test]
