@@ -1,7 +1,8 @@
 // Minimal Bun TLS proxy for OpenCode Zen free tier.
 // zero-g sends an already-attested request here over HTTP; this shim forwards
 // it to opencode.ai using Bun's TLS stack (required to pass the gate).
-const UPSTREAM = process.env.ZEN_UPSTREAM ?? "https://opencode.ai/inference/openai/v1";
+const UPSTREAM =
+  process.env.ZEN_UPSTREAM ?? "https://opencode.ai/inference/openai/v1";
 const PORT = Number(process.env.PORT ?? 8090);
 
 Bun.serve({
