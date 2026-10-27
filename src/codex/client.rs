@@ -131,7 +131,7 @@ impl CodexClient {
         let model = req.model.clone();
         let mut text_acc = String::new();
         let mut reasoning_acc = String::new();
-        let mut tool_calls_map: Vec<(String, String, String)> = Vec::new(); // (id, name, args)
+        let mut tool_calls_map: Vec<PendingToolCall> = Vec::new();
         let mut finish_reason = "stop".to_string();
         let mut usage_acc = Usage::default();
 
@@ -145,17 +145,10 @@ impl CodexClient {
                 match ev {
                     CodexParsedEvent::TextDelta(t) => text_acc.push_str(&t),
                     CodexParsedEvent::ReasoningDelta(r) => reasoning_acc.push_str(&r),
-                    CodexParsedEvent::ToolCallStart { call_id, name } => {
-                        tool_calls_map.push((call_id, name, String::new()));
-                    }
-                    CodexParsedEvent::ToolCallDelta { call_id, delta } => {
-                        if let Some(entry) =
-                            tool_calls_map.iter_mut().find(|(id, _, _)| id == &call_id)
-                        {
-                            entry.2.push_str(&delta);
-                        } else if let Some(last) = tool_calls_map.last_mut() {
-                            last.2.push_str(&delta);
-                        }
+                    ev @ (CodexParsedEvent::ToolCallStart { .. }
+                    | CodexParsedEvent::ToolCallDelta { .. }
+                    | CodexParsedEvent::ToolCallDone { .. }) => {
+                        apply_tool_event(&mut tool_calls_map, ev);
                     }
                     CodexParsedEvent::Finish { reason } => finish_reason = reason,
                     CodexParsedEvent::Usage(u) => usage_acc = u,
@@ -170,10 +163,13 @@ impl CodexClient {
             Some(
                 tool_calls_map
                     .into_iter()
-                    .map(|(id, name, arguments)| ToolCall {
-                        id,
+                    .map(|call| ToolCall {
+                        id: call.call_id,
                         r#type: "function".to_string(),
-                        function: FunctionCall { name, arguments },
+                        function: FunctionCall {
+                            name: call.name,
+                            arguments: call.arguments,
+                        },
                     })
                     .collect(),
             )
@@ -256,7 +252,7 @@ impl CodexClient {
         let model = req.model.clone();
         let mut output_text = String::new();
         let mut output_items = Vec::new();
-        let mut tool_calls_map: Vec<(String, String, String)> = Vec::new();
+        let mut tool_calls_map: Vec<PendingToolCall> = Vec::new();
         let mut usage_opt = None;
 
         let mut byte_stream = upstream.bytes_stream();
@@ -268,17 +264,10 @@ impl CodexClient {
             for ev in events {
                 match ev {
                     CodexParsedEvent::TextDelta(t) => output_text.push_str(&t),
-                    CodexParsedEvent::ToolCallStart { call_id, name } => {
-                        tool_calls_map.push((call_id, name, String::new()));
-                    }
-                    CodexParsedEvent::ToolCallDelta { call_id, delta } => {
-                        if let Some(entry) =
-                            tool_calls_map.iter_mut().find(|(id, _, _)| id == &call_id)
-                        {
-                            entry.2.push_str(&delta);
-                        } else if let Some(last) = tool_calls_map.last_mut() {
-                            last.2.push_str(&delta);
-                        }
+                    ev @ (CodexParsedEvent::ToolCallStart { .. }
+                    | CodexParsedEvent::ToolCallDelta { .. }
+                    | CodexParsedEvent::ToolCallDone { .. }) => {
+                        apply_tool_event(&mut tool_calls_map, ev);
                     }
                     CodexParsedEvent::Usage(u) => usage_opt = Some(ResponseUsage::from(u)),
                     CodexParsedEvent::ReasoningDelta(_) | CodexParsedEvent::Finish { .. } => {}
@@ -297,14 +286,14 @@ impl CodexClient {
             });
         }
 
-        for (call_id, name, args_str) in tool_calls_map {
-            let arguments =
-                serde_json::from_str::<Value>(&args_str).unwrap_or(Value::String(args_str));
+        for call in tool_calls_map {
+            let arguments = serde_json::from_str::<Value>(&call.arguments)
+                .unwrap_or(Value::String(call.arguments));
             output_items.push(ResponseOutputItem::FunctionCall {
                 id: format!("fc_{}", uuid::Uuid::new_v4().simple()),
                 status: "completed".to_string(),
-                name,
-                call_id,
+                name: call.name,
+                call_id: call.call_id,
                 arguments: arguments.to_string(),
             });
         }
@@ -366,7 +355,7 @@ async fn pump_chat_chunks(
         .map_or(0, |d| d.as_secs());
     let mut byte_stream = upstream.bytes_stream();
     let mut decoder = SseLineDecoder::default();
-    let mut tool_index = 0;
+    let mut tool_calls: Vec<PendingToolCall> = Vec::new();
     let mut has_emitted_finish = false;
 
     while let Some(item) = byte_stream.next().await {
@@ -419,7 +408,19 @@ async fn pump_chat_chunks(
                                 return;
                             }
                         }
-                        CodexParsedEvent::ToolCallStart { call_id, name } => {
+                        CodexParsedEvent::ToolCallStart {
+                            call_id,
+                            item_id,
+                            name,
+                        } => {
+                            let index = tool_calls.len();
+                            tool_calls.push(PendingToolCall {
+                                call_id: call_id.clone(),
+                                item_id,
+                                name: name.clone(),
+                                arguments: String::new(),
+                                streamed_len: 0,
+                            });
                             let chunk = ChatCompletionChunk {
                                 id: chunk_id.clone(),
                                 object: "chat.completion.chunk".to_string(),
@@ -429,7 +430,7 @@ async fn pump_chat_chunks(
                                     index: 0,
                                     delta: ChunkDelta {
                                         tool_calls: Some(vec![ChunkToolCall {
-                                            index: tool_index,
+                                            index: chunk_tool_index(index),
                                             id: Some(call_id),
                                             r#type: Some("function".to_string()),
                                             function: Some(ChunkFunctionCall {
@@ -443,15 +444,24 @@ async fn pump_chat_chunks(
                                 }],
                                 usage: None,
                             };
-                            tool_index += 1;
                             if let Ok(data) = serde_json::to_string(&chunk)
                                 && tx.send(Ok(Event::default().data(data))).await.is_err()
                             {
                                 return;
                             }
                         }
-                        CodexParsedEvent::ToolCallDelta { delta, .. } => {
-                            let target_index = if tool_index > 0 { tool_index - 1 } else { 0 };
+                        CodexParsedEvent::ToolCallDelta { key, delta } => {
+                            let index = match tool_calls
+                                .iter()
+                                .position(|call| call.matches(key.as_deref()))
+                            {
+                                Some(index) => index,
+                                None => tool_calls.len().saturating_sub(1),
+                            };
+                            if let Some(call) = tool_calls.get_mut(index) {
+                                call.arguments.push_str(&delta);
+                                call.streamed_len += delta.len();
+                            }
                             let chunk = ChatCompletionChunk {
                                 id: chunk_id.clone(),
                                 object: "chat.completion.chunk".to_string(),
@@ -461,12 +471,56 @@ async fn pump_chat_chunks(
                                     index: 0,
                                     delta: ChunkDelta {
                                         tool_calls: Some(vec![ChunkToolCall {
-                                            index: target_index,
+                                            index: chunk_tool_index(index),
                                             id: None,
                                             r#type: None,
                                             function: Some(ChunkFunctionCall {
                                                 name: None,
                                                 arguments: Some(delta),
+                                            }),
+                                        }]),
+                                        ..Default::default()
+                                    },
+                                    finish_reason: None,
+                                }],
+                                usage: None,
+                            };
+                            if let Ok(data) = serde_json::to_string(&chunk)
+                                && tx.send(Ok(Event::default().data(data))).await.is_err()
+                            {
+                                return;
+                            }
+                        }
+                        CodexParsedEvent::ToolCallDone { key, arguments } => {
+                            let index = match tool_calls
+                                .iter()
+                                .position(|call| call.matches(key.as_deref()))
+                            {
+                                Some(index) => Some(index),
+                                None => tool_calls.len().checked_sub(1),
+                            };
+                            let Some(index) = index else { continue };
+                            let emit = tool_calls[index].streamed_len == 0 && !arguments.is_empty();
+                            tool_calls[index].arguments.clone_from(&arguments);
+                            if !emit {
+                                continue;
+                            }
+                            tool_calls[index].streamed_len = arguments.len();
+                            let chunk = ChatCompletionChunk {
+                                id: chunk_id.clone(),
+                                object: "chat.completion.chunk".to_string(),
+                                created: now,
+                                model: model.clone(),
+                                choices: vec![ChunkChoice {
+                                    index: 0,
+                                    delta: ChunkDelta {
+                                        tool_calls: Some(vec![ChunkToolCall {
+                                            index: chunk_tool_index(index),
+                                            id: None,
+                                            r#type: None,
+                                            function: Some(ChunkFunctionCall {
+                                                name: None,
+                                                arguments: Some(arguments),
                                             }),
                                         }]),
                                         ..Default::default()
@@ -521,7 +575,14 @@ async fn pump_chat_chunks(
             choices: vec![ChunkChoice {
                 index: 0,
                 delta: ChunkDelta::default(),
-                finish_reason: Some(if tool_index > 0 { "tool_calls" } else { "stop" }.to_string()),
+                finish_reason: Some(
+                    if tool_calls.is_empty() {
+                        "stop"
+                    } else {
+                        "tool_calls"
+                    }
+                    .to_string(),
+                ),
             }],
             usage: None,
         };
@@ -537,10 +598,92 @@ async fn pump_chat_chunks(
 enum CodexParsedEvent {
     TextDelta(String),
     ReasoningDelta(String),
-    ToolCallStart { call_id: String, name: String },
-    ToolCallDelta { call_id: String, delta: String },
-    Finish { reason: String },
+    ToolCallStart {
+        call_id: String,
+        item_id: Option<String>,
+        name: String,
+    },
+    ToolCallDelta {
+        key: Option<String>,
+        delta: String,
+    },
+    ToolCallDone {
+        key: Option<String>,
+        arguments: String,
+    },
+    Finish {
+        reason: String,
+    },
     Usage(Usage),
+}
+
+/// A function call being assembled from the upstream event stream.
+///
+/// Upstream identifies a call by two ids: `call_id` (`call_…`) on the item
+/// events, and `item_id` (`fc_…`) on the argument events. Argument deltas and
+/// the final `*.done` events only carry `item_id`, so both are matched.
+struct PendingToolCall {
+    call_id: String,
+    item_id: Option<String>,
+    name: String,
+    arguments: String,
+    /// Bytes of argument deltas already forwarded to the client. The Codex
+    /// backend only streams deltas for single-call turns; for parallel calls it
+    /// jumps straight to `*.done` with the complete arguments, which then have
+    /// to be emitted in one chunk.
+    streamed_len: usize,
+}
+
+impl PendingToolCall {
+    fn matches(&self, key: Option<&str>) -> bool {
+        match key {
+            Some(key) => key == self.call_id || self.item_id.as_deref() == Some(key),
+            None => false,
+        }
+    }
+}
+
+fn chunk_tool_index(index: usize) -> u32 {
+    u32::try_from(index).unwrap_or(u32::MAX)
+}
+
+fn function_call_key(val: &Value) -> Option<String> {
+    val.get("item_id")
+        .or_else(|| val.get("call_id"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+/// Folds a tool-call event into the calls seen so far. Deltas append; the
+/// upstream's `*.done` events carry the complete arguments and replace whatever
+/// was assembled (idempotent when both arrive for the same call).
+fn apply_tool_event(calls: &mut Vec<PendingToolCall>, ev: CodexParsedEvent) {
+    match ev {
+        CodexParsedEvent::ToolCallStart {
+            call_id,
+            item_id,
+            name,
+        } => calls.push(PendingToolCall {
+            call_id,
+            item_id,
+            name,
+            arguments: String::new(),
+            streamed_len: 0,
+        }),
+        CodexParsedEvent::ToolCallDelta { key, delta } => {
+            if let Some(index) = calls.iter().position(|call| call.matches(key.as_deref())) {
+                calls[index].arguments.push_str(&delta);
+            } else if let Some(last) = calls.last_mut() {
+                last.arguments.push_str(&delta);
+            }
+        }
+        CodexParsedEvent::ToolCallDone { key, arguments } => {
+            if let Some(index) = calls.iter().position(|call| call.matches(key.as_deref())) {
+                calls[index].arguments = arguments;
+            }
+        }
+        _ => {}
+    }
 }
 
 #[derive(Default)]
@@ -613,25 +756,44 @@ impl SseLineDecoder {
                             .and_then(Value::as_str)
                             .unwrap_or("call_unknown")
                             .to_string();
+                        let item_id = item.get("id").and_then(Value::as_str).map(str::to_string);
                         let name = item
                             .get("name")
                             .and_then(Value::as_str)
                             .unwrap_or("function")
                             .to_string();
-                        out.push(CodexParsedEvent::ToolCallStart { call_id, name });
+                        out.push(CodexParsedEvent::ToolCallStart {
+                            call_id,
+                            item_id,
+                            name,
+                        });
                     }
                 }
             }
             Some("response.function_call_arguments.delta") => {
-                let call_id = val
-                    .get("call_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string();
                 if let Some(delta) = val.get("delta").and_then(Value::as_str) {
                     out.push(CodexParsedEvent::ToolCallDelta {
-                        call_id,
+                        key: function_call_key(val),
                         delta: delta.to_string(),
+                    });
+                }
+            }
+            Some("response.function_call_arguments.done") => {
+                if let Some(arguments) = val.get("arguments").and_then(Value::as_str) {
+                    out.push(CodexParsedEvent::ToolCallDone {
+                        key: function_call_key(val),
+                        arguments: arguments.to_string(),
+                    });
+                }
+            }
+            Some("response.output_item.done") => {
+                if let Some(item) = val.get("item")
+                    && item.get("type").and_then(Value::as_str) == Some("function_call")
+                    && let Some(arguments) = item.get("arguments").and_then(Value::as_str)
+                {
+                    out.push(CodexParsedEvent::ToolCallDone {
+                        key: item.get("id").and_then(Value::as_str).map(str::to_string),
+                        arguments: arguments.to_string(),
                     });
                 }
             }
@@ -697,5 +859,110 @@ impl SseRawLineDecoder {
             }
         }
         out
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    /// Feeds raw upstream SSE through the parser and the accumulator, mirroring
+    /// the non-streaming paths.
+    fn collect(sse: &str) -> Vec<PendingToolCall> {
+        let mut decoder = SseLineDecoder::default();
+        let mut calls = Vec::new();
+        for ev in decoder.push_chunk(sse.as_bytes()) {
+            apply_tool_event(&mut calls, ev);
+        }
+        calls
+    }
+
+    fn added(id: &str, call_id: &str, name: &str) -> String {
+        format!(
+            "event: response.output_item.added\ndata: {{\"type\":\"response.output_item.added\",\"item\":{{\"type\":\"function_call\",\"id\":\"{id}\",\"call_id\":\"{call_id}\",\"name\":\"{name}\",\"arguments\":\"\"}}}}\n\n"
+        )
+    }
+
+    fn args_done(id: &str, arguments: &str) -> String {
+        let args = serde_json::to_string(arguments).unwrap();
+        format!(
+            "event: response.function_call_arguments.done\ndata: {{\"type\":\"response.function_call_arguments.done\",\"item_id\":\"{id}\",\"arguments\":{args}}}\n\n"
+        )
+    }
+
+    fn item_done(id: &str, call_id: &str, name: &str, arguments: &str) -> String {
+        let args = serde_json::to_string(arguments).unwrap();
+        format!(
+            "event: response.output_item.done\ndata: {{\"type\":\"response.output_item.done\",\"item\":{{\"type\":\"function_call\",\"id\":\"{id}\",\"call_id\":\"{call_id}\",\"name\":\"{name}\",\"arguments\":{args}}}}}\n\n"
+        )
+    }
+
+    fn args_delta(id: &str, delta: &str) -> String {
+        let delta = serde_json::to_string(delta).unwrap();
+        format!(
+            "event: response.function_call_arguments.delta\ndata: {{\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"{id}\",\"delta\":{delta}}}\n\n"
+        )
+    }
+
+    /// Parallel calls: the backend sends no argument deltas at all, only the
+    /// completed item. Before the fix every call kept `arguments: ""`.
+    #[test]
+    fn test_parallel_tool_calls_take_arguments_from_done_events() {
+        let mut sse = String::new();
+        sse += &added("fc_1", "call_1", "grep");
+        sse += &args_done("fc_1", "{\"pattern\":\"foo\",\"path\":\"/tmp\"}");
+        sse += &item_done(
+            "fc_1",
+            "call_1",
+            "grep",
+            "{\"pattern\":\"foo\",\"path\":\"/tmp\"}",
+        );
+        sse += &added("fc_2", "call_2", "read");
+        sse += &args_done("fc_2", "{\"path\":\"/etc/hostname\"}");
+        sse += &item_done("fc_2", "call_2", "read", "{\"path\":\"/etc/hostname\"}");
+        sse += &added("fc_3", "call_3", "ping");
+        sse += &args_done("fc_3", "{\"text\":\"hi\"}");
+        sse += &item_done("fc_3", "call_3", "ping", "{\"text\":\"hi\"}");
+
+        let calls = collect(&sse);
+        assert_eq!(calls.len(), 3);
+        assert_eq!(calls[0].name, "grep");
+        assert_eq!(
+            calls[0].arguments,
+            "{\"pattern\":\"foo\",\"path\":\"/tmp\"}"
+        );
+        assert_eq!(calls[1].name, "read");
+        assert_eq!(calls[1].arguments, "{\"path\":\"/etc/hostname\"}");
+        assert_eq!(calls[2].name, "ping");
+        assert_eq!(calls[2].arguments, "{\"text\":\"hi\"}");
+    }
+
+    /// Single call: deltas arrive first and the `done` event repeats the full
+    /// arguments — replacing must not duplicate them.
+    #[test]
+    fn test_single_tool_call_deltas_then_done_are_not_duplicated() {
+        let mut sse = String::new();
+        sse += &added("fc_1", "call_1", "ping");
+        for delta in ["{\"", "text", "\":\"", "hi", "\"}"] {
+            sse += &args_delta("fc_1", delta);
+        }
+        sse += &args_done("fc_1", "{\"text\":\"hi\"}");
+        sse += &item_done("fc_1", "call_1", "ping", "{\"text\":\"hi\"}");
+
+        let calls = collect(&sse);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].arguments, "{\"text\":\"hi\"}");
+    }
+
+    #[test]
+    fn test_tool_delta_can_match_call_id() {
+        let mut sse = String::new();
+        sse += &added("fc_1", "call_1", "ping");
+        sse += "event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"call_id\":\"call_1\",\"delta\":\"{\\\"text\\\":\\\"hi\\\"}\"}\n\n";
+
+        let calls = collect(&sse);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].arguments, "{\"text\":\"hi\"}");
     }
 }
