@@ -37,12 +37,10 @@ function formatDate(value: number): string {
 
 export function LogsTable({
   logs,
-  selectedId,
   onSelect,
 }: {
   logs: Log[];
-  selectedId: Log["id"] | null;
-  onSelect: (id: Log["id"]) => void;
+  onSelect: (id: Log["id"], trigger: HTMLButtonElement) => void;
 }) {
   const [query, setQuery] = useState("");
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -97,15 +95,15 @@ export function LogsTable({
             variant="outline"
             size="sm"
             aria-label={`View request ${row.original.id}`}
-            aria-pressed={selectedId === row.original.id}
-            onClick={() => onSelect(row.original.id)}
+            aria-haspopup="dialog"
+            onClick={(event) => onSelect(row.original.id, event.currentTarget)}
           >
             View
           </Button>
         ),
       },
     ],
-    [selectedId, onSelect],
+    [onSelect],
   );
   const table = useReactTable({
     data: logs,
@@ -212,8 +210,8 @@ export function LogsTable({
                   variant="outline"
                   size="sm"
                   aria-label={`View request ${log.id}`}
-                  aria-pressed={selectedId === log.id}
-                  onClick={() => onSelect(log.id)}
+                  aria-haspopup="dialog"
+                  onClick={(event) => onSelect(log.id, event.currentTarget)}
                 >
                   View
                 </Button>
