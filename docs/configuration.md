@@ -24,6 +24,8 @@ At least one allowed email or group is required. If both are configured, a verif
 
 Sign in to the dashboard and open **Settings** to configure log retention (default 30 days, range 1–36500), Zen upstream URL and API key, and Google OAuth desktop client ID and secret. Secrets are encrypted at rest; blank secret fields retain the existing value unless explicitly cleared. The Zen URL may be set to `http://zen-shim:8090/v1` for the supplied Compose setup.
 
+For an OpenAI-compatible upstream, set its API base URL (for example, `https://api.openai.com/v1`) and optional API key in **Settings**. Use `http://127.0.0.1:8080/openai/v1` as the client base URL and authorize with a zero-g virtual key permitted to use `openai`. Chat Completions and Responses are forwarded to their matching upstream endpoints; the upstream must support the endpoint you use. Streaming is passed through.
+
 Create a key under **Virtual keys**, copy it when displayed (it cannot be retrieved later), and supply `Authorization: Bearer <key>` to all provider inference and model endpoints. Choose provider and model restrictions as needed; selecting no providers or models permits all. Revoke compromised keys in the same screen. Dashboard authentication and virtual keys are separate controls.
 
 ## Google OAuth

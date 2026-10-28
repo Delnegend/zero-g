@@ -78,8 +78,10 @@
         "required": [
           "log_retention_days",
           "zen_url",
+          "openai_base_url",
           "oauth_client_id",
           "zen_api_key_set",
+          "openai_api_key_set",
           "oauth_client_secret_set"
         ],
         "properties": {
@@ -94,6 +96,12 @@
           },
           "oauth_client_secret_set": {
             "type": "boolean"
+          },
+          "openai_api_key_set": {
+            "type": "boolean"
+          },
+          "openai_base_url": {
+            "type": "string"
           },
           "zen_api_key_set": {
             "type": "boolean"
@@ -116,6 +124,12 @@
             "type": ["string", "null"]
           },
           "oauth_client_secret": {
+            "type": ["string", "null"]
+          },
+          "openai_api_key": {
+            "type": ["string", "null"]
+          },
+          "openai_base_url": {
             "type": ["string", "null"]
           },
           "zen_api_key": {

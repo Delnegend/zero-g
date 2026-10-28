@@ -2,7 +2,8 @@ mod agy;
 mod codex;
 pub(crate) mod dashboard_auth;
 pub(crate) mod observability;
-pub(crate) mod provider_login;
+mod openai;
+mod provider_login;
 pub(crate) mod settings;
 pub(crate) mod sse;
 mod web;
@@ -89,6 +90,24 @@ pub(crate) fn create_router(state: AppState) -> Router {
             settings::virtual_key_auth,
         ));
 
+    let openai_routes = Router::new()
+        .route("/v1/models", get(openai::models_handler))
+        .route("/v1/models/", get(openai::models_handler))
+        .route("/models", get(openai::models_handler))
+        .route("/models/", get(openai::models_handler))
+        .route("/v1/chat/completions", post(openai::chat_handler))
+        .route("/v1/chat/completions/", post(openai::chat_handler))
+        .route("/chat/completions", post(openai::chat_handler))
+        .route("/chat/completions/", post(openai::chat_handler))
+        .route("/v1/responses", post(openai::responses_handler))
+        .route("/v1/responses/", post(openai::responses_handler))
+        .route("/responses", post(openai::responses_handler))
+        .route("/responses/", post(openai::responses_handler))
+        .layer(axum::middleware::from_fn_with_state(
+            (state.settings.clone(), "openai"),
+            settings::virtual_key_auth,
+        ));
+
     let login_state = (state.clone(), provider_login::OAuthFlows::default());
     let dashboard = Router::new()
         .route("/", get(web::index))
@@ -144,6 +163,7 @@ pub(crate) fn create_router(state: AppState) -> Router {
         .nest("/agy", agy_routes)
         .nest("/codex", codex_routes)
         .nest("/zen", zen_routes)
+        .nest("/openai", openai_routes)
         .layer(cors)
         .layer(axum::middleware::from_fn_with_state(
             state.logs.clone(),

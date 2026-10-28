@@ -174,6 +174,7 @@ fn log_endpoints(addr: SocketAddr) {
     info!("  Google Antigravity: http://{addr}/agy/v1");
     info!("  OpenAI Codex:       http://{addr}/codex/v1");
     info!("  OpenCode Zen:       http://{addr}/zen/v1");
+    info!("  OpenAI compatible:  http://{addr}/openai/v1");
     info!("  Inference routes require a virtual key");
 }
 async fn shutdown_signal() {

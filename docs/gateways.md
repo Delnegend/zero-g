@@ -69,8 +69,8 @@ additional configuration.
 
 - The provider key must be a valid `zero-g` virtual key; restrict it to the
   providers and models needed by the gateway. Keep the value secret.
-- Model names are upstream wire IDs — `/agy/v1/models`, `/codex/v1/models`, and
-  `/zen/v1/models` list exactly what each backend serves. There is no alias
-  layer; do friendly naming in the gateway.
+- Model names are upstream wire IDs — `/agy/v1/models`, `/codex/v1/models`,
+  `/zen/v1/models`, and `/openai/v1/models` list what each backend serves.
+  There is no alias layer; do friendly naming in the gateway.
 - Keep `zero-g` reachable only from the gateway: bind it to a private
   interface and let the gateway enforce authentication.

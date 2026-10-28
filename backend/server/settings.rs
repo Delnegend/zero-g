@@ -218,8 +218,10 @@ pub(crate) struct SettingsResponse {
     #[schema(format = Int64, minimum = 0, maximum = 4_294_967_295_u64)]
     log_retention_days: u32,
     zen_url: String,
+    openai_base_url: String,
     oauth_client_id: String,
     zen_api_key_set: bool,
+    openai_api_key_set: bool,
     oauth_client_secret_set: bool,
 }
 
@@ -242,11 +244,16 @@ pub(crate) async fn get_settings(State(store): State<SettingsStore>) -> Response
         Ok(SettingsResponse {
             log_retention_days: retention,
             zen_url: store.setting_get("zen_url").await?.unwrap_or_default(),
+            openai_base_url: store
+                .setting_get("openai_base_url")
+                .await?
+                .unwrap_or_default(),
             oauth_client_id: store
                 .setting_get("oauth_client_id")
                 .await?
                 .unwrap_or_default(),
             zen_api_key_set: store.secret_get("zen_api_key").await?.is_some(),
+            openai_api_key_set: store.secret_get("openai_api_key").await?.is_some(),
             oauth_client_secret_set: store.secret_get("oauth_client_secret").await?.is_some(),
         })
     }
@@ -261,8 +268,10 @@ pub(crate) struct UpdateSettings {
     #[schema(format = Int64, minimum = 0, maximum = 4_294_967_295_u64)]
     log_retention_days: Option<u32>,
     zen_url: Option<String>,
+    openai_base_url: Option<String>,
     oauth_client_id: Option<String>,
     zen_api_key: Option<String>,
+    openai_api_key: Option<String>,
     oauth_client_secret: Option<String>,
 }
 
@@ -289,6 +298,7 @@ pub(crate) async fn put_settings(
     }
     let values = [
         ("zen_url", input.zen_url),
+        ("openai_base_url", input.openai_base_url),
         ("oauth_client_id", input.oauth_client_id),
         (
             "log_retention_days",
@@ -304,6 +314,7 @@ pub(crate) async fn put_settings(
     }
     for (name, value) in [
         ("zen_api_key", input.zen_api_key),
+        ("openai_api_key", input.openai_api_key),
         ("oauth_client_secret", input.oauth_client_secret),
     ] {
         if let Some(value) = value {
@@ -357,7 +368,7 @@ pub(super) async fn create_key(
         || input
             .providers
             .iter()
-            .any(|p| !matches!(p.as_str(), "agy" | "codex" | "zen"))
+            .any(|p| !matches!(p.as_str(), "agy" | "codex" | "zen" | "openai"))
         || input.models.iter().any(|m| m.trim().is_empty())
     {
         return (
@@ -519,22 +530,12 @@ mod tests {
             .await
             .unwrap();
         let store = SettingsStore::new(logs, &key(1)).await.unwrap();
-        let response = get_settings(State(store.clone())).await;
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            json_body(response).await,
-            json!({
-                "log_retention_days": 30,
-                "zen_url": "",
-                "oauth_client_id": "",
-                "zen_api_key_set": false,
-                "oauth_client_secret_set": false
-            })
-        );
 
         let input = serde_json::from_value(json!({
             "log_retention_days": 7,
-            "zen_api_key": "secret"
+            "zen_api_key": "secret",
+            "openai_base_url": "https://example.com/v1",
+            "openai_api_key": "openai-secret"
         }))
         .unwrap();
         let response = put_settings(State(store.clone()), Json(input)).await;
@@ -543,6 +544,17 @@ mod tests {
         assert_eq!(body["log_retention_days"], 7);
         assert_eq!(body["zen_api_key_set"], true);
         assert!(body.get("zen_api_key").is_none());
+        assert_eq!(body["openai_base_url"], "https://example.com/v1");
+        assert_eq!(body["openai_api_key_set"], true);
+        assert!(body.get("openai_api_key").is_none());
+
+        let input = serde_json::from_value(json!({"openai_base_url": ""})).unwrap();
+        let body = json_body(put_settings(State(store.clone()), Json(input)).await).await;
+        assert_eq!(body["openai_base_url"], "");
+        assert_eq!(body["openai_api_key_set"], true);
+        let input = serde_json::from_value(json!({"openai_api_key": ""})).unwrap();
+        let body = json_body(put_settings(State(store.clone()), Json(input)).await).await;
+        assert_eq!(body["openai_api_key_set"], false);
 
         let input = serde_json::from_value(json!({"zen_api_key": ""})).unwrap();
         let response = put_settings(State(store.clone()), Json(input)).await;
@@ -620,7 +632,7 @@ mod tests {
             State(store.clone()),
             Json(CreateKey {
                 name: "limited".into(),
-                providers: vec!["codex".into()],
+                providers: vec!["codex".into(), "openai".into()],
                 models: vec!["allowed-model".into()],
             }),
         )

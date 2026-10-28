@@ -41,8 +41,8 @@ Source builds from checkout: run `(cd frontend && bun install --frozen-lockfile)
 
 ## Highlights
 
-- **Standard OpenAI API per Provider** — Explicit `/agy/v1`, `/codex/v1`, and `/zen/v1` routes supporting `chat/completions`, `responses`, and `models`.
-- **Multi-Provider Backends** — Seamless proxying for Google Antigravity (`/agy`), OpenAI Codex (`/codex`), and OpenCode Zen (`/zen`).
+- **Standard OpenAI API per Provider** — Explicit `/agy/v1`, `/codex/v1`, `/zen/v1`, and `/openai/v1` routes. Endpoint support depends on the provider.
+- **Multi-Provider Backends** — Proxy Google Antigravity (`/agy`), OpenAI Codex (`/codex`), OpenCode Zen (`/zen`), and a configurable OpenAI-compatible upstream (`/openai`).
 - **Auto-Refresh** — Refreshes expired OAuth tokens in the background automatically.
 - **Claude & Gemini Support** — Formats Anthropic thinking beta headers, system instructions, and tool calling signatures automatically.
 - **Multi-Turn Tool Calling** — End-to-end function declaration, execution, and tool response turn merging.
@@ -59,10 +59,11 @@ For all environment variables, see **[Configuration Reference](docs/configuratio
 
 ```mermaid
 flowchart LR
-    Client[OpenAI Client] -->|/agy/v1, /codex/v1, /zen/v1| ZeroG[zero-g Proxy]
+    Client[OpenAI Client] -->|Provider routes| ZeroG[zero-g Proxy]
     ZeroG -->|OAuth| CCA[Google Antigravity]
     ZeroG -->|OAuth| Codex[OpenAI Codex]
     ZeroG -->|TLS Proxy| Zen[OpenCode Zen]
+    ZeroG -->|OpenAI API| Custom[OpenAI-compatible upstream]
 ```
 
 For component boundaries, internal translation, and state invariants, see **[Architecture Guide](docs/architecture.md)**.

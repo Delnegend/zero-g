@@ -49,8 +49,10 @@ function message(error: unknown): string {
 function SettingsPage() {
   const [draft, setSettings] = useState<Settings | null>(null);
   const [zenKey, setZenKey] = useState("");
+  const [openaiKey, setOpenaiKey] = useState("");
   const [oauthSecret, setOauthSecret] = useState("");
   const [clearZen, setClearZen] = useState(false);
+  const [clearOpenai, setClearOpenai] = useState(false);
   const [clearOauth, setClearOauth] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
@@ -93,9 +95,12 @@ function SettingsPage() {
       const body: SettingsUpdate = {
         log_retention_days: settings.log_retention_days,
         zen_url: settings.zen_url,
+        openai_base_url: settings.openai_base_url,
         oauth_client_id: settings.oauth_client_id,
       };
       if (clearZen || zenKey) body.zen_api_key = clearZen ? "" : zenKey;
+      if (clearOpenai || openaiKey)
+        body.openai_api_key = clearOpenai ? "" : openaiKey;
       if (clearOauth || oauthSecret)
         body.oauth_client_secret = clearOauth ? "" : oauthSecret;
       const updated = await saveMutation.mutateAsync({
@@ -106,8 +111,10 @@ function SettingsPage() {
       await queryClient.cancelQueries({ queryKey: ["settings"] });
       if (controller.signal.aborted) return;
       setZenKey((current) => (current === zenKey ? "" : current));
+      setOpenaiKey((current) => (current === openaiKey ? "" : current));
       setOauthSecret((current) => (current === oauthSecret ? "" : current));
       setClearZen((current) => (current === clearZen ? false : current));
+      setClearOpenai((current) => (current === clearOpenai ? false : current));
       setClearOauth((current) => (current === clearOauth ? false : current));
       setSettings((current) => {
         if (!current) return null;
@@ -119,6 +126,10 @@ function SettingsPage() {
           current.zen_url === settings.zen_url
             ? updated.zen_url
             : current.zen_url;
+        const openaiBaseUrl =
+          current.openai_base_url === settings.openai_base_url
+            ? updated.openai_base_url
+            : current.openai_base_url;
         const oauthClientId =
           current.oauth_client_id === settings.oauth_client_id
             ? updated.oauth_client_id
@@ -126,6 +137,7 @@ function SettingsPage() {
         if (
           logRetention === updated.log_retention_days &&
           zenUrl === updated.zen_url &&
+          openaiBaseUrl === updated.openai_base_url &&
           oauthClientId === updated.oauth_client_id
         )
           return null;
@@ -133,6 +145,7 @@ function SettingsPage() {
           ...updated,
           log_retention_days: logRetention,
           zen_url: zenUrl,
+          openai_base_url: openaiBaseUrl,
           oauth_client_id: oauthClientId,
         };
       });
@@ -220,6 +233,46 @@ function SettingsPage() {
                   onCheckedChange={setClearZen}
                 />
                 Clear Zen API key
+              </Label>
+            )}
+            <Label className="block text-sm font-medium">
+              OpenAI-compatible base URL
+              <Input
+                className={inputClass}
+                type="url"
+                placeholder="https://api.openai.com/v1"
+                value={settings.openai_base_url}
+                onChange={(e) =>
+                  setSettings({ ...settings, openai_base_url: e.target.value })
+                }
+              />
+            </Label>
+            <Label className="block text-sm font-medium">
+              OpenAI-compatible API key{" "}
+              <span className="font-normal text-muted-foreground">
+                (
+                {settings.openai_api_key_set
+                  ? "configured; leave blank to retain"
+                  : "not configured; upstream requests will have no bearer token"}
+                )
+              </span>
+              <Input
+                className={inputClass}
+                type="password"
+                autoComplete="new-password"
+                disabled={clearOpenai}
+                value={openaiKey}
+                onChange={(e) => setOpenaiKey(e.target.value)}
+              />
+            </Label>
+            {settings.openai_api_key_set && (
+              <Label htmlFor="clear-openai" className="text-sm">
+                <Checkbox
+                  id="clear-openai"
+                  checked={clearOpenai}
+                  onCheckedChange={setClearOpenai}
+                />
+                Clear OpenAI-compatible API key
               </Label>
             )}
             <Label className="block text-sm font-medium">
@@ -413,7 +466,7 @@ function KeysPage() {
               Select none to allow all providers.
             </p>
             <div className="mt-2 flex flex-wrap gap-4">
-              {["agy", "codex", "zen"].map((provider) => (
+              {["agy", "codex", "zen", "openai"].map((provider) => (
                 <Label
                   key={provider}
                   htmlFor={`provider-${provider}`}
