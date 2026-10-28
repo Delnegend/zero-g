@@ -1,8 +1,8 @@
-//! Dashboard authentication. Set `ZERO_G_DASHBOARD_AUTH` to `basic`, `oidc`, or
-//! explicitly to `disabled`. Basic requires `ZERO_G_DASHBOARD_USERNAME` and
-//! `ZERO_G_DASHBOARD_PASSWORD`. OIDC requires `ZERO_G_OIDC_ISSUER`,
+//! Dashboard authentication. Set `ZERO_G_DASHBOARD_AUTH` to `basic` or `oidc`.
+//! Basic requires `ZERO_G_DASHBOARD_USERNAME` and `ZERO_G_DASHBOARD_PASSWORD`.
+//! OIDC requires `ZERO_G_OIDC_ISSUER`,
 //! `ZERO_G_OIDC_CLIENT_ID`, `ZERO_G_OIDC_CLIENT_SECRET`, `ZERO_G_OIDC_REDIRECT_URL`
-//! and `ZERO_G_OIDC_ALLOWED_EMAILS` (comma-separated exact email addresses).
+//! and at least one of `ZERO_G_OIDC_ALLOWED_EMAILS` or `ZERO_G_OIDC_ALLOWED_GROUPS`.
 //! Register the redirect URL as the exact public HTTPS URL ending in `/auth/callback`;
 //! an HTTP loopback URL is allowed for local development. The configured URL,
 //! rather than untrusted forwarded headers, determines cookie security.
@@ -31,11 +31,81 @@ use base64::{
     Engine,
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header, jwk::JwkSet};
+use openidconnect::{
+    AdditionalClaims, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EmptyExtraTokenFields,
+    EndpointMaybeSet, EndpointNotSet, EndpointSet, IdTokenFields, IssuerUrl, JsonWebKeySetUrl,
+    Nonce, OAuth2TokenResponse, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope,
+    StandardErrorResponse, StandardTokenResponse, TokenResponse,
+    core::{
+        CoreAuthDisplay, CoreAuthPrompt, CoreAuthenticationFlow, CoreErrorResponseType,
+        CoreGenderClaim, CoreIdTokenVerifier, CoreJsonWebKey, CoreJsonWebKeySet,
+        CoreJweContentEncryptionAlgorithm, CoreJwsSigningAlgorithm, CoreProviderMetadata,
+        CoreRevocableToken, CoreRevocationErrorResponse, CoreTokenIntrospectionResponse,
+        CoreTokenType,
+    },
+};
 use rand::RngCore;
-use serde::Deserialize;
-use sha2::{Digest, Sha256};
+use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
+
+struct SafeHttp(reqwest::Client);
+
+impl<'a> openidconnect::AsyncHttpClient<'a> for SafeHttp {
+    type Error = std::io::Error;
+    type Future = std::pin::Pin<
+        Box<
+            dyn Future<Output = Result<openidconnect::HttpResponse, Self::Error>>
+                + Send
+                + Sync
+                + 'a,
+        >,
+    >;
+
+    fn call(&'a self, request: openidconnect::HttpRequest) -> Self::Future {
+        Box::pin(async move {
+            safe_url(&request.uri().to_string()).map_err(std::io::Error::other)?;
+            openidconnect::AsyncHttpClient::call(&self.0, request)
+                .await
+                .map_err(std::io::Error::other)
+        })
+    }
+}
+
+type OidcClient = openidconnect::Client<
+    ExtraClaims,
+    CoreAuthDisplay,
+    CoreGenderClaim,
+    CoreJweContentEncryptionAlgorithm,
+    CoreJsonWebKey,
+    CoreAuthPrompt,
+    StandardErrorResponse<CoreErrorResponseType>,
+    StandardTokenResponse<
+        IdTokenFields<
+            ExtraClaims,
+            EmptyExtraTokenFields,
+            CoreGenderClaim,
+            CoreJweContentEncryptionAlgorithm,
+            CoreJwsSigningAlgorithm,
+        >,
+        CoreTokenType,
+    >,
+    CoreTokenIntrospectionResponse,
+    CoreRevocableToken,
+    CoreRevocationErrorResponse,
+    EndpointSet,
+    EndpointNotSet,
+    EndpointNotSet,
+    EndpointNotSet,
+    EndpointMaybeSet,
+    EndpointMaybeSet,
+>;
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct ExtraClaims {
+    #[serde(default)]
+    groups: Vec<String>,
+}
+impl AdditionalClaims for ExtraClaims {}
 
 const CALLBACK: &str = "/auth/callback";
 const SESSION_COOKIE: &str = "zero_g_dashboard_session";
@@ -47,21 +117,18 @@ const SESSION_TTL: Duration = Duration::from_hours(8);
 pub(crate) struct DashboardAuth(Arc<Mode>, Arc<reqwest::Url>);
 
 enum Mode {
-    Disabled,
     Basic { username: String, password: String },
     Oidc(Box<Oidc>),
 }
 
 struct Oidc {
-    client: reqwest::Client,
-    issuer: String,
-    client_id: String,
-    client_secret: String,
+    http_client: SafeHttp,
+    client: OidcClient,
+    issuer: IssuerUrl,
+    jwks_uri: JsonWebKeySetUrl,
+    signing_algorithms: Vec<CoreJwsSigningAlgorithm>,
     allowed_emails: Vec<String>,
-    redirect_url: String,
-    authorization_endpoint: String,
-    token_endpoint: String,
-    jwks_uri: String,
+    allowed_groups: Vec<String>,
     secure: bool,
     state: Mutex<Store>,
 }
@@ -75,15 +142,8 @@ struct Store {
 struct Pending {
     verifier: String,
     nonce: String,
+    return_to: String,
     created: Instant,
-}
-
-#[derive(Deserialize)]
-struct Discovery {
-    issuer: String,
-    authorization_endpoint: String,
-    token_endpoint: String,
-    jwks_uri: String,
 }
 
 #[derive(Deserialize)]
@@ -93,19 +153,6 @@ struct Callback {
     error: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct TokenResponse {
-    id_token: String,
-}
-
-#[derive(Deserialize)]
-struct Claims {
-    nonce: String,
-    sub: String,
-    email: Option<String>,
-    email_verified: Option<bool>,
-}
-
 fn required(name: &str) -> Result<String, String> {
     std::env::var(name)
         .ok()
@@ -113,12 +160,24 @@ fn required(name: &str) -> Result<String, String> {
         .ok_or_else(|| format!("{name} must be set"))
 }
 
-fn allowed_email(claims: &Claims, allowed: &[String]) -> bool {
-    claims.email_verified == Some(true)
-        && claims
-            .email
-            .as_ref()
-            .is_some_and(|email| allowed.iter().any(|entry| entry == email))
+fn authorized(
+    email: Option<&str>,
+    verified: bool,
+    membership: &[String],
+    emails: &[String],
+    groups: &[String],
+) -> bool {
+    (verified && email.is_some_and(|value| emails.iter().any(|entry| entry == value)))
+        || membership.iter().any(|group| groups.contains(group))
+}
+
+fn allowlist(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 // Only explicitly configured loopback HTTP is permitted. All other endpoints
@@ -149,7 +208,6 @@ impl DashboardAuth {
             return Err("ZERO_G_DASHBOARD_ORIGIN must contain only scheme and authority".into());
         }
         let mode = match mode.as_str() {
-            "disabled" => Mode::Disabled,
             "basic" => {
                 let username = required("ZERO_G_DASHBOARD_USERNAME")?;
                 let password = required("ZERO_G_DASHBOARD_PASSWORD")?;
@@ -166,14 +224,12 @@ impl DashboardAuth {
                 }
                 let client_id = required("ZERO_G_OIDC_CLIENT_ID")?;
                 let client_secret = required("ZERO_G_OIDC_CLIENT_SECRET")?;
-                let allowed_emails: Vec<String> = required("ZERO_G_OIDC_ALLOWED_EMAILS")?
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|entry| !entry.is_empty())
-                    .map(str::to_owned)
-                    .collect();
-                if allowed_emails.is_empty() {
-                    return Err("ZERO_G_OIDC_ALLOWED_EMAILS must contain at least one email".into());
+                let allowed_emails =
+                    allowlist(&std::env::var("ZERO_G_OIDC_ALLOWED_EMAILS").unwrap_or_default());
+                let allowed_groups =
+                    allowlist(&std::env::var("ZERO_G_OIDC_ALLOWED_GROUPS").unwrap_or_default());
+                if allowed_emails.is_empty() && allowed_groups.is_empty() {
+                    return Err("Configure at least one OIDC allowed email or group".into());
                 }
                 let redirect_url = required("ZERO_G_OIDC_REDIRECT_URL")?;
                 let redirect = safe_url(&redirect_url)?;
@@ -185,49 +241,45 @@ impl DashboardAuth {
                         "OIDC redirect URL must end in {CALLBACK} without a query"
                     ));
                 }
-                let client = reqwest::Client::builder()
-                    .redirect(reqwest::redirect::Policy::none())
-                    .timeout(Duration::from_secs(10))
-                    .build()
-                    .map_err(|e| format!("creating OIDC client: {e}"))?;
-                let discovery: Discovery = client
-                    .get(format!(
-                        "{}/.well-known/openid-configuration",
-                        issuer.trim_end_matches('/')
-                    ))
-                    .send()
-                    .await
-                    .map_err(|e| format!("OIDC discovery: {e}"))?
-                    .error_for_status()
-                    .map_err(|e| format!("OIDC discovery: {e}"))?
-                    .json()
-                    .await
-                    .map_err(|e| format!("OIDC discovery: {e}"))?;
-                if discovery.issuer != issuer {
-                    return Err("OIDC discovery issuer does not match configured issuer".into());
+                let http_client = SafeHttp(
+                    reqwest::Client::builder()
+                        .redirect(reqwest::redirect::Policy::none())
+                        .timeout(Duration::from_secs(10))
+                        .build()
+                        .map_err(|e| format!("creating OIDC client: {e}"))?,
+                );
+                let metadata = CoreProviderMetadata::discover_async(
+                    IssuerUrl::new(issuer).map_err(|e| format!("invalid OIDC issuer: {e}"))?,
+                    &http_client,
+                )
+                .await
+                .map_err(|e| format!("OIDC discovery: {e}"))?;
+                safe_url(metadata.authorization_endpoint().url().as_str())?;
+                if let Some(endpoint) = metadata.token_endpoint() {
+                    safe_url(endpoint.url().as_str())?;
                 }
-                for endpoint in [
-                    &discovery.authorization_endpoint,
-                    &discovery.token_endpoint,
-                    &discovery.jwks_uri,
-                ] {
-                    safe_url(endpoint)?;
-                }
+                let issuer = metadata.issuer().clone();
+                let jwks_uri = metadata.jwks_uri().clone();
+                let signing_algorithms = metadata.id_token_signing_alg_values_supported().clone();
+                let client = OidcClient::from_provider_metadata(
+                    metadata,
+                    ClientId::new(client_id),
+                    Some(ClientSecret::new(client_secret)),
+                )
+                .set_redirect_uri(RedirectUrl::new(redirect_url).map_err(|e| e.to_string())?);
                 Mode::Oidc(Box::new(Oidc {
+                    http_client,
                     client,
                     issuer,
-                    client_id,
-                    client_secret,
+                    jwks_uri,
+                    signing_algorithms,
                     allowed_emails,
-                    redirect_url,
-                    authorization_endpoint: discovery.authorization_endpoint,
-                    token_endpoint: discovery.token_endpoint,
-                    jwks_uri: discovery.jwks_uri,
+                    allowed_groups,
                     secure: redirect.scheme() == "https",
                     state: Mutex::new(Store::default()),
                 }))
             }
-            _ => return Err("ZERO_G_DASHBOARD_AUTH must be basic, oidc, or disabled".into()),
+            _ => return Err("ZERO_G_DASHBOARD_AUTH must be basic or oidc".into()),
         };
         Ok(Self(Arc::new(mode), Arc::new(origin)))
     }
@@ -289,12 +341,11 @@ fn equal(a: &[u8], b: &[u8]) -> bool {
 
 async fn authenticate(State(auth): State<DashboardAuth>, req: Request, next: Next) -> Response {
     let is_api = req.uri().path() == "/api" || req.uri().path().starts_with("/api/");
-    let mut response =
-        if valid_request_origin(&auth.1, &req, !matches!(auth.0.as_ref(), Mode::Disabled)) {
-            authenticate_inner(auth, req, next).await
-        } else {
-            (StatusCode::FORBIDDEN, "Invalid request origin").into_response()
-        };
+    let mut response = if valid_request_origin(&auth.1, &req) {
+        authenticate_inner(auth, req, next).await
+    } else {
+        (StatusCode::FORBIDDEN, "Invalid request origin").into_response()
+    };
     if is_api {
         response
             .headers_mut()
@@ -303,7 +354,7 @@ async fn authenticate(State(auth): State<DashboardAuth>, req: Request, next: Nex
     response
 }
 
-fn valid_request_origin(origin: &reqwest::Url, req: &Request, authenticated_mode: bool) -> bool {
+fn valid_request_origin(origin: &reqwest::Url, req: &Request) -> bool {
     let headers = req.headers();
     let mut hosts = headers.get_all(header::HOST).iter();
     let Some(host) = hosts.next().and_then(|v| v.to_str().ok()) else {
@@ -333,10 +384,9 @@ fn valid_request_origin(origin: &reqwest::Url, req: &Request, authenticated_mode
             return false;
         }
     } else if !safe
-        && (!authenticated_mode
-            || headers
-                .keys()
-                .any(|name| name.as_str().starts_with("sec-fetch-")))
+        && headers
+            .keys()
+            .any(|name| name.as_str().starts_with("sec-fetch-"))
     {
         return false;
     }
@@ -353,7 +403,6 @@ fn valid_request_origin(origin: &reqwest::Url, req: &Request, authenticated_mode
 
 async fn authenticate_inner(auth: DashboardAuth, req: Request, next: Next) -> Response {
     match auth.0.as_ref() {
-        Mode::Disabled => next.run(req).await,
         Mode::Basic { username, password } => {
             let valid = req
                 .headers()
@@ -403,31 +452,42 @@ async fn authenticate_inner(auth: DashboardAuth, req: Request, next: Next) -> Re
             {
                 return (StatusCode::UNAUTHORIZED, "Authentication required").into_response();
             }
-            let state = random_token();
-            let verifier = random_token();
-            let nonce = random_token();
-            let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+            let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
+            let mut request = oidc
+                .client
+                .authorize_url(
+                    CoreAuthenticationFlow::AuthorizationCode,
+                    CsrfToken::new_random,
+                    Nonce::new_random,
+                )
+                .add_scope(Scope::new("profile".into()))
+                .add_scope(Scope::new("email".into()))
+                .set_pkce_challenge(challenge);
+            if !oidc.allowed_groups.is_empty() {
+                request = request.add_scope(Scope::new("groups".into()));
+            }
+            let (url, csrf, nonce) = request.url();
+            let state = csrf.secret().to_owned();
             store.pending.insert(
                 state.clone(),
                 Pending {
-                    verifier,
-                    nonce: nonce.clone(),
+                    verifier: verifier.secret().to_owned(),
+                    nonce: nonce.secret().to_owned(),
+                    return_to: req
+                        .uri()
+                        .path_and_query()
+                        .map(axum::http::uri::PathAndQuery::as_str)
+                        .filter(|value| {
+                            value.starts_with('/')
+                                && !value.starts_with("//")
+                                && !value.contains('\\')
+                        })
+                        .unwrap_or("/")
+                        .to_owned(),
                     created: now,
                 },
             );
             drop(store);
-            let Ok(mut url) = reqwest::Url::parse(&oidc.authorization_endpoint) else {
-                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-            };
-            url.query_pairs_mut()
-                .append_pair("response_type", "code")
-                .append_pair("client_id", &oidc.client_id)
-                .append_pair("redirect_uri", &oidc.redirect_url)
-                .append_pair("scope", "openid profile email")
-                .append_pair("state", &state)
-                .append_pair("nonce", &nonce)
-                .append_pair("code_challenge", &challenge)
-                .append_pair("code_challenge_method", "S256");
             with_cookie(
                 Redirect::to(url.as_str()).into_response(),
                 &set_cookie(STATE_COOKIE, &state, LOGIN_TTL.as_secs(), oidc.secure),
@@ -470,7 +530,7 @@ async fn callback(
         .await
         .sessions
         .insert(session.clone(), Instant::now() + SESSION_TTL);
-    let response = with_cookie(Redirect::to("/").into_response(), &clear);
+    let response = with_cookie(Redirect::to(&pending.return_to).into_response(), &clear);
     with_cookie(
         response,
         &set_cookie(SESSION_COOKIE, &session, SESSION_TTL.as_secs(), oidc.secure),
@@ -478,67 +538,63 @@ async fn callback(
 }
 
 async fn verify_login(oidc: &Oidc, code: &str, pending: &Pending) -> Result<(), String> {
-    let tokens: TokenResponse = oidc
+    let tokens = oidc
         .client
-        .post(&oidc.token_endpoint)
-        .form(&[
-            ("grant_type", "authorization_code"),
-            ("code", code),
-            ("redirect_uri", &oidc.redirect_url),
-            ("client_id", &oidc.client_id),
-            ("client_secret", &oidc.client_secret),
-            ("code_verifier", &pending.verifier),
-        ])
-        .send()
-        .await
+        .exchange_code(AuthorizationCode::new(code.to_owned()))
         .map_err(|e| e.to_string())?
-        .error_for_status()
-        .map_err(|e| e.to_string())?
-        .json()
+        .set_pkce_verifier(PkceCodeVerifier::new(pending.verifier.clone()))
+        .request_async(&oidc.http_client)
         .await
         .map_err(|e| e.to_string())?;
-    let header = decode_header(&tokens.id_token).map_err(|e| e.to_string())?;
-    // Reject symmetric or unsigned algorithms: provider JWKS must contain a public key.
+    let id_token = tokens.id_token().ok_or("OIDC response missing ID token")?;
     if !matches!(
-        header.alg,
-        Algorithm::RS256
-            | Algorithm::RS384
-            | Algorithm::RS512
-            | Algorithm::PS256
-            | Algorithm::PS384
-            | Algorithm::PS512
-            | Algorithm::ES256
-            | Algorithm::ES384
-            | Algorithm::EdDSA
+        id_token.signing_alg().map_err(|e| e.to_string())?,
+        CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256
+            | CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha384
+            | CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha512
+            | CoreJwsSigningAlgorithm::RsaSsaPssSha256
+            | CoreJwsSigningAlgorithm::RsaSsaPssSha384
+            | CoreJwsSigningAlgorithm::RsaSsaPssSha512
+            | CoreJwsSigningAlgorithm::EcdsaP256Sha256
+            | CoreJwsSigningAlgorithm::EcdsaP384Sha384
+            | CoreJwsSigningAlgorithm::EdDsa
     ) {
         return Err("unsupported ID token algorithm".into());
     }
-    let kid = header.kid.ok_or("ID token missing key ID")?;
-    let keys: JwkSet = oidc
-        .client
-        .get(&oidc.jwks_uri)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .error_for_status()
-        .map_err(|e| e.to_string())?
-        .json()
+    let keys = CoreJsonWebKeySet::fetch_async(&oidc.jwks_uri, &oidc.http_client)
         .await
         .map_err(|e| e.to_string())?;
-    let key = keys.find(&kid).ok_or("OIDC signing key not found")?;
-    let key = DecodingKey::from_jwk(key).map_err(|e| e.to_string())?;
-    let mut validation = Validation::new(header.alg);
-    validation.set_issuer(&[&oidc.issuer]);
-    validation.set_audience(&[&oidc.client_id]);
-    validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
-    let claims = decode::<Claims>(&tokens.id_token, &key, &validation)
-        .map_err(|e| e.to_string())?
-        .claims;
-    if claims.sub.is_empty() || !equal(claims.nonce.as_bytes(), pending.nonce.as_bytes()) {
-        return Err("invalid ID token claims".into());
+    let verifier = CoreIdTokenVerifier::new_public_client(
+        oidc.client.client_id().clone(),
+        oidc.issuer.clone(),
+        keys,
+    )
+    .set_allowed_algs(oidc.signing_algorithms.clone());
+    let claims = id_token
+        .claims(&verifier, &Nonce::new(pending.nonce.clone()))
+        .map_err(|e| e.to_string())?;
+    if claims.subject().as_str().is_empty() {
+        return Err("invalid ID token subject".into());
     }
-    if !allowed_email(&claims, &oidc.allowed_emails) {
-        return Err("OIDC email is not verified or authorized".into());
+    if let Some(expected) = claims.access_token_hash() {
+        let actual = openidconnect::AccessTokenHash::from_token(
+            tokens.access_token(),
+            id_token.signing_alg().map_err(|e| e.to_string())?,
+            id_token.signing_key(&verifier).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        if actual != *expected {
+            return Err("invalid access token hash".into());
+        }
+    }
+    if !authorized(
+        claims.email().map(|email| email.as_str()),
+        claims.email_verified().unwrap_or(false),
+        &claims.additional_claims().groups,
+        &oidc.allowed_emails,
+        &oidc.allowed_groups,
+    ) {
+        return Err("OIDC identity is not authorized".into());
     }
     Ok(())
 }
@@ -549,25 +605,75 @@ mod tests {
     use super::*;
     use axum::{body::Body, http::Request};
     use tower::ServiceExt;
+    fn test_oidc(store: Store) -> Oidc {
+        let metadata: CoreProviderMetadata = serde_json::from_value(serde_json::json!({
+            "issuer": "https://issuer.example",
+            "authorization_endpoint": "https://issuer.example/authorize",
+            "token_endpoint": "https://issuer.example/token",
+            "jwks_uri": "https://issuer.example/jwks",
+            "response_types_supported": ["code"],
+            "subject_types_supported": ["public"],
+            "id_token_signing_alg_values_supported": ["RS256"]
+        }))
+        .unwrap();
+        let issuer = metadata.issuer().clone();
+        let jwks_uri = metadata.jwks_uri().clone();
+        let signing_algorithms = metadata.id_token_signing_alg_values_supported().clone();
+        let client = OidcClient::from_provider_metadata(
+            metadata,
+            ClientId::new("client".into()),
+            Some(ClientSecret::new("secret".into())),
+        )
+        .set_redirect_uri(
+            RedirectUrl::new("https://dashboard.example/auth/callback".into()).unwrap(),
+        );
+        Oidc {
+            http_client: SafeHttp(reqwest::Client::new()),
+            client,
+            issuer,
+            jwks_uri,
+            signing_algorithms,
+            allowed_emails: vec!["admin@example.com".into()],
+            allowed_groups: vec![],
+            secure: true,
+            state: Mutex::new(store),
+        }
+    }
 
     #[test]
-    fn oidc_requires_verified_allowlisted_email() {
-        let allowed = vec!["admin@example.com".to_owned()];
-        let mut claims = Claims {
-            nonce: "nonce".into(),
-            sub: "subject".into(),
-            email: None,
-            email_verified: None,
-        };
-        assert!(!allowed_email(&claims, &allowed));
-        claims.email = Some("admin@example.com".into());
-        assert!(!allowed_email(&claims, &allowed));
-        claims.email_verified = Some(false);
-        assert!(!allowed_email(&claims, &allowed));
-        claims.email_verified = Some(true);
-        assert!(allowed_email(&claims, &allowed));
-        claims.email = Some("other@example.com".into());
-        assert!(!allowed_email(&claims, &allowed));
+    fn oidc_allows_verified_emails_or_exact_group_membership() {
+        let emails = vec!["admin@example.com".to_owned()];
+        let groups = vec!["admins".to_owned()];
+        assert!(!authorized(None, false, &[], &emails, &groups));
+        assert!(!authorized(
+            Some("admin@example.com"),
+            false,
+            &[],
+            &emails,
+            &groups
+        ));
+        assert!(authorized(
+            Some("admin@example.com"),
+            true,
+            &[],
+            &emails,
+            &groups
+        ));
+        assert!(!authorized(
+            None,
+            false,
+            &["admin".into()],
+            &emails,
+            &groups
+        ));
+        assert!(authorized(
+            None,
+            false,
+            &["admins".into()],
+            &emails,
+            &groups
+        ));
+        assert!(!authorized(None, false, &["admins".into()], &[], &[]));
     }
 
     #[tokio::test]
@@ -576,19 +682,7 @@ mod tests {
         store
             .sessions
             .insert("session".into(), Instant::now() + SESSION_TTL);
-        let oidc = Mode::Oidc(Box::new(Oidc {
-            client: reqwest::Client::new(),
-            issuer: "https://issuer.example".into(),
-            client_id: "client".into(),
-            client_secret: "secret".into(),
-            allowed_emails: vec!["admin@example.com".into()],
-            redirect_url: "https://dashboard.example/auth/callback".into(),
-            authorization_endpoint: "https://issuer.example/authorize".into(),
-            token_endpoint: "https://issuer.example/token".into(),
-            jwks_uri: "https://issuer.example/jwks".into(),
-            secure: true,
-            state: Mutex::new(store),
-        }));
+        let oidc = Mode::Oidc(Box::new(test_oidc(store)));
         for mode in [
             Mode::Basic {
                 username: "admin".into(),
@@ -717,6 +811,7 @@ mod tests {
             Pending {
                 verifier: "verifier".into(),
                 nonce: "nonce".into(),
+                return_to: "/".into(),
                 created: Instant::now(),
             },
         );
@@ -725,23 +820,12 @@ mod tests {
             Pending {
                 verifier: "verifier".into(),
                 nonce: "nonce".into(),
+                return_to: "/".into(),
                 created: Instant::now().checked_sub(LOGIN_TTL).unwrap(),
             },
         );
         let auth = DashboardAuth(
-            Arc::new(Mode::Oidc(Box::new(Oidc {
-                client: reqwest::Client::new(),
-                issuer: "https://issuer.example".into(),
-                client_id: "client".into(),
-                client_secret: "secret".into(),
-                allowed_emails: vec!["admin@example.com".into()],
-                redirect_url: "https://dashboard.example/auth/callback".into(),
-                authorization_endpoint: "https://issuer.example/authorize".into(),
-                token_endpoint: "https://issuer.example/token".into(),
-                jwks_uri: "https://issuer.example/jwks".into(),
-                secure: true,
-                state: Mutex::new(store),
-            }))),
+            Arc::new(Mode::Oidc(Box::new(test_oidc(store)))),
             Arc::new(reqwest::Url::parse("https://dashboard.example").unwrap()),
         );
         let app = auth.protect(Router::new().route("/", get(|| async { "dashboard" })));
@@ -788,5 +872,200 @@ mod tests {
                 .unwrap();
             assert!(cookie.contains("Max-Age=0") && cookie.contains("Secure"));
         }
+    }
+    #[tokio::test]
+    async fn oidc_signed_login_checks_nonce_group_and_session() {
+        use ring::signature::{RSA_PKCS1_SHA256, RsaKeyPair};
+        use serde_json::{Value, json};
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let issuer = format!("http://{}", listener.local_addr().unwrap());
+        let fixture: Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/oidc-test-key.json")).unwrap();
+        let signing_key = Arc::new(
+            RsaKeyPair::from_pkcs8(
+                &STANDARD
+                    .decode(fixture["privateKey"].as_str().unwrap())
+                    .unwrap(),
+            )
+            .unwrap(),
+        );
+        let public_key = fixture["publicKey"].clone();
+        let publish_key = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let provider_key = publish_key.clone();
+        let scenario = Arc::new(Mutex::new((String::new(), true, true, true)));
+        let discovery_issuer = issuer.clone();
+        let keys = public_key.clone();
+        let token_issuer = issuer.clone();
+        let token_scenario = scenario.clone();
+        let provider = Router::new()
+            .route("/.well-known/openid-configuration", get(move || {
+                let base = discovery_issuer.clone();
+                async move { axum::Json(json!({"issuer":base,"authorization_endpoint":format!("{base}/authorize"),"token_endpoint":format!("{base}/token"),"jwks_uri":format!("{base}/keys"),"response_types_supported":["code"],"subject_types_supported":["public"],"id_token_signing_alg_values_supported":["RS256"]})) }
+            }))
+            .route("/keys", get(move || {
+                let mut key = keys.clone();
+                let published = provider_key.load(std::sync::atomic::Ordering::Relaxed);
+                async move {
+                    key["kid"] = json!("test-key");
+                    key["alg"] = json!("RS256");
+                    key["use"] = json!("sig");
+                    axum::Json(json!({"keys": if published { vec![key] } else { vec![] }}))
+                }
+            }))
+            .route("/token", axum::routing::post(move || {
+                let base = token_issuer.clone();
+                let scenario = token_scenario.clone();
+                let key = signing_key.clone();
+                async move {
+                    let (nonce, matching_nonce, allowed_group, valid_signature) = scenario.lock().await.clone();
+                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+                    let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256","kid":"test-key","typ":"JWT"}"#);
+                    let claims = json!({"iss":base,"aud":"client","sub":"subject","iat":now,"exp":now+300,"nonce":if matching_nonce {nonce} else {"wrong".into()},"groups":if allowed_group {vec!["admins"]} else {vec!["users"]}});
+                    let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
+                    let message = format!("{header}.{payload}");
+                    let mut signature = vec![0; key.public().modulus_len()];
+                    key.sign(&RSA_PKCS1_SHA256, &ring::rand::SystemRandom::new(), message.as_bytes(), &mut signature).unwrap();
+                    if !valid_signature { signature[0] ^= 1; }
+                    axum::Json(json!({"access_token":"test-access","token_type":"Bearer","id_token":format!("{message}.{}", URL_SAFE_NO_PAD.encode(signature))}))
+                }
+            }));
+        let task = tokio::spawn(async move {
+            axum::serve(listener, provider).await.unwrap();
+        });
+        let http_client = SafeHttp(
+            reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+        );
+        let metadata =
+            CoreProviderMetadata::discover_async(IssuerUrl::new(issuer).unwrap(), &http_client)
+                .await
+                .unwrap();
+        publish_key.store(true, std::sync::atomic::Ordering::Relaxed);
+        let issuer = metadata.issuer().clone();
+        let jwks_uri = metadata.jwks_uri().clone();
+        let signing_algorithms = metadata.id_token_signing_alg_values_supported().clone();
+        let client = OidcClient::from_provider_metadata(
+            metadata,
+            ClientId::new("client".into()),
+            Some(ClientSecret::new("secret".into())),
+        )
+        .set_redirect_uri(RedirectUrl::new("http://127.0.0.1:8080/auth/callback".into()).unwrap());
+        let oidc = Oidc {
+            http_client,
+            client,
+            issuer,
+            jwks_uri,
+            signing_algorithms,
+            allowed_emails: vec![],
+            allowed_groups: vec!["admins".into()],
+            secure: false,
+            state: Mutex::new(Store::default()),
+        };
+        let auth = DashboardAuth(
+            Arc::new(Mode::Oidc(Box::new(oidc))),
+            Arc::new(reqwest::Url::parse("http://127.0.0.1:8080").unwrap()),
+        );
+        let app = auth.protect(
+            Router::new()
+                .route("/", get(|| async { "dashboard" }))
+                .route("/api/settings", get(|| async { "settings" })),
+        );
+        for (valid_nonce, allowed_group, valid_signature, expected) in [
+            (true, true, true, StatusCode::SEE_OTHER),
+            (false, true, true, StatusCode::UNAUTHORIZED),
+            (true, false, true, StatusCode::UNAUTHORIZED),
+            (true, true, false, StatusCode::UNAUTHORIZED),
+        ] {
+            let start = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/llm-logs?search=test")
+                        .header(header::HOST, "127.0.0.1:8080")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let url = reqwest::Url::parse(
+                start
+                    .headers()
+                    .get(header::LOCATION)
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
+            )
+            .unwrap();
+            let query: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+            assert!(
+                query["scope"]
+                    .split_whitespace()
+                    .any(|scope| scope == "groups")
+            );
+            *scenario.lock().await = (
+                query["nonce"].clone(),
+                valid_nonce,
+                allowed_group,
+                valid_signature,
+            );
+            let cookie = start
+                .headers()
+                .get(header::SET_COOKIE)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .split(';')
+                .next()
+                .unwrap();
+            let callback = format!("/auth/callback?code=test-code&state={}", query["state"]);
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(callback)
+                        .header(header::HOST, "127.0.0.1:8080")
+                        .header(header::COOKIE, cookie)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected);
+            if expected == StatusCode::SEE_OTHER {
+                assert_eq!(
+                    response.headers()[header::LOCATION],
+                    "/llm-logs?search=test"
+                );
+                let session = response
+                    .headers()
+                    .get_all(header::SET_COOKIE)
+                    .iter()
+                    .filter_map(|v| v.to_str().ok())
+                    .find(|v| v.starts_with("zero_g_dashboard_session="))
+                    .unwrap()
+                    .split(';')
+                    .next()
+                    .unwrap();
+                let result = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .uri("/api/settings")
+                            .header(header::HOST, "127.0.0.1:8080")
+                            .header(header::COOKIE, session)
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(result.status(), StatusCode::OK);
+            }
+        }
+        task.abort();
     }
 }
