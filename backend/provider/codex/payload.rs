@@ -7,7 +7,7 @@ use crate::responses::{
 
 // These payloads are created as JSON objects; indexing inserts optional wire fields.
 #[allow(clippy::indexing_slicing)]
-pub(crate) fn build_codex_payload_from_chat(req: &ChatCompletionRequest) -> Value {
+pub(super) fn build_codex_payload_from_chat(req: &ChatCompletionRequest) -> Value {
     let mut input_items = Vec::new();
     let mut instructions = String::new();
 
@@ -109,7 +109,7 @@ pub(crate) fn build_codex_payload_from_chat(req: &ChatCompletionRequest) -> Valu
 // The payload is created as a JSON object; indexing inserts optional wire fields.
 #[allow(clippy::indexing_slicing)]
 #[allow(clippy::too_many_lines)]
-pub(crate) fn build_codex_payload_from_responses(req: &ResponseCreateRequest) -> Value {
+pub(super) fn build_codex_payload_from_responses(req: &ResponseCreateRequest) -> Value {
     let mut input_items = Vec::new();
     let mut instructions = req.instructions.clone().unwrap_or_default();
 

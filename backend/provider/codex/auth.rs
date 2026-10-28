@@ -13,9 +13,9 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 pub(crate) const CODEX_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
-pub(crate) const CODEX_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
-pub(crate) const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api";
-pub(crate) const CODEX_CLIENT_VERSION: &str = "0.159.0";
+pub(super) const CODEX_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
+pub(super) const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api";
+pub(super) const CODEX_CLIENT_VERSION: &str = "0.159.0";
 pub(crate) const CODEX_DEVICE_USERCODE_URL: &str =
     "https://auth.openai.com/api/accounts/deviceauth/usercode";
 pub(crate) const CODEX_DEVICE_TOKEN_URL: &str =
@@ -29,13 +29,13 @@ const JWT_CLAIM_PROFILE: &str = "https://api.openai.com/profile";
 #[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct CodexCredentials {
-    pub access_token: String,
-    pub refresh_token: Option<String>,
-    pub account_id: Option<String>,
-    pub email: Option<String>,
-    pub plan_type: Option<String>,
-    pub residency: Option<String>,
-    pub expires_at: Option<i64>, // Milliseconds since UNIX epoch
+    pub(super) access_token: String,
+    pub(super) refresh_token: Option<String>,
+    pub(crate) account_id: Option<String>,
+    pub(crate) email: Option<String>,
+    pub(crate) plan_type: Option<String>,
+    pub(super) residency: Option<String>,
+    pub(super) expires_at: Option<i64>, // Milliseconds since UNIX epoch
 }
 
 #[derive(Clone)]
@@ -52,14 +52,14 @@ struct TokenRefreshResponse {
     expires_in: i64,
 }
 
-pub(crate) struct TokenProfile {
-    pub account_id: Option<String>,
-    pub email: Option<String>,
-    pub plan_type: Option<String>,
-    pub residency: Option<String>,
+pub(super) struct TokenProfile {
+    pub(super) account_id: Option<String>,
+    pub(super) email: Option<String>,
+    pub(super) plan_type: Option<String>,
+    pub(super) residency: Option<String>,
 }
 
-pub(crate) fn decode_jwt_profile(access_token: &str, id_token: Option<&str>) -> TokenProfile {
+pub(super) fn decode_jwt_profile(access_token: &str, id_token: Option<&str>) -> TokenProfile {
     let access_payload = decode_jwt_payload(access_token);
     let id_payload = id_token.and_then(decode_jwt_payload);
 
@@ -159,7 +159,7 @@ impl CodexAuthManager {
         }))
     }
 
-    pub(crate) fn get_config_path() -> PathBuf {
+    fn get_config_path() -> PathBuf {
         if let Ok(custom) = std::env::var("ZERO_G_CREDENTIALS_CODEX")
             && !custom.trim().is_empty()
         {
@@ -194,7 +194,7 @@ impl CodexAuthManager {
         Ok(r.clone())
     }
 
-    pub(crate) async fn refresh(&self) -> Result<(), String> {
+    async fn refresh(&self) -> Result<(), String> {
         let stored = self
             .store
             .secret_get("provider.codex")

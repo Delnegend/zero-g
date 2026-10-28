@@ -25,13 +25,13 @@ pub(crate) struct SettingsStore {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub(crate) struct Permissions {
-    pub(crate) providers: Vec<String>,
-    pub(crate) models: Vec<String>,
+pub(super) struct Permissions {
+    pub(super) providers: Vec<String>,
+    pub(super) models: Vec<String>,
 }
 
 impl Permissions {
-    pub(crate) fn allows_model(&self, model: &str) -> bool {
+    pub(super) fn allows_model(&self, model: &str) -> bool {
         self.models.is_empty() || self.models.iter().any(|allowed| allowed == model)
     }
 }
@@ -46,7 +46,7 @@ struct KeyInfo {
 }
 
 #[derive(Deserialize)]
-pub(crate) struct CreateKey {
+pub(super) struct CreateKey {
     name: String,
     #[serde(default)]
     providers: Vec<String>,
@@ -180,7 +180,7 @@ impl SettingsStore {
         Ok(())
     }
 
-    pub(crate) async fn secret_delete(&self, name: &str) -> Result<(), String> {
+    async fn secret_delete(&self, name: &str) -> Result<(), String> {
         let _guard = self.logs.lock.lock().await;
         Secret::delete_by_name(&mut (*self.logs.db).clone(), name)
             .await
@@ -320,7 +320,7 @@ pub(crate) async fn put_settings(
     get_settings(State(store)).await
 }
 
-pub(crate) async fn list_keys(State(store): State<SettingsStore>) -> Response {
+pub(super) async fn list_keys(State(store): State<SettingsStore>) -> Response {
     async fn list(store: &SettingsStore) -> Result<Vec<KeyInfo>, String> {
         let _guard = store.logs.lock.lock().await;
         let rows = VirtualKey::all()
@@ -349,7 +349,7 @@ pub(crate) async fn list_keys(State(store): State<SettingsStore>) -> Response {
     }
 }
 
-pub(crate) async fn create_key(
+pub(super) async fn create_key(
     State(store): State<SettingsStore>,
     Json(input): Json<CreateKey>,
 ) -> Response {
@@ -409,7 +409,7 @@ pub(crate) async fn create_key(
     }
 }
 
-pub(crate) async fn revoke_key(
+pub(super) async fn revoke_key(
     State(store): State<SettingsStore>,
     Path(id): Path<String>,
 ) -> Response {
@@ -431,7 +431,7 @@ pub(crate) async fn revoke_key(
     }
 }
 
-pub(crate) async fn virtual_key_auth(
+pub(super) async fn virtual_key_auth(
     State((store, provider)): State<(SettingsStore, &'static str)>,
     mut req: Request,
     next: Next,

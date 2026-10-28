@@ -13,7 +13,7 @@ use utoipa::OpenApi;
 )]
 struct SettingsApi;
 
-pub(crate) fn openapi_json() -> Result<String, serde_json::Error> {
+fn openapi_json() -> Result<String, serde_json::Error> {
     SettingsApi::openapi().to_pretty_json()
 }
 

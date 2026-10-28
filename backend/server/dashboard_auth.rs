@@ -286,7 +286,7 @@ impl DashboardAuth {
 
     /// Adds authentication to an already assembled dashboard router. Merge the
     /// result with the separately assembled inference router afterwards.
-    pub(crate) fn protect(&self, router: Router) -> Router {
+    pub(super) fn protect(&self, router: Router) -> Router {
         router
             .merge(
                 Router::new()

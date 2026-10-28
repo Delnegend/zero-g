@@ -44,10 +44,7 @@ fn session_id() -> String {
 
 // serde_json object indexing inserts optional fields into the object constructed below.
 #[allow(clippy::indexing_slicing)]
-pub(crate) fn transform(
-    req: &ChatCompletionRequest,
-    zen_key: &str,
-) -> (Value, Vec<(String, String)>) {
+fn transform(req: &ChatCompletionRequest, zen_key: &str) -> (Value, Vec<(String, String)>) {
     let caller_system = req
         .messages
         .iter()

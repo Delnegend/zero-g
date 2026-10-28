@@ -9,7 +9,7 @@ use std::borrow::Cow;
 #[include = "dist/**"]
 struct DashboardAssets;
 
-pub(crate) async fn index() -> Response {
+pub(super) async fn index() -> Response {
     serve_asset("dist/index.html").unwrap_or_else(|| {
         (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -19,7 +19,7 @@ pub(crate) async fn index() -> Response {
     })
 }
 
-pub(crate) async fn fallback(uri: Uri) -> Response {
+pub(super) async fn fallback(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
     if ["agy", "codex", "zen", "health"]
         .iter()

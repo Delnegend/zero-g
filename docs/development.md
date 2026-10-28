@@ -42,7 +42,7 @@ just fmt
 just build
 ```
 
-Rust follows the [Namtao strict Clippy configuration](https://www.namtao.com/rust/#strict-lints): pedantic and nursery lints, plus explicit panic, indexing, arithmetic, conversion, and process-exit checks. `clippy.toml` permits the guide's test-only exceptions. The existing `pub(crate)` visibility convention is retained; individual exceptions document cohesive long functions or JSON object insertion.
+Rust follows the [Namtao strict Clippy configuration](https://www.namtao.com/rust/#strict-lints): pedantic and nursery lints, plus explicit panic, indexing, arithmetic, conversion, and process-exit checks. `clippy.toml` permits the guide's test-only exceptions. Visibility follows actual usage: keep items private when possible and expose them only to the modules that need them. The `redundant_pub_crate` lint is disabled because it recommends broader visibility in binary crates; individual exceptions document cohesive long functions or JSON object insertion.
 
 ## Settings API contract
 

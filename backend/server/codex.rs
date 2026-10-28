@@ -3,8 +3,8 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 
-use crate::provider::codex::models::fetch_codex_models;
 use crate::openai::ChatCompletionRequest;
+use crate::provider::codex::models::fetch_codex_models;
 use crate::responses::ResponseCreateRequest;
 use crate::server::AppState;
 use crate::server::settings::Permissions;
@@ -21,7 +21,7 @@ fn model_forbidden() -> Response {
         .into_response()
 }
 
-pub(crate) fn strip_codex_prefix(model: &str) -> String {
+fn strip_codex_prefix(model: &str) -> String {
     model
         .strip_prefix("openai-codex/")
         .or_else(|| model.strip_prefix("codex/"))
@@ -29,7 +29,7 @@ pub(crate) fn strip_codex_prefix(model: &str) -> String {
         .to_string()
 }
 
-pub(crate) async fn models_handler(
+pub(super) async fn models_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
 ) -> Response {
@@ -67,7 +67,7 @@ pub(crate) async fn models_handler(
     }
 }
 
-pub(crate) async fn chat_handler(
+pub(super) async fn chat_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Json(mut req): Json<ChatCompletionRequest>,
@@ -130,7 +130,7 @@ pub(crate) async fn chat_handler(
     }
 }
 
-pub(crate) async fn responses_handler(
+pub(super) async fn responses_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Json(mut req): Json<ResponseCreateRequest>,

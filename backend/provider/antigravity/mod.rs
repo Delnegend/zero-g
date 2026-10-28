@@ -9,10 +9,11 @@ mod stream;
 
 pub(crate) use auth::{AuthManager, Credentials};
 pub(crate) use models::AntigravityModelInfo;
-pub(crate) use stream::{AntigravityEvent, map_finish_reason, spawn_event_stream};
+use stream::map_finish_reason;
+pub(crate) use stream::{AntigravityEvent, spawn_event_stream};
 
 pub(crate) struct AntigravityClient {
-    pub(crate) client: reqwest::Client,
+    client: reqwest::Client,
 }
 
 impl AntigravityClient {

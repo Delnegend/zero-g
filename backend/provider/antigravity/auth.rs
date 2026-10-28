@@ -74,18 +74,18 @@ pub(crate) const OAUTH_SCOPES: &[&str] = &[
     "https://www.googleapis.com/auth/experimentsandconfigs",
 ];
 
-pub(crate) const CLOUD_CODE_ASSIST_ENDPOINT: &str = "https://daily-cloudcode-pa.googleapis.com";
-pub(crate) const ANTIGRAVITY_USER_AGENT: &str =
+pub(super) const CLOUD_CODE_ASSIST_ENDPOINT: &str = "https://daily-cloudcode-pa.googleapis.com";
+pub(super) const ANTIGRAVITY_USER_AGENT: &str =
     "antigravity/hub/2.19.1 (aidev_client; os_type=linux; arch=x64; cl=963137146)";
 
 #[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Credentials {
-    pub access_token: String,
-    pub refresh_token: Option<String>,
-    pub project_id: String,
-    pub expires_at: Option<i64>, // Milliseconds since UNIX epoch
-    pub email: Option<String>,
+    pub(crate) access_token: String,
+    pub(crate) refresh_token: Option<String>,
+    pub(crate) project_id: String,
+    pub(crate) expires_at: Option<i64>, // Milliseconds since UNIX epoch
+    pub(crate) email: Option<String>,
 }
 
 #[derive(Clone)]
@@ -180,7 +180,7 @@ impl AuthManager {
         Ok(r.clone())
     }
 
-    pub(crate) async fn refresh(&self) -> Result<(), String> {
+    async fn refresh(&self) -> Result<(), String> {
         let stored = self
             .store
             .secret_get("provider.antigravity")

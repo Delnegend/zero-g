@@ -51,7 +51,7 @@ unreachable_pub = "warn"
 [lints.clippy]
 pedantic = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }
-# Explicit crate visibility is intentional even in binary crates.
+# Keep visibility limited to actual callers, including in binary crates.
 redundant_pub_crate = "allow"
 unwrap_used = "deny"
 expect_used = "deny"

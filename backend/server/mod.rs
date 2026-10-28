@@ -1,5 +1,5 @@
 mod agy;
-pub(crate) mod codex;
+mod codex;
 pub(crate) mod dashboard_auth;
 pub(crate) mod observability;
 pub(crate) mod provider_login;

@@ -6,11 +6,11 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 use serde_json::Value;
 
+use crate::openai::{ChatCompletionRequest, ModelEntry, ModelListResponse, StreamOptions};
 use crate::provider::antigravity::AntigravityClient;
 use crate::provider::antigravity::AntigravityModelInfo;
 use crate::provider::antigravity::chat::ChatStreamSerializer;
 use crate::provider::antigravity::responses::ResponsesStreamSerializer;
-use crate::openai::{ChatCompletionRequest, ModelEntry, ModelListResponse, StreamOptions};
 use crate::responses::{
     ResponseContentPart, ResponseCreateRequest, ResponseObject, ResponseOutputItem, ResponseUsage,
 };
@@ -29,7 +29,7 @@ fn model_forbidden() -> Response {
         .into_response()
 }
 
-pub(crate) async fn models_handler(
+pub(super) async fn models_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
 ) -> Result<Json<ModelListResponse>, (StatusCode, Json<Value>)> {
@@ -82,7 +82,7 @@ pub(crate) async fn models_handler(
 /// Upstream reports the context window as `maxTokens`, separate from
 /// `maxOutputTokens`; callers that only see `max_output_tokens` fall back to
 /// their own defaults, so both are carried through.
-pub(crate) fn to_model_entry(id: String, info: AntigravityModelInfo) -> ModelEntry {
+fn to_model_entry(id: String, info: AntigravityModelInfo) -> ModelEntry {
     let reasoning = info.supports_thinking.unwrap_or(false);
     let effort_tier = if id.ends_with("-low") {
         Some("low".to_string())
@@ -114,7 +114,7 @@ pub(crate) fn to_model_entry(id: String, info: AntigravityModelInfo) -> ModelEnt
     }
 }
 
-pub(crate) fn map_agy_model_effort(model: &str, effort: Option<&str>) -> String {
+fn map_agy_model_effort(model: &str, effort: Option<&str>) -> String {
     let Some(effort) = effort else {
         return model.to_string();
     };
@@ -129,7 +129,7 @@ pub(crate) fn map_agy_model_effort(model: &str, effort: Option<&str>) -> String 
     }
 }
 
-pub(crate) async fn chat_handler(
+pub(super) async fn chat_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Json(mut req): Json<ChatCompletionRequest>,
@@ -242,7 +242,7 @@ async fn handle_chat_streaming(
     crate::server::sse::spawn_sse(serializer, upstream_resp)
 }
 
-pub(crate) async fn responses_handler(
+pub(super) async fn responses_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Json(mut req): Json<ResponseCreateRequest>,

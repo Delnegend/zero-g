@@ -22,7 +22,7 @@ use crate::util::urlencode;
 type FlowResults = HashMap<String, (Instant, Result<(), String>)>;
 
 #[derive(Clone, Default)]
-pub(crate) struct OAuthFlows {
+pub(super) struct OAuthFlows {
     pending: Arc<Mutex<HashMap<String, Flow>>>,
     results: Arc<Mutex<FlowResults>>,
     google_listener: Arc<Mutex<()>>,
@@ -84,7 +84,7 @@ fn error(message: impl Into<String>) -> (StatusCode, String) {
 
 // Keep the OAuth listener setup and its cleanup together.
 #[allow(clippy::too_many_lines)]
-pub(crate) async fn agy_start(
+pub(super) async fn agy_start(
     State((app, flows)): State<LoginState>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
@@ -193,7 +193,7 @@ pub(crate) async fn agy_start(
 }
 
 #[derive(Deserialize)]
-pub(crate) struct GoogleFinish {
+pub(super) struct GoogleFinish {
     callback_url: String,
 }
 
@@ -236,7 +236,7 @@ fn parse_google_callback(callback_url: &str) -> Result<(String, String), (Status
     Ok((state, code))
 }
 
-pub(crate) async fn agy_finish(
+pub(super) async fn agy_finish(
     State((app, flows)): State<LoginState>,
     headers: HeaderMap,
     Json(input): Json<GoogleFinish>,
@@ -351,11 +351,11 @@ async fn complete_google(flows: &OAuthFlows, state: &str, result: Result<(), Str
 }
 
 #[derive(Deserialize)]
-pub(crate) struct GooglePoll {
+pub(super) struct GooglePoll {
     id: String,
 }
 
-pub(crate) async fn agy_poll(
+pub(super) async fn agy_poll(
     State((_, flows)): State<LoginState>,
     headers: HeaderMap,
     Json(input): Json<GooglePoll>,
@@ -379,7 +379,7 @@ pub(crate) async fn agy_poll(
     }
 }
 
-pub(crate) async fn status(State((app, _)): State<LoginState>) -> Json<serde_json::Value> {
+pub(super) async fn status(State((app, _)): State<LoginState>) -> Json<serde_json::Value> {
     Json(
         json!({"agy": app.auth.read().await.is_some(), "codex": app.codex_auth.read().await.is_some()}),
     )
@@ -392,7 +392,7 @@ struct DeviceStart {
     interval: Option<serde_json::Value>,
 }
 
-pub(crate) async fn codex_start(
+pub(super) async fn codex_start(
     State((_, flows)): State<LoginState>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
@@ -451,7 +451,7 @@ pub(crate) async fn codex_start(
 }
 
 #[derive(Deserialize)]
-pub(crate) struct CodexPoll {
+pub(super) struct CodexPoll {
     id: String,
 }
 #[derive(Deserialize)]
@@ -460,7 +460,7 @@ struct DeviceToken {
     code_verifier: Option<String>,
 }
 
-pub(crate) async fn codex_poll(
+pub(super) async fn codex_poll(
     State((app, flows)): State<LoginState>,
     headers: HeaderMap,
     Json(input): Json<CodexPoll>,
@@ -546,9 +546,10 @@ pub(crate) async fn codex_poll(
     let verifier = data
         .code_verifier
         .ok_or_else(|| error("Missing code verifier"))?;
-    let creds = crate::provider::codex::login::exchange_token(&code, &verifier, CODEX_DEVICE_REDIRECT_URI)
-        .await
-        .map_err(error)?;
+    let creds =
+        crate::provider::codex::login::exchange_token(&code, &verifier, CODEX_DEVICE_REDIRECT_URI)
+            .await
+            .map_err(error)?;
     CodexAuthManager::save(settings, &creds)
         .await
         .map_err(error)?;

@@ -4,15 +4,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::provider::antigravity::AntigravityClient;
-use crate::provider::antigravity::auth::{ANTIGRAVITY_USER_AGENT, CLOUD_CODE_ASSIST_ENDPOINT, Credentials};
+use crate::provider::antigravity::auth::{
+    ANTIGRAVITY_USER_AGENT, CLOUD_CODE_ASSIST_ENDPOINT, Credentials,
+};
 
-pub(crate) const SANDBOX_ENDPOINT: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com";
-pub(crate) const CLAUDE_THINKING_BETA_HEADER: &str = "interleaved-thinking-2025-05-14";
+pub(super) const SANDBOX_ENDPOINT: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com";
+pub(super) const CLAUDE_THINKING_BETA_HEADER: &str = "interleaved-thinking-2025-05-14";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct AntigravityDiscoveryResponse {
+struct AntigravityDiscoveryResponse {
     #[serde(default)]
-    pub(crate) models: HashMap<String, AntigravityModelInfo>,
+    models: HashMap<String, AntigravityModelInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

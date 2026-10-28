@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use rand::RngCore;
 use serde_json::{Value, json};
 
-use crate::provider::antigravity::AntigravityClient;
 use crate::openai::{ChatCompletionRequest, ChatMessage, ContentPart, MessageContent, Tool};
+use crate::provider::antigravity::AntigravityClient;
 
 struct RequestMeta {
     is_claude: bool,
@@ -338,7 +338,7 @@ fn push_inline_image(parts: &mut Vec<Value>, url: &str) {
     }
 }
 
-pub(crate) fn parse_data_url(url: &str) -> Option<(&str, &str)> {
+fn parse_data_url(url: &str) -> Option<(&str, &str)> {
     let rest = url.strip_prefix("data:")?;
     let (mime, after_semi) = rest.split_once(';')?;
     after_semi.strip_prefix("base64,").map(|data| (mime, data))

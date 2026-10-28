@@ -8,7 +8,7 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use crate::provider::antigravity::{AntigravityEvent, spawn_event_stream};
 
-pub(crate) type SseSender = mpsc::Sender<Result<Event, Infallible>>;
+type SseSender = mpsc::Sender<Result<Event, Infallible>>;
 
 pub(crate) trait SseSerializer {
     fn initial(&mut self) -> Vec<Event> {
@@ -20,7 +20,7 @@ pub(crate) trait SseSerializer {
     }
 }
 
-pub(crate) async fn pump<S>(tx: SseSender, upstream: reqwest::Response, mut serializer: S)
+async fn pump<S>(tx: SseSender, upstream: reqwest::Response, mut serializer: S)
 where
     S: SseSerializer,
 {
@@ -69,7 +69,7 @@ where
     let _ = tx.send(Ok(Event::default().data("[DONE]"))).await;
 }
 
-pub(crate) fn spawn_sse<S>(serializer: S, upstream: reqwest::Response) -> Response
+pub(super) fn spawn_sse<S>(serializer: S, upstream: reqwest::Response) -> Response
 where
     S: SseSerializer + Send + 'static,
 {
@@ -82,7 +82,7 @@ where
         .into_response()
 }
 
-pub(crate) fn bad_gateway_response() -> Response {
+pub(super) fn bad_gateway_response() -> Response {
     (
         StatusCode::BAD_GATEWAY,
         Json(crate::server::error_body(

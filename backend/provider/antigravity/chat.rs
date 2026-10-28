@@ -1,11 +1,11 @@
 use axum::response::sse::Event;
 use serde_json::json;
 
-use crate::provider::antigravity::AntigravityEvent;
-use crate::provider::antigravity::map_finish_reason;
 use crate::openai::{
     ChatCompletionChunk, ChunkChoice, ChunkDelta, ChunkFunctionCall, ChunkToolCall, Usage,
 };
+use crate::provider::antigravity::AntigravityEvent;
+use crate::provider::antigravity::map_finish_reason;
 
 #[allow(clippy::struct_excessive_bools)]
 pub(crate) struct ChatStreamSerializer {

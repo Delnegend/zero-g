@@ -8,7 +8,7 @@ use crate::openai::ChatCompletionRequest;
 use crate::server::AppState;
 use crate::server::settings::Permissions;
 
-pub(crate) async fn models_handler(Extension(permissions): Extension<Permissions>) -> Json<Value> {
+pub(super) async fn models_handler(Extension(permissions): Extension<Permissions>) -> Json<Value> {
     let mut models = crate::provider::zen::models_json();
     if let Some(data) = models.get_mut("data").and_then(Value::as_array_mut) {
         data.retain(|model| {
@@ -21,7 +21,7 @@ pub(crate) async fn models_handler(Extension(permissions): Extension<Permissions
     Json(models)
 }
 
-pub(crate) async fn chat_handler(
+pub(super) async fn chat_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Json(req): Json<ChatCompletionRequest>,

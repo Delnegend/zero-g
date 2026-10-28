@@ -16,13 +16,13 @@ static MIGRATIONS: toasty::migration::MigrationSet = toasty::embed_migrations!()
 
 #[derive(Clone)]
 pub(crate) struct LogStore {
-    pub(crate) db: Arc<toasty::Db>,
+    pub(super) db: Arc<toasty::Db>,
     retention_days: i64,
-    pub(crate) lock: Arc<Mutex<()>>,
+    pub(super) lock: Arc<Mutex<()>>,
 }
 impl LogStore {
     #[cfg(test)]
-    pub(crate) async fn open(path: &str, retention_days: i64) -> Result<Self, String> {
+    async fn open(path: &str, retention_days: i64) -> Result<Self, String> {
         let mut store = Self::open_unpruned(path).await?;
         store.set_retention(retention_days).await?;
         Ok(store)
@@ -170,7 +170,7 @@ fn now() -> i64 {
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
 }
 
-pub(crate) async fn dashboard(State(store): State<LogStore>) -> Response {
+pub(super) async fn dashboard(State(store): State<LogStore>) -> Response {
     match store.dashboard().await {
         Ok(data) => Json(data).into_response(),
         Err(err) => {
@@ -180,7 +180,7 @@ pub(crate) async fn dashboard(State(store): State<LogStore>) -> Response {
     }
 }
 
-pub(crate) async fn capture(State(store): State<LogStore>, req: Request, next: Next) -> Response {
+pub(super) async fn capture(State(store): State<LogStore>, req: Request, next: Next) -> Response {
     if req.method() != Method::POST {
         return next.run(req).await;
     }

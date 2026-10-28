@@ -3,13 +3,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use reqwest::Response;
 use serde_json::Value;
 
-use crate::provider::antigravity::AntigravityClient;
-use crate::provider::antigravity::auth::{ANTIGRAVITY_USER_AGENT, CLOUD_CODE_ASSIST_ENDPOINT, Credentials};
-use crate::provider::antigravity::models::{CLAUDE_THINKING_BETA_HEADER, SANDBOX_ENDPOINT};
-use crate::provider::antigravity::{AntigravityEvent, map_finish_reason, spawn_event_stream};
 use crate::openai::{
     ChatCompletionRequest, ChatCompletionResponse, Choice, FunctionCall, ToolCall, Usage,
 };
+use crate::provider::antigravity::AntigravityClient;
+use crate::provider::antigravity::auth::{
+    ANTIGRAVITY_USER_AGENT, CLOUD_CODE_ASSIST_ENDPOINT, Credentials,
+};
+use crate::provider::antigravity::models::{CLAUDE_THINKING_BETA_HEADER, SANDBOX_ENDPOINT};
+use crate::provider::antigravity::{AntigravityEvent, map_finish_reason, spawn_event_stream};
 
 impl AntigravityClient {
     pub(crate) async fn stream_request(
@@ -159,8 +161,8 @@ impl CollectedResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::antigravity::AntigravityEvent;
     use crate::openai::Usage;
+    use crate::provider::antigravity::AntigravityEvent;
 
     #[test]
     fn collected_response_maps_tool_finish() {

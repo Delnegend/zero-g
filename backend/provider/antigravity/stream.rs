@@ -19,7 +19,7 @@ pub(crate) enum AntigravityEvent {
     Usage(Usage),
 }
 
-pub(crate) fn map_finish_reason(reason: &str, has_tools: bool) -> String {
+pub(super) fn map_finish_reason(reason: &str, has_tools: bool) -> String {
     match reason {
         "STOP" if has_tools => "tool_calls".to_string(),
         "STOP" => "stop".to_string(),
@@ -30,12 +30,12 @@ pub(crate) fn map_finish_reason(reason: &str, has_tools: bool) -> String {
 }
 
 #[derive(Default)]
-pub(crate) struct EventDecoder {
+struct EventDecoder {
     buffer: Vec<u8>,
 }
 
 impl EventDecoder {
-    pub(crate) fn push_chunk(&mut self, chunk: &[u8]) -> Vec<AntigravityEvent> {
+    fn push_chunk(&mut self, chunk: &[u8]) -> Vec<AntigravityEvent> {
         const MAX_BUFFER_BYTES: usize = 1024 * 1024;
         if self.buffer.len().saturating_add(chunk.len()) > MAX_BUFFER_BYTES {
             self.buffer.clear();
