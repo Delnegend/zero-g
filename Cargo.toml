@@ -39,8 +39,8 @@ base64 = "0.22.1"
 serde_with = "3.24.0"
 rust-embed = { version = "8.13.0", features = ["debug-embed", "include-exclude"] }
 mime_guess = "2.0.5"
-toasty = { version = "0.11", features = ["turso", "migration"] }
-toasty-cli = "0.11"
+toasty = { version = "0.11.0", features = ["turso", "migration"] }
+toasty-cli = "0.11.0"
 http-body-util = "0.1.5"
 ring = "0.17.14"
 openidconnect = "4.0.1"
