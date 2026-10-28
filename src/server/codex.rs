@@ -40,7 +40,7 @@ pub(crate) async fn models_handler(
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(crate::server::error_body(
-                "OpenAI Codex is not configured. Run `zero-g login codex` to authenticate.",
+                "OpenAI Codex is not configured. Authenticate on the dashboard Providers page.",
                 "server_error",
                 Some("codex_not_configured"),
             )),
@@ -82,7 +82,7 @@ pub(crate) async fn chat_handler(
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(crate::server::error_body(
-                "OpenAI Codex is not configured. Run `zero-g login codex` to authenticate.",
+                "OpenAI Codex is not configured. Authenticate on the dashboard Providers page.",
                 "server_error",
                 Some("codex_not_configured"),
             )),
@@ -145,7 +145,7 @@ pub(crate) async fn responses_handler(
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(crate::server::error_body(
-                "OpenAI Codex is not configured. Run `zero-g login codex` to authenticate.",
+                "OpenAI Codex is not configured. Authenticate on the dashboard Providers page.",
                 "server_error",
                 Some("codex_not_configured"),
             )),

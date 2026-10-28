@@ -18,6 +18,7 @@ flowchart TD
 ## Core Components
 
 - **Axum HTTP Layer (`src/server/`):** Exposes provider-specific routes (`/agy/v1`, `/codex/v1`, `/zen/v1`) requiring virtual-key Bearer authentication. Dashboard authentication is separate. Unprefixed routes are rejected.
+- **Dashboard OIDC (`src/server/dashboard_auth.rs`):** Uses `openidconnect` for discovery, PKCE, token exchange and signed ID-token validation. Signing keys are refreshed at login; local sessions and email/group authorization remain in zero-g.
 - **Protocol Models (`src/openai.rs`, `src/responses.rs`):** Strongly typed Serde models for Chat Completions and Responses API inputs (prompts, messages, tool outputs).
 - **Auth Managers (`src/antigravity/auth.rs`, `src/codex/auth.rs`):** Store provider credentials encrypted in the database, import legacy plaintext files once, parse JWT claims, and refresh access tokens near expiration.
 - **Login Flows (`src/antigravity/login.rs`, `src/codex/login.rs`):** Run local OAuth callbacks with device-code flow for headless Codex environments.

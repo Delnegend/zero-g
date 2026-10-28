@@ -20,6 +20,7 @@ RUN cargo build --release --locked
 FROM gcr.io/distroless/static-debian13:nonroot
 WORKDIR /app
 COPY --from=builder /app/target/release/zero-g /usr/local/bin/zero-g
+COPY --from=builder /app/target/release/zero-g-import-legacy /usr/local/bin/zero-g-import-legacy
 COPY --from=builder --chown=65532:65532 /app/data /app/data
 
 ENV ZERO_G_LOG_DB=/app/data/zero-g-logs.db
@@ -27,4 +28,3 @@ ENV ZERO_G_LOG_DB=/app/data/zero-g-logs.db
 EXPOSE 8080
 USER nonroot:nonroot
 ENTRYPOINT ["/usr/local/bin/zero-g"]
-CMD ["serve"]

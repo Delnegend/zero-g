@@ -87,11 +87,11 @@ jobs:
       - name: Build frontend
         run: (cd web && bun install --frozen-lockfile) && just web-build
 
-      - name: Build Linux x64 binary
+      - name: Build Linux x64 binaries
         shell: bash
         run: |
           set -euo pipefail
-          cargo build --release --bin zero-g
+          cargo build --release --bin zero-g --bin zero-g-import-legacy
 
       - name: Compile Zen TLS shim
         shell: bash
@@ -106,7 +106,7 @@ jobs:
           version: ${{ needs.prepare.outputs.version }}
           target: x86_64-unknown-linux-gnu
           source: target/release/zero-g
-          extra: zen-shim
+          extra: zen-shim target/release/zero-g-import-legacy
 
   build-container:
     name: Build Container Image

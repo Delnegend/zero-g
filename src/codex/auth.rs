@@ -13,21 +13,15 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 pub(crate) const CODEX_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
-pub(crate) const CODEX_AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
 pub(crate) const CODEX_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 pub(crate) const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api";
 pub(crate) const CODEX_CLIENT_VERSION: &str = "0.159.0";
-pub(crate) const CODEX_CALLBACK_PORT: u16 = 1455;
-pub(crate) const CODEX_CALLBACK_PATH: &str = "/auth/callback";
-pub(crate) const CODEX_CALLBACK_URL: &str = "http://localhost:1455/auth/callback";
 pub(crate) const CODEX_DEVICE_USERCODE_URL: &str =
     "https://auth.openai.com/api/accounts/deviceauth/usercode";
 pub(crate) const CODEX_DEVICE_TOKEN_URL: &str =
     "https://auth.openai.com/api/accounts/deviceauth/token";
 pub(crate) const CODEX_DEVICE_AUTH_URL: &str = "https://auth.openai.com/codex/device";
 pub(crate) const CODEX_DEVICE_REDIRECT_URI: &str = "https://auth.openai.com/deviceauth/callback";
-pub(crate) const CODEX_SCOPES: &str =
-    "openid profile email offline_access api.connectors.read api.connectors.invoke";
 
 const JWT_CLAIM_AUTH: &str = "https://api.openai.com/auth";
 const JWT_CLAIM_PROFILE: &str = "https://api.openai.com/profile";

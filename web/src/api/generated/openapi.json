@@ -1,0 +1,131 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "zero-g",
+    "description": "OpenAI-compatible proxy for Google Antigravity subscriptions",
+    "license": {
+      "name": "MIT OR Apache-2.0",
+      "identifier": "MIT OR Apache-2.0"
+    },
+    "version": "0.5.8"
+  },
+  "paths": {
+    "/api/settings": {
+      "get": {
+        "tags": ["crate::server::settings"],
+        "operationId": "getSettings",
+        "responses": {
+          "200": {
+            "description": "Current settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Settings store error"
+          }
+        }
+      },
+      "put": {
+        "tags": ["crate::server::settings"],
+        "operationId": "updateSettings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid log retention",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Settings store error"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "SettingsResponse": {
+        "type": "object",
+        "required": [
+          "log_retention_days",
+          "zen_url",
+          "oauth_client_id",
+          "zen_api_key_set",
+          "oauth_client_secret_set"
+        ],
+        "properties": {
+          "log_retention_days": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 0
+          },
+          "oauth_client_id": {
+            "type": "string"
+          },
+          "oauth_client_secret_set": {
+            "type": "boolean"
+          },
+          "zen_api_key_set": {
+            "type": "boolean"
+          },
+          "zen_url": {
+            "type": "string"
+          }
+        }
+      },
+      "UpdateSettings": {
+        "type": "object",
+        "properties": {
+          "log_retention_days": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 0
+          },
+          "oauth_client_id": {
+            "type": ["string", "null"]
+          },
+          "oauth_client_secret": {
+            "type": ["string", "null"]
+          },
+          "zen_api_key": {
+            "type": ["string", "null"]
+          },
+          "zen_url": {
+            "type": ["string", "null"]
+          }
+        }
+      }
+    }
+  }
+}

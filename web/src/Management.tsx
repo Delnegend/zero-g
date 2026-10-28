@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Textarea } from "./components/ui/textarea";
@@ -6,15 +13,13 @@ import { Checkbox } from "./components/ui/checkbox";
 import { Alert, AlertDescription } from "./components/ui/alert";
 import { Card } from "./components/ui/card";
 import { Label } from "./components/ui/label";
+import {
+  getSettings,
+  updateSettings,
+  type Settings,
+  type SettingsUpdate,
+} from "./api/settings";
 
-type Settings = {
-  bind: string;
-  log_retention_days: number;
-  zen_url: string;
-  oauth_client_id: string;
-  zen_api_key_set: boolean;
-  oauth_client_secret_set: boolean;
-};
 type VirtualKey = {
   id: string;
   name: string;
@@ -42,7 +47,7 @@ function message(error: unknown): string {
 }
 
 function SettingsPage() {
-  const [settings, setSettings] = useState<Settings | null>(null);
+  const [draft, setSettings] = useState<Settings | null>(null);
   const [zenKey, setZenKey] = useState("");
   const [oauthSecret, setOauthSecret] = useState("");
   const [clearZen, setClearZen] = useState(false);
@@ -50,26 +55,42 @@ function SettingsPage() {
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
+  const saveController = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    request<Settings>("/api/settings", { signal: controller.signal })
-      .then(setSettings)
-      .catch((err: unknown) => {
-        if (!controller.signal.aborted) setError(message(err));
-      });
-    return () => controller.abort();
-  }, []);
+  const settingsQuery = useQuery({
+    queryKey: ["settings"],
+    retry: false,
+    queryFn: ({ signal }) => getSettings(signal),
+  });
+  const queryClient = useQueryClient();
+  const saveMutation = useMutation({
+    gcTime: 0,
+    mutationFn: ({
+      body,
+      signal,
+    }: {
+      body: SettingsUpdate;
+      signal: AbortSignal;
+    }) => updateSettings(body, signal),
+  });
+
+  const settings = draft ?? settingsQuery.data ?? null;
+  const displayError =
+    error || (settingsQuery.error ? message(settingsQuery.error) : "");
+
+  useEffect(() => () => saveController.current?.abort(), []);
 
   async function save(event: FormEvent) {
     event.preventDefault();
     if (!settings) return;
+    saveController.current?.abort();
+    const controller = new AbortController();
+    saveController.current = controller;
     setBusy(true);
     setError("");
     setSaved(false);
     try {
-      const body: Record<string, string | number> = {
-        bind: settings.bind,
+      const body: SettingsUpdate = {
         log_retention_days: settings.log_retention_days,
         zen_url: settings.zen_url,
         oauth_client_id: settings.oauth_client_id,
@@ -77,21 +98,51 @@ function SettingsPage() {
       if (clearZen || zenKey) body.zen_api_key = clearZen ? "" : zenKey;
       if (clearOauth || oauthSecret)
         body.oauth_client_secret = clearOauth ? "" : oauthSecret;
-      await request("/api/settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+      const updated = await saveMutation.mutateAsync({
+        body,
+        signal: controller.signal,
       });
-      setZenKey("");
-      setOauthSecret("");
-      setClearZen(false);
-      setClearOauth(false);
-      setSettings(await request<Settings>("/api/settings"));
+      if (controller.signal.aborted) return;
+      await queryClient.cancelQueries({ queryKey: ["settings"] });
+      if (controller.signal.aborted) return;
+      setZenKey((current) => (current === zenKey ? "" : current));
+      setOauthSecret((current) => (current === oauthSecret ? "" : current));
+      setClearZen((current) => (current === clearZen ? false : current));
+      setClearOauth((current) => (current === clearOauth ? false : current));
+      setSettings((current) => {
+        if (!current) return null;
+        const logRetention =
+          current.log_retention_days === settings.log_retention_days
+            ? updated.log_retention_days
+            : current.log_retention_days;
+        const zenUrl =
+          current.zen_url === settings.zen_url
+            ? updated.zen_url
+            : current.zen_url;
+        const oauthClientId =
+          current.oauth_client_id === settings.oauth_client_id
+            ? updated.oauth_client_id
+            : current.oauth_client_id;
+        if (
+          logRetention === updated.log_retention_days &&
+          zenUrl === updated.zen_url &&
+          oauthClientId === updated.oauth_client_id
+        )
+          return null;
+        return {
+          ...updated,
+          log_retention_days: logRetention,
+          zen_url: zenUrl,
+          oauth_client_id: oauthClientId,
+        };
+      });
+      queryClient.setQueryData(["settings"], updated);
       setSaved(true);
     } catch (err) {
-      setError(message(err));
+      if (!controller.signal.aborted) setError(message(err));
     } finally {
-      setBusy(false);
+      saveMutation.reset();
+      if (!controller.signal.aborted) setBusy(false);
     }
   }
 
@@ -102,9 +153,9 @@ function SettingsPage() {
         Configure the gateway and provider credentials. Some changes may require
         a restart.
       </p>
-      {error && (
+      {displayError && (
         <Alert variant="destructive" className="mt-5">
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription>{displayError}</AlertDescription>
         </Alert>
       )}
       {saved && (
@@ -115,18 +166,6 @@ function SettingsPage() {
       {settings && (
         <Card className="mt-6 max-w-2xl p-5">
           <form onSubmit={(event) => void save(event)} className="grid gap-5">
-            <Label className="block text-sm font-medium">
-              Bind address
-              <Input
-                className={inputClass}
-                required
-                value={settings.bind}
-                onChange={(e) =>
-                  setSettings({ ...settings, bind: e.target.value })
-                }
-                placeholder="127.0.0.1:8080"
-              />
-            </Label>
             <Label className="block text-sm font-medium">
               Log retention (days)
               <Input
@@ -234,31 +273,40 @@ function SettingsPage() {
 }
 
 function KeysPage() {
-  const [keys, setKeys] = useState<VirtualKey[]>([]);
+  const queryClient = useQueryClient();
+  const keysQuery = useQuery({
+    queryKey: ["virtual-keys"],
+    retry: false,
+    queryFn: ({ signal }) =>
+      request<{ keys: VirtualKey[] }>("/api/keys", { signal }),
+  });
+  const keys = keysQuery.data?.keys ?? [];
+  const createMutation = useMutation({
+    gcTime: 0,
+    mutationFn: (body: {
+      name: string;
+      providers: string[];
+      models: string[];
+    }) =>
+      request<VirtualKey & { key: string }>("/api/keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+  });
+  const revokeMutation = useMutation({
+    mutationFn: (id: string) =>
+      request(`/api/keys/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  });
   const [name, setName] = useState("");
   const [providers, setProviders] = useState<string[]>([]);
   const [models, setModels] = useState("");
   const [newKey, setNewKey] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const load = useCallback(async (signal?: AbortSignal) => {
-    try {
-      const result = await request<{ keys: VirtualKey[] }>("/api/keys", {
-        signal,
-      });
-      if (!signal?.aborted) setKeys(result.keys);
-    } catch (err) {
-      if (!signal?.aborted) setError(message(err));
-    } finally {
-      if (!signal?.aborted) setLoading(false);
-    }
-  }, []);
-  useEffect(() => {
-    const controller = new AbortController();
-    void load(controller.signal);
-    return () => controller.abort();
-  }, [load]);
+  const loading = keysQuery.isPending;
+  const displayError =
+    error || (keysQuery.error ? message(keysQuery.error) : "");
 
   async function create(event: FormEvent) {
     event.preventDefault();
@@ -266,26 +314,26 @@ function KeysPage() {
     setError("");
     setNewKey("");
     try {
-      const result = await request<VirtualKey & { key: string }>("/api/keys", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name,
-          providers,
-          models: models
-            .split(/[\n,]/)
-            .map((model) => model.trim())
-            .filter(Boolean),
-        }),
+      const result = await createMutation.mutateAsync({
+        name,
+        providers,
+        models: models
+          .split(/[\n,]/)
+          .map((model) => model.trim())
+          .filter(Boolean),
       });
       setNewKey(result.key);
       setName("");
       setProviders([]);
       setModels("");
-      await load();
+      await queryClient.invalidateQueries(
+        { queryKey: ["virtual-keys"] },
+        { throwOnError: true },
+      );
     } catch (err) {
       setError(message(err));
     } finally {
+      createMutation.reset();
       setBusy(false);
     }
   }
@@ -299,10 +347,20 @@ function KeysPage() {
     setBusy(true);
     setError("");
     try {
-      await request(`/api/keys/${encodeURIComponent(key.id)}`, {
-        method: "DELETE",
-      });
-      setKeys((current) => current.filter((item) => item.id !== key.id));
+      await revokeMutation.mutateAsync(key.id);
+      await queryClient.cancelQueries({ queryKey: ["virtual-keys"] });
+      queryClient.setQueryData<{ keys: VirtualKey[] }>(
+        ["virtual-keys"],
+        (current) =>
+          current && {
+            ...current,
+            keys: current.keys.filter((item) => item.id !== key.id),
+          },
+      );
+      await queryClient.invalidateQueries(
+        { queryKey: ["virtual-keys"] },
+        { throwOnError: true },
+      );
     } catch (err) {
       setError(message(err));
     } finally {
@@ -316,9 +374,9 @@ function KeysPage() {
         Create keys for inference access and restrict their providers and
         models.
       </p>
-      {error && (
+      {displayError && (
         <Alert variant="destructive" className="mt-5">
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription>{displayError}</AlertDescription>
         </Alert>
       )}
       {newKey && (
@@ -450,33 +508,33 @@ function ProvidersPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<{ agy: boolean; codex: boolean } | null>(
-    null,
-  );
-
+  const statusQuery = useQuery({
+    queryKey: ["provider-status"],
+    retry: false,
+    queryFn: ({ signal }) =>
+      request<{ agy: boolean; codex: boolean }>("/api/providers/status", {
+        signal,
+      }),
+  });
+  const status = statusQuery.data ?? null;
+  const queryClient = useQueryClient();
   const refreshStatus = useCallback(async () => {
     try {
-      setStatus(
-        await request<{ agy: boolean; codex: boolean }>(
-          "/api/providers/status",
-        ),
-      );
+      await queryClient.fetchQuery({
+        queryKey: ["provider-status"],
+        queryFn: ({ signal }) =>
+          request<{ agy: boolean; codex: boolean }>("/api/providers/status", {
+            signal,
+          }),
+        staleTime: 0,
+      });
     } catch (err) {
       setError(message(err));
     }
-  }, []);
+  }, [queryClient]);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    request<{ agy: boolean; codex: boolean }>("/api/providers/status", {
-      signal: controller.signal,
-    })
-      .then(setStatus)
-      .catch((err: unknown) => {
-        if (!controller.signal.aborted) setError(message(err));
-      });
-    return () => controller.abort();
-  }, []);
+  const displayError =
+    error || (statusQuery.error ? message(statusQuery.error) : "");
 
   useEffect(() => {
     if (!googleFlow || busy) return;
@@ -641,9 +699,9 @@ function ProvidersPage() {
       <p className="mt-2 text-sm text-muted-foreground">
         Sign in to connect provider accounts to the gateway.
       </p>
-      {error && (
+      {displayError && (
         <Alert variant="destructive" className="mt-5">
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription>{displayError}</AlertDescription>
         </Alert>
       )}
       {notice && (

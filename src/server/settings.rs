@@ -9,8 +9,9 @@ use ring::{
     rand::{SecureRandom, SystemRandom},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
+use utoipa::ToSchema;
 
 use super::observability::LogStore;
 
@@ -209,23 +210,42 @@ fn internal_error(err: &str) -> Response {
     StatusCode::INTERNAL_SERVER_ERROR.into_response()
 }
 
+#[derive(Serialize, ToSchema)]
+pub(crate) struct SettingsResponse {
+    #[schema(format = Int64, minimum = 0, maximum = 4_294_967_295_u64)]
+    log_retention_days: u32,
+    zen_url: String,
+    oauth_client_id: String,
+    zen_api_key_set: bool,
+    oauth_client_secret_set: bool,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/settings",
+    operation_id = "getSettings",
+    responses(
+        (status = 200, description = "Current settings", body = SettingsResponse),
+        (status = 500, description = "Settings store error")
+    )
+)]
 pub(crate) async fn get_settings(State(store): State<SettingsStore>) -> Response {
-    async fn load(store: &SettingsStore) -> Result<Value, String> {
-        let bind = store
-            .setting_get("bind")
-            .await?
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "127.0.0.1:8080".into());
+    async fn load(store: &SettingsStore) -> Result<SettingsResponse, String> {
         let retention = store
             .setting_get("log_retention_days")
             .await?
             .and_then(|s| s.parse::<u32>().ok())
             .unwrap_or(30);
-        Ok(json!({"bind": bind, "log_retention_days": retention,
-            "zen_url": store.setting_get("zen_url").await?.unwrap_or_default(),
-            "oauth_client_id": store.setting_get("oauth_client_id").await?.unwrap_or_default(),
-            "zen_api_key_set": store.secret_get("zen_api_key").await?.is_some(),
-            "oauth_client_secret_set": store.secret_get("oauth_client_secret").await?.is_some()}))
+        Ok(SettingsResponse {
+            log_retention_days: retention,
+            zen_url: store.setting_get("zen_url").await?.unwrap_or_default(),
+            oauth_client_id: store
+                .setting_get("oauth_client_id")
+                .await?
+                .unwrap_or_default(),
+            zen_api_key_set: store.secret_get("zen_api_key").await?.is_some(),
+            oauth_client_secret_set: store.secret_get("oauth_client_secret").await?.is_some(),
+        })
     }
     match load(&store).await {
         Ok(value) => Json(value).into_response(),
@@ -233,9 +253,9 @@ pub(crate) async fn get_settings(State(store): State<SettingsStore>) -> Response
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub(crate) struct UpdateSettings {
-    bind: Option<String>,
+    #[schema(format = Int64, minimum = 0, maximum = 4_294_967_295_u64)]
     log_retention_days: Option<u32>,
     zen_url: Option<String>,
     oauth_client_id: Option<String>,
@@ -243,6 +263,17 @@ pub(crate) struct UpdateSettings {
     oauth_client_secret: Option<String>,
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/settings",
+    operation_id = "updateSettings",
+    request_body = UpdateSettings,
+    responses(
+        (status = 200, description = "Updated settings", body = SettingsResponse),
+        (status = 400, description = "Invalid log retention", body = String, content_type = "text/plain"),
+        (status = 500, description = "Settings store error")
+    )
+)]
 pub(crate) async fn put_settings(
     State(store): State<SettingsStore>,
     Json(input): Json<UpdateSettings>,
@@ -250,19 +281,10 @@ pub(crate) async fn put_settings(
     if input
         .log_retention_days
         .is_some_and(|days| !(1..=36500).contains(&days))
-        || input
-            .bind
-            .as_deref()
-            .is_some_and(|s| !s.is_empty() && s.parse::<std::net::SocketAddr>().is_err())
     {
-        return (
-            StatusCode::BAD_REQUEST,
-            "Invalid bind address or log retention",
-        )
-            .into_response();
+        return (StatusCode::BAD_REQUEST, "Invalid log retention").into_response();
     }
     let values = [
-        ("bind", input.bind),
         ("zen_url", input.zen_url),
         ("oauth_client_id", input.oauth_client_id),
         (
@@ -471,6 +493,7 @@ mod tests {
         body::{Body, to_bytes},
         routing::{get, post},
     };
+    use serde_json::Value;
     use tower::ServiceExt;
 
     fn path() -> std::path::PathBuf {
@@ -484,6 +507,50 @@ mod tests {
     async fn json_body(response: Response) -> Value {
         let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
         serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn settings_endpoints_preserve_response_and_update_behavior() {
+        let path = path();
+        let logs = LogStore::open_unpruned(path.to_str().unwrap())
+            .await
+            .unwrap();
+        let store = SettingsStore::new(logs, &key(1)).await.unwrap();
+        let response = get_settings(State(store.clone())).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            json_body(response).await,
+            json!({
+                "log_retention_days": 30,
+                "zen_url": "",
+                "oauth_client_id": "",
+                "zen_api_key_set": false,
+                "oauth_client_secret_set": false
+            })
+        );
+
+        let input = serde_json::from_value(json!({
+            "log_retention_days": 7,
+            "zen_api_key": "secret"
+        }))
+        .unwrap();
+        let response = put_settings(State(store.clone()), Json(input)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(body["log_retention_days"], 7);
+        assert_eq!(body["zen_api_key_set"], true);
+        assert!(body.get("zen_api_key").is_none());
+
+        let input = serde_json::from_value(json!({"zen_api_key": ""})).unwrap();
+        let response = put_settings(State(store.clone()), Json(input)).await;
+        let body = json_body(response).await;
+        assert_eq!(body["zen_api_key_set"], false);
+
+        let input = serde_json::from_value(json!({"log_retention_days": 0})).unwrap();
+        let response = put_settings(State(store.clone()), Json(input)).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        drop(store);
+        std::fs::remove_file(path).unwrap();
     }
 
     async fn model(

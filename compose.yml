@@ -8,6 +8,8 @@ services:
       - "127.0.0.1:8080:8080"
     env_file:
       - .env
+    environment:
+      ZERO_G_BIND: ${ZERO_G_BIND:-0.0.0.0:8080}
     volumes:
       - zero-g-data:/app/data
     depends_on:

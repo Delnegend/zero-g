@@ -23,7 +23,7 @@ export ZERO_G_DASHBOARD_AUTH=basic
 export ZERO_G_DASHBOARD_ORIGIN=http://127.0.0.1:8080
 export ZERO_G_DASHBOARD_USERNAME=admin
 export ZERO_G_DASHBOARD_PASSWORD='replace-with-a-strong-password'
-zero-g serve
+zero-g
 ```
 
 Open `http://127.0.0.1:8080/` and sign in. Under **Virtual keys**, create a key and copy it immediately; it is shown only once. Set `ZERO_G_VIRTUAL_KEY` to the copied value and use it as the bearer token for every inference request, including model discovery:
@@ -32,7 +32,9 @@ Open `http://127.0.0.1:8080/` and sign in. Under **Virtual keys**, create a key 
 curl -H "Authorization: Bearer $ZERO_G_VIRTUAL_KEY" http://127.0.0.1:8080/agy/v1/models
 ```
 
-Configure provider credentials and persisted bind, retention, Zen and Google OAuth settings in the dashboard. Full request and response bodies are stored locally for 30 days by default. See [configuration](docs/configuration.md) and [deployment](docs/deployment.md) for secure setup and backups.
+Configure retention, Zen and Google OAuth settings and provider credentials in the dashboard. Set the listening address with `ZERO_G_BIND` in `.env`. Full request and response bodies are stored locally for 30 days by default. See [configuration](docs/configuration.md) and [deployment](docs/deployment.md) for secure setup and backups.
+Under **Observability**, the **Dashboard** shows totals and requests by UTC day; **LLM Logs** lets you search, sort, and inspect requests. On phones, requests appear as cards instead of a wide table. The chart and log list cover the latest 200 requests, while the summary covers all retained requests. Dashboard pages have shareable URLs and support browser navigation.
+The dashboard theme toggle follows your system preference initially and remembers your choice in the browser.
 
 
 Source builds from checkout: run `(cd web && bun install --frozen-lockfile) && just web-build` before `cargo install --path .`.
@@ -45,19 +47,11 @@ Source builds from checkout: run `(cd web && bun install --frozen-lockfile) && j
 - **Claude & Gemini Support** — Formats Anthropic thinking beta headers, system instructions, and tool calling signatures automatically.
 - **Multi-Turn Tool Calling** — End-to-end function declaration, execution, and tool response turn merging.
 
-## Common Commands
+## Running
 
-```bash
-# Start proxy (defaults to 127.0.0.1:8080 until changed in Settings)
-zero-g serve
-```
+Run `zero-g` to start the proxy (default `127.0.0.1:8080`, configurable in Settings). Use the dashboard **Providers** page to sign in and inspect provider status. Discover models through the authenticated provider API as shown above.
 
-| Command | Description |
-|---|---|
-| `serve` | Start HTTP proxy server (default) |
-| `login <provider>` | Interactive OAuth sign-in flow (`zero-g login agy` or `zero-g login codex`) |
-| `models <provider>` | List available models (`zero-g models agy`, `zero-g models codex`, `zero-g models zen`) |
-| `status [provider]` | Print token validity, project ID, and account status |
+The separate `zero-g-import-legacy` utility migrates databases from previous libSQL-based releases while the service is stopped. See the [upgrade guide](docs/deployment.md#upgrade-migration-and-backup).
 
 For all environment variables, see **[Configuration Reference](docs/configuration.md)**.
 
@@ -75,7 +69,7 @@ For component boundaries, internal translation, and state invariants, see **[Arc
 
 ## Documentation
 
-- **[Configuration](docs/configuration.md)** — Environment variables, flags, and credentials schema.
+- **[Configuration](docs/configuration.md)** — Environment variables, dashboard settings, and credentials.
 - **[Architecture](docs/architecture.md)** — Request envelopes, streaming translation, and invariants.
 - **[Gateway Integration](docs/gateways.md)** — LiteLLM and Bifrost provider configuration.
 - **[Deployment](docs/deployment.md)** — Homebrew services, systemd units, and upgrades.

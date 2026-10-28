@@ -1,28 +1,31 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import {
+  createRootRoute,
+  createRoute,
+  createRouter,
+  Link,
+  Outlet,
+  RouterProvider,
+  useRouterState,
+} from "@tanstack/react-router";
 import {
   Activity,
   ArrowDownUp,
   Clock3,
   KeyRound,
+  Moon,
   RefreshCw,
-  Search,
   Server,
   Settings,
+  Sun,
 } from "lucide-react";
 import { Button } from "./components/ui/button";
 import { Management } from "./Management";
-import { Input } from "./components/ui/input";
-import { Label } from "./components/ui/label";
 import { Card } from "./components/ui/card";
+import { LogsTable } from "./LogsTable";
+import { ObservabilityCharts } from "./ObservabilityCharts";
 import { Alert, AlertDescription } from "./components/ui/alert";
-import {
-  Table,
-  TableHeader,
-  TableBody,
-  TableRow,
-  TableHead,
-  TableCell,
-} from "./components/ui/table";
 import {
   Sidebar,
   SidebarContent,
@@ -32,12 +35,15 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
   SidebarProvider,
   SidebarTrigger,
   useSidebar,
 } from "./components/ui/sidebar";
 
-type Log = {
+export type Log = {
   id: string | number;
   created_at: number;
   provider: string;
@@ -86,56 +92,32 @@ function formatDate(value: number): string {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
 }
 
-function ObservabilityPage() {
-  const [data, setData] = useState<Observability | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [query, setQuery] = useState("");
-  const [selectedId, setSelectedId] = useState<Log["id"] | null>(null);
-
-  const load = useCallback(async (signal?: AbortSignal) => {
-    setLoading(true);
-    setError(null);
-    try {
+function ObservabilityPage({ logsOnly = false }: { logsOnly?: boolean }) {
+  const {
+    data,
+    error: queryError,
+    isFetching: loading,
+    refetch,
+  } = useQuery({
+    queryKey: ["observability"],
+    queryFn: async ({ signal }): Promise<Observability> => {
       const response = await fetch("/api/observability", { signal });
       if (!response.ok) throw new Error(`Request failed (${response.status})`);
-      const result: Observability = await response.json();
-      if (!signal?.aborted) setData(result);
-    } catch (err) {
-      if (!signal?.aborted)
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Unable to load observability data.",
-        );
-    } finally {
-      if (!signal?.aborted) setLoading(false);
-    }
-  }, []);
+      return response.json();
+    },
+    retry: false,
+    gcTime: 0,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+  const error =
+    !loading && queryError
+      ? queryError instanceof Error
+        ? queryError.message
+        : "Unable to load observability data."
+      : null;
+  const [selectedId, setSelectedId] = useState<Log["id"] | null>(null);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    void load(controller.signal);
-    return () => controller.abort();
-  }, [load]);
-
-  const logs = useMemo(() => {
-    const term = query.trim().toLowerCase();
-    return (data?.logs ?? []).filter((log) =>
-      [
-        log.id,
-        log.created_at,
-        log.provider,
-        log.model,
-        log.path,
-        log.status,
-      ].some((value) =>
-        String(value ?? "")
-          .toLowerCase()
-          .includes(term),
-      ),
-    );
-  }, [data, query]);
   const selected = data?.logs.find((log) => log.id === selectedId);
   const summary = data?.summary;
   const cards = summary
@@ -171,22 +153,24 @@ function ObservabilityPage() {
     : [];
 
   return (
-    <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
+    <main className="mx-auto w-full min-w-0 max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
       <header className="mb-8 flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
             Zero-G
           </p>
           <h1 className="text-3xl font-semibold tracking-tight">
-            Observability
+            {logsOnly ? "LLM Logs" : "Dashboard"}
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Monitor requests, usage, and responses across your gateway.
+            {logsOnly
+              ? "Search and inspect recorded LLM requests."
+              : "Monitor requests, usage, and responses across your gateway."}
           </p>
         </div>
         <Button
           variant="outline"
-          onClick={() => void load()}
+          onClick={() => void refetch()}
           disabled={loading}
         >
           <RefreshCw aria-hidden="true" /> {loading ? "Loading…" : "Refresh"}
@@ -200,7 +184,7 @@ function ObservabilityPage() {
             <button
               type="button"
               className="font-medium underline underline-offset-4"
-              onClick={() => void load()}
+              onClick={() => void refetch()}
             >
               Try again
             </button>
@@ -217,132 +201,39 @@ function ObservabilityPage() {
       )}
       {summary && (
         <>
-          <section
-            aria-label="Request summary"
-            className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
-          >
-            {cards.map(({ label, value, detail, icon: Icon }) => (
-              <Card key={label} className="p-5">
-                <div className="flex items-center justify-between gap-2 text-sm font-medium">
-                  <h2>{label}</h2>
-                  <Icon
-                    className="size-4 text-muted-foreground"
-                    aria-hidden="true"
-                  />
-                </div>
-                <p className="mt-4 text-2xl font-semibold tracking-tight">
-                  {value}
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">{detail}</p>
-              </Card>
-            ))}
-          </section>
-          <Card aria-labelledby="logs-heading" className="py-0">
-            <div className="flex flex-wrap items-end justify-between gap-4 border-b p-5">
-              <div>
-                <h2 id="logs-heading" className="text-lg font-semibold">
-                  Request logs
-                </h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Select a request to inspect its details.
-                </p>
-              </div>
-              <div className="relative w-full sm:w-72">
-                <Search
-                  aria-hidden="true"
-                  className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                />
-                <Label className="sr-only" htmlFor="log-search">
-                  Search request logs
-                </Label>
-                <Input
-                  id="log-search"
-                  type="search"
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search logs…"
-                  className="h-9 w-full rounded-lg border border-input bg-background pl-9 pr-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-                />
-              </div>
-            </div>
-            <div className="overflow-x-auto">
-              <Table className="w-full min-w-[720px] text-left text-sm">
-                <TableHeader className="border-b text-xs text-muted-foreground">
-                  <TableRow>
-                    <TableHead className="px-5 py-3 font-medium" scope="col">
-                      Time
-                    </TableHead>
-                    <TableHead className="px-5 py-3 font-medium" scope="col">
-                      Provider / model
-                    </TableHead>
-                    <TableHead className="px-5 py-3 font-medium" scope="col">
-                      Path
-                    </TableHead>
-                    <TableHead className="px-5 py-3 font-medium" scope="col">
-                      Status
-                    </TableHead>
-                    <TableHead className="px-5 py-3 font-medium" scope="col">
-                      Latency
-                    </TableHead>
-                    <TableHead className="px-5 py-3 font-medium" scope="col">
-                      <span className="sr-only">Details</span>
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {logs.map((log) => (
-                    <TableRow
-                      key={log.id}
-                      className="border-b last:border-0 hover:bg-muted/50"
-                    >
-                      <TableCell className="whitespace-nowrap px-5 py-4 text-muted-foreground">
-                        {formatDate(log.created_at)}
-                      </TableCell>
-                      <TableCell className="px-5 py-4">
-                        <div className="font-medium">{log.model}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {log.provider}
-                        </div>
-                      </TableCell>
-                      <TableCell className="px-5 py-4 font-mono text-xs">
-                        {log.path}
-                      </TableCell>
-                      <TableCell className="px-5 py-4">
-                        <span
-                          className={`rounded-md px-2 py-1 text-xs font-medium ${log.status >= 400 ? "bg-destructive/10 text-destructive" : "bg-muted text-foreground"}`}
-                        >
-                          {log.status}
-                        </span>
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap px-5 py-4">
-                        {number.format(log.latency_ms)} ms
-                      </TableCell>
-                      <TableCell className="px-5 py-4">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          aria-label={`View request ${log.id}`}
-                          aria-pressed={selectedId === log.id}
-                          onClick={() => setSelectedId(log.id)}
-                        >
-                          View
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-              {logs.length === 0 && (
-                <p className="px-5 py-10 text-center text-sm text-muted-foreground">
-                  {query.trim()
-                    ? "No requests match your search."
-                    : "No requests recorded yet."}
-                </p>
-              )}
-            </div>
-          </Card>
+          {!logsOnly && (
+            <section
+              aria-label="Request summary"
+              className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
+            >
+              {cards.map(({ label, value, detail, icon: Icon }) => (
+                <Card key={label} className="p-5">
+                  <div className="flex items-center justify-between gap-2 text-sm font-medium">
+                    <h2>{label}</h2>
+                    <Icon
+                      className="size-4 text-muted-foreground"
+                      aria-hidden="true"
+                    />
+                  </div>
+                  <p className="mt-4 text-2xl font-semibold tracking-tight">
+                    {value}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">{detail}</p>
+                </Card>
+              ))}
+            </section>
+          )}
+          {!logsOnly && <ObservabilityCharts logs={data?.logs ?? []} />}
+          <LogsTable
+            logs={data?.logs ?? []}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+          />
           {selected && (
-            <Card aria-labelledby="details-heading" className="mt-6 p-5">
+            <Card
+              aria-labelledby="details-heading"
+              className="mt-6 min-w-0 p-5"
+            >
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h2 id="details-heading" className="text-lg font-semibold">
@@ -357,10 +248,10 @@ function ObservabilityPage() {
                   Close details
                 </Button>
               </div>
-              <dl className="mt-5 flex flex-wrap gap-x-8 gap-y-2 text-sm">
-                <div>
+              <dl className="mt-5 flex min-w-0 flex-wrap gap-x-8 gap-y-2 text-sm">
+                <div className="min-w-0 max-w-full">
                   <dt className="text-muted-foreground">Path</dt>
-                  <dd className="font-mono">{selected.path}</dd>
+                  <dd className="break-all font-mono">{selected.path}</dd>
                 </div>
                 <div>
                   <dt className="text-muted-foreground">Status</dt>
@@ -378,7 +269,7 @@ function ObservabilityPage() {
                   </dd>
                 </div>
               </dl>
-              <div className="mt-5 grid min-w-0 gap-4 lg:grid-cols-2">
+              <div className="mt-5 grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
                 {(
                   [
                     ["Request body", selected.request_body],
@@ -401,37 +292,87 @@ function ObservabilityPage() {
   );
 }
 
-type Page = "observability" | "settings" | "keys" | "providers";
-
-function DashboardSidebar({
-  page,
-  setPage,
-}: {
-  page: Page;
-  setPage: (page: Page) => void;
-}) {
-  const { isMobile, setOpenMobile } = useSidebar();
+function DashboardSidebar() {
+  const path = useRouterState({ select: (state) => state.location.pathname });
+  const { isMobile, setOpenMobile, state, setOpen } = useSidebar();
+  const [observabilityOpen, setObservabilityOpen] = useState(true);
   const items = [
-    { id: "observability", label: "Observability", icon: Activity },
-    { id: "settings", label: "Settings", icon: Settings },
-    { id: "keys", label: "Virtual keys", icon: KeyRound },
-    { id: "providers", label: "Providers", icon: Server },
+    { path: "/settings", label: "Settings", icon: Settings },
+    { path: "/keys", label: "Virtual keys", icon: KeyRound },
+    { path: "/providers", label: "Providers", icon: Server },
   ] as const;
   return (
     <Sidebar collapsible="icon">
-      <SidebarHeader className="px-4 py-5 font-semibold">Zero-G</SidebarHeader>
+      <SidebarHeader
+        aria-label="Zero-G"
+        className="overflow-hidden px-4 py-5 font-semibold whitespace-nowrap"
+      >
+        <span className="grid" aria-hidden="true">
+          <span
+            className={`col-start-1 row-start-1 transition-opacity duration-150 motion-reduce:transition-none ${state === "collapsed" && !isMobile ? "opacity-100" : "opacity-0"}`}
+          >
+            0G
+          </span>
+          <span
+            className={`col-start-1 row-start-1 transition-opacity duration-150 motion-reduce:transition-none ${state === "collapsed" && !isMobile ? "opacity-0" : "opacity-100 delay-150 motion-reduce:delay-0"}`}
+          >
+            Zero-G
+          </span>
+        </span>
+      </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
           <nav aria-label="Dashboard">
             <SidebarMenu>
-              {items.map(({ id, label, icon: Icon }) => (
-                <SidebarMenuItem key={id}>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={path === "/" || path === "/llm-logs"}
+                  aria-expanded={observabilityOpen}
+                  tooltip="Observability"
+                  onClick={() => {
+                    if (state === "collapsed" && !isMobile) {
+                      setOpen(true);
+                      setObservabilityOpen(true);
+                    } else {
+                      setObservabilityOpen(!observabilityOpen);
+                    }
+                  }}
+                >
+                  <Activity aria-hidden="true" />
+                  <span>Observability</span>
+                </SidebarMenuButton>
+                {observabilityOpen && (
+                  <SidebarMenuSub>
+                    {(
+                      [
+                        ["/", "Dashboard"],
+                        ["/llm-logs", "LLM Logs"],
+                      ] as const
+                    ).map(([to, label]) => (
+                      <SidebarMenuSubItem key={to}>
+                        <SidebarMenuSubButton
+                          render={<Link to={to} />}
+                          isActive={path === to}
+                          aria-current={path === to ? "page" : undefined}
+                          onClick={() => {
+                            if (isMobile) setOpenMobile(false);
+                          }}
+                        >
+                          <span>{label}</span>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                    ))}
+                  </SidebarMenuSub>
+                )}
+              </SidebarMenuItem>
+              {items.map(({ path: to, label, icon: Icon }) => (
+                <SidebarMenuItem key={to}>
                   <SidebarMenuButton
-                    isActive={page === id}
-                    aria-current={page === id ? "page" : undefined}
+                    render={<Link to={to} />}
+                    isActive={path === to}
+                    aria-current={path === to ? "page" : undefined}
                     tooltip={label}
                     onClick={() => {
-                      setPage(id);
                       if (isMobile) setOpenMobile(false);
                     }}
                   >
@@ -449,22 +390,75 @@ function DashboardSidebar({
 }
 
 function App() {
-  const [page, setPage] = useState<Page>("observability");
+  const [dark, setDark] = useState(() => {
+    const saved = localStorage.getItem("zero-g-theme");
+    return (
+      saved === "dark" ||
+      (saved !== "light" &&
+        window.matchMedia("(prefers-color-scheme: dark)").matches)
+    );
+  });
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", dark);
+    localStorage.setItem("zero-g-theme", dark ? "dark" : "light");
+  }, [dark]);
   return (
     <SidebarProvider>
-      <DashboardSidebar page={page} setPage={setPage} />
-      <SidebarInset>
-        <header className="flex h-12 items-center border-b px-4">
+      <DashboardSidebar />
+      <SidebarInset className="min-w-0">
+        <header className="flex h-12 items-center justify-between border-b px-4">
           <SidebarTrigger />
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
+            onClick={() => setDark(!dark)}
+          >
+            {dark ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+          </Button>
         </header>
-        {page === "observability" ? (
-          <ObservabilityPage />
-        ) : (
-          <Management page={page} />
-        )}
+        <Outlet />
       </SidebarInset>
     </SidebarProvider>
   );
 }
 
-export default App;
+const rootRoute = createRootRoute({ component: App });
+const routeTree = rootRoute.addChildren([
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/",
+    component: () => <ObservabilityPage />,
+  }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/llm-logs",
+    component: () => <ObservabilityPage logsOnly />,
+  }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/settings",
+    component: () => <Management page="settings" />,
+  }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/keys",
+    component: () => <Management page="keys" />,
+  }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/providers",
+    component: () => <Management page="providers" />,
+  }),
+]);
+const router = createRouter({ routeTree });
+
+declare module "@tanstack/react-router" {
+  interface Register {
+    router: typeof router;
+  }
+}
+
+export default function AppRouter() {
+  return <RouterProvider router={router} />;
+}

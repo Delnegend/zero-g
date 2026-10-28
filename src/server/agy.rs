@@ -38,7 +38,7 @@ pub(crate) async fn models_handler(
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(crate::server::error_body(
-                "Google Antigravity is not configured. Run `zero-g login agy` to authenticate.",
+                "Google Antigravity is not configured. Authenticate on the dashboard Providers page.",
                 "server_error",
                 Some("antigravity_not_configured"),
             )),
@@ -157,7 +157,7 @@ pub(crate) async fn chat_handler(
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(crate::server::error_body(
-                "Google Antigravity is not configured. Run `zero-g login agy` to authenticate.",
+                "Google Antigravity is not configured. Authenticate on the dashboard Providers page.",
                 "server_error",
                 Some("antigravity_not_configured"),
             )),
@@ -270,7 +270,7 @@ pub(crate) async fn responses_handler(
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(crate::server::error_body(
-                "Google Antigravity is not configured. Run `zero-g login agy` to authenticate.",
+                "Google Antigravity is not configured. Authenticate on the dashboard Providers page.",
                 "server_error",
                 Some("antigravity_not_configured"),
             )),
