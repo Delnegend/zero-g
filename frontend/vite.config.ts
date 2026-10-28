@@ -1,7 +1,7 @@
-import path from "node:path";
-import http from "node:http";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
+import http from "node:http";
+import path from "node:path";
 import { defineConfig, type Plugin } from "vite";
 
 function dashboardAuth(): Plugin {
@@ -81,5 +81,8 @@ export default defineConfig({
     alias: {
       "@": path.resolve(import.meta.dirname, "./src"),
     },
+  },
+  build: {
+    chunkSizeWarningLimit: 2000,
   },
 });
