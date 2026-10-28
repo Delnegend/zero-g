@@ -50,11 +50,11 @@ fn same_origin(headers: &HeaderMap) -> Result<(), (StatusCode, String)> {
     let origin = headers
         .get(header::ORIGIN)
         .and_then(|v| v.to_str().ok())
-        .ok_or((StatusCode::FORBIDDEN, "Origin required".into()))?;
+        .ok_or_else(|| (StatusCode::FORBIDDEN, "Origin required".into()))?;
     let host = headers
         .get(header::HOST)
         .and_then(|v| v.to_str().ok())
-        .ok_or((StatusCode::FORBIDDEN, "Host required".into()))?;
+        .ok_or_else(|| (StatusCode::FORBIDDEN, "Host required".into()))?;
     let url = reqwest::Url::parse(origin)
         .map_err(|_| (StatusCode::FORBIDDEN, "Invalid origin".into()))?;
     let host_url = reqwest::Url::parse(&format!("{}://{host}/", url.scheme()))
@@ -82,6 +82,8 @@ fn error(message: impl Into<String>) -> (StatusCode, String) {
     (StatusCode::BAD_REQUEST, message.into())
 }
 
+// Keep the OAuth listener setup and its cleanup together.
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn agy_start(
     State((app, flows)): State<LoginState>,
     headers: HeaderMap,
@@ -315,10 +317,14 @@ async fn finish_google_exchange(
     )
     .await
     .map_err(error)?;
-    let expires_at = SystemTime::now()
+    let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as i64)
-        + token.expires_in * 1000;
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
+    let expires_at = token
+        .expires_in
+        .checked_mul(1000)
+        .and_then(|duration| now_ms.checked_add(duration))
+        .ok_or_else(|| error("Token expiration is out of range"))?;
     let creds = Credentials {
         access_token: token.access_token,
         refresh_token: token.refresh_token,
@@ -364,6 +370,7 @@ pub(crate) async fn agy_poll(
             Err(message) => json!({"status":"failed", "error":message}),
         }));
     }
+    drop(results);
     match pending.get(&input.id) {
         Some(Flow::Google { created, .. }) if created.elapsed() < Duration::from_secs(600) => {
             Ok(Json(json!({"status":"pending"})))
@@ -417,6 +424,9 @@ pub(crate) async fn codex_start(
     let interval = Duration::from_secs(seconds);
     let id = Uuid::new_v4().to_string();
     let user_code = data.user_code.clone();
+    let next_poll = Instant::now()
+        .checked_add(interval)
+        .ok_or_else(|| error("Device polling interval is too large"))?;
     let mut pending = flows.pending.lock().await;
     pending.retain(|_, flow| match flow {
         Flow::Google { created, .. } | Flow::Codex { created, .. } => {
@@ -430,10 +440,11 @@ pub(crate) async fn codex_start(
             device_id: data.device_auth_id,
             user_code: data.user_code,
             interval,
-            next_poll: Instant::now() + interval,
+            next_poll,
             in_flight: false,
         },
     );
+    drop(pending);
     Ok(Json(
         json!({"id":id,"url":CODEX_DEVICE_AUTH_URL,"user_code":user_code,"interval":seconds}),
     ))
@@ -476,9 +487,14 @@ pub(crate) async fn codex_poll(
         if *in_flight || Instant::now() < *next_poll {
             return Ok(Json(json!({"status":"pending"})));
         }
+        let next = Instant::now()
+            .checked_add(*interval)
+            .ok_or_else(|| error("Device polling interval is too large"))?;
         *in_flight = true;
-        *next_poll = Instant::now() + *interval;
-        (device_id.clone(), user_code.clone())
+        *next_poll = next;
+        let credentials = (device_id.clone(), user_code.clone());
+        drop(pending);
+        credentials
     };
     let response = tokio::time::timeout(Duration::from_secs(30), async {
         reqwest::Client::new()
@@ -624,6 +640,6 @@ mod tests {
         assert!(guard.is_ok());
         assert!(flows.google_listener.clone().try_lock_owned().is_err());
         drop(guard);
-        assert!(flows.google_listener.clone().try_lock_owned().is_ok());
+        assert!(flows.google_listener.try_lock_owned().is_ok());
     }
 }

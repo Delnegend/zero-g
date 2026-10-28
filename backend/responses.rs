@@ -185,7 +185,7 @@ impl From<ResponseInputItem> for ChatMessage {
     fn from(item: ResponseInputItem) -> Self {
         match item {
             ResponseInputItem::Message(message) => message,
-            ResponseInputItem::Tagged(tagged) => ChatMessage::from(tagged),
+            ResponseInputItem::Tagged(tagged) => Self::from(tagged),
         }
     }
 }
@@ -198,7 +198,7 @@ impl From<ResponseTaggedItem> for ChatMessage {
                 content,
                 name,
                 tool_calls,
-            } => ChatMessage {
+            } => Self {
                 role,
                 content,
                 name,
@@ -212,7 +212,7 @@ impl From<ResponseTaggedItem> for ChatMessage {
                 arguments,
             } => {
                 let call_id = call_id.or(id).unwrap_or_default();
-                ChatMessage {
+                Self {
                     role: "assistant".to_string(),
                     content: None,
                     name: None,
@@ -227,7 +227,7 @@ impl From<ResponseTaggedItem> for ChatMessage {
                     tool_call_id: None,
                 }
             }
-            ResponseTaggedItem::FunctionCallOutput { call_id, output } => ChatMessage {
+            ResponseTaggedItem::FunctionCallOutput { call_id, output } => Self {
                 role: "tool".to_string(),
                 content: Some(MessageContent::Text(value_to_string(output))),
                 name: None,
@@ -279,6 +279,8 @@ pub(crate) enum ResponseContentPart {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+// These names are the Responses API usage schema.
+#[allow(clippy::struct_field_names)]
 pub(crate) struct ResponseUsage {
     pub(crate) input_tokens: u32,
     pub(crate) output_tokens: u32,

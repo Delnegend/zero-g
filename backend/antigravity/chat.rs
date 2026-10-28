@@ -24,64 +24,8 @@ pub(crate) struct ChatStreamSerializer {
 impl crate::server::sse::SseSerializer for ChatStreamSerializer {
     fn handle(&mut self, event: AntigravityEvent) -> Vec<Event> {
         match event {
-            AntigravityEvent::Text(text) => {
-                let chunk = ChatCompletionChunk {
-                    id: self.stream_id.clone(),
-                    object: "chat.completion.chunk".to_string(),
-                    created: self.created,
-                    model: self.req_model.clone(),
-                    choices: vec![ChunkChoice {
-                        index: 0,
-                        delta: ChunkDelta {
-                            role: if self.sent_role {
-                                None
-                            } else {
-                                self.sent_role = true;
-                                Some("assistant".to_string())
-                            },
-                            content: Some(text),
-                            reasoning_content: None,
-                            tool_calls: None,
-                        },
-                        finish_reason: None,
-                    }],
-                    usage: None,
-                };
-                if let Ok(data) = serde_json::to_string(&chunk) {
-                    vec![Event::default().data(data)]
-                } else {
-                    Vec::new()
-                }
-            }
-            AntigravityEvent::Reasoning(text) => {
-                let chunk = ChatCompletionChunk {
-                    id: self.stream_id.clone(),
-                    object: "chat.completion.chunk".to_string(),
-                    created: self.created,
-                    model: self.req_model.clone(),
-                    choices: vec![ChunkChoice {
-                        index: 0,
-                        delta: ChunkDelta {
-                            role: if self.sent_role {
-                                None
-                            } else {
-                                self.sent_role = true;
-                                Some("assistant".to_string())
-                            },
-                            content: None,
-                            reasoning_content: Some(text),
-                            tool_calls: None,
-                        },
-                        finish_reason: None,
-                    }],
-                    usage: None,
-                };
-                if let Ok(data) = serde_json::to_string(&chunk) {
-                    vec![Event::default().data(data)]
-                } else {
-                    Vec::new()
-                }
-            }
+            AntigravityEvent::Text(text) => self.text_event(Some(text), None),
+            AntigravityEvent::Reasoning(text) => self.text_event(None, Some(text)),
             AntigravityEvent::ToolCall {
                 id,
                 name,
@@ -118,12 +62,9 @@ impl crate::server::sse::SseSerializer for ChatStreamSerializer {
                     }],
                     usage: None,
                 };
-                self.tool_call_index += 1;
-                if let Ok(data) = serde_json::to_string(&chunk) {
-                    vec![Event::default().data(data)]
-                } else {
-                    Vec::new()
-                }
+                self.tool_call_index = self.tool_call_index.saturating_add(1);
+                serde_json::to_string(&chunk)
+                    .map_or_else(|_| Vec::new(), |data| vec![Event::default().data(data)])
             }
             AntigravityEvent::Finish { reason } => {
                 self.finish_sent = true;
@@ -140,11 +81,8 @@ impl crate::server::sse::SseSerializer for ChatStreamSerializer {
                     }],
                     usage: None,
                 };
-                if let Ok(data) = serde_json::to_string(&chunk) {
-                    vec![Event::default().data(data)]
-                } else {
-                    Vec::new()
-                }
+                serde_json::to_string(&chunk)
+                    .map_or_else(|_| Vec::new(), |data| vec![Event::default().data(data)])
             }
             AntigravityEvent::Usage(usage) => {
                 self.usage = usage;
@@ -193,5 +131,38 @@ impl crate::server::sse::SseSerializer for ChatStreamSerializer {
         }
 
         events
+    }
+}
+
+impl ChatStreamSerializer {
+    fn text_event(
+        &mut self,
+        content: Option<String>,
+        reasoning_content: Option<String>,
+    ) -> Vec<Event> {
+        let chunk = ChatCompletionChunk {
+            id: self.stream_id.clone(),
+            object: "chat.completion.chunk".to_string(),
+            created: self.created,
+            model: self.req_model.clone(),
+            choices: vec![ChunkChoice {
+                index: 0,
+                delta: ChunkDelta {
+                    role: if self.sent_role {
+                        None
+                    } else {
+                        self.sent_role = true;
+                        Some("assistant".to_string())
+                    },
+                    content,
+                    reasoning_content,
+                    tool_calls: None,
+                },
+                finish_reason: None,
+            }],
+            usage: None,
+        };
+        serde_json::to_string(&chunk)
+            .map_or_else(|_| Vec::new(), |data| vec![Event::default().data(data)])
     }
 }

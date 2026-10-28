@@ -5,6 +5,8 @@ use crate::responses::{
     ResponseCreateRequest, ResponseInput, ResponseInputItem, ResponseTaggedItem,
 };
 
+// These payloads are created as JSON objects; indexing inserts optional wire fields.
+#[allow(clippy::indexing_slicing)]
 pub(crate) fn build_codex_payload_from_chat(req: &ChatCompletionRequest) -> Value {
     let mut input_items = Vec::new();
     let mut instructions = String::new();
@@ -104,6 +106,9 @@ pub(crate) fn build_codex_payload_from_chat(req: &ChatCompletionRequest) -> Valu
     payload
 }
 
+// The payload is created as a JSON object; indexing inserts optional wire fields.
+#[allow(clippy::indexing_slicing)]
+#[allow(clippy::too_many_lines)]
 pub(crate) fn build_codex_payload_from_responses(req: &ResponseCreateRequest) -> Value {
     let mut input_items = Vec::new();
     let mut instructions = req.instructions.clone().unwrap_or_default();
@@ -166,11 +171,9 @@ pub(crate) fn build_codex_payload_from_responses(req: &ResponseCreateRequest) ->
                             let cid = call_id
                                 .clone()
                                 .unwrap_or_else(|| "call_unknown".to_string());
-                            let out_str = if let Some(s) = output.as_str() {
-                                s.to_string()
-                            } else {
-                                output.to_string()
-                            };
+                            let out_str = output
+                                .as_str()
+                                .map_or_else(|| output.to_string(), str::to_owned);
                             input_items.push(json!({
                                 "type": "function_call_output",
                                 "call_id": cid,
@@ -248,6 +251,8 @@ fn append_instructions(instructions: &mut String, content: Option<&MessageConten
     instructions.push_str(&text);
 }
 
+// Reasoning is created as a JSON object; indexing inserts or replaces wire fields.
+#[allow(clippy::indexing_slicing)]
 fn extract_reasoning_payload(
     reasoning_effort: Option<&str>,
     reasoning_val: Option<&Value>,

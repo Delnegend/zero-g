@@ -49,19 +49,23 @@ openidconnect = "4.0.1"
 unreachable_pub = "warn"
 
 [lints.clippy]
-pedantic = { level = "warn", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+# Explicit crate visibility is intentional even in binary crates.
 redundant_pub_crate = "allow"
 unwrap_used = "deny"
 expect_used = "deny"
-panic = "deny"
-todo = "deny"
-unimplemented = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
 unreachable = "deny"
+unimplemented = "deny"
+unchecked_time_subtraction = "deny"
+todo = "deny"
+string_slice = "deny"
 panic_in_result_fn = "deny"
-struct_field_names = "allow"
-too_many_lines = "allow"
-cast_possible_truncation = "allow"
-cast_possible_wrap = "allow"
+panic = "deny"
+exit = "deny"
+as_conversions = "deny"
 
 [profile.release]
 lto = "thin"

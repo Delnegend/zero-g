@@ -94,17 +94,10 @@ pub(crate) fn to_model_entry(id: String, info: AntigravityModelInfo) -> ModelEnt
         None
     };
 
-    let supported_efforts = if let Some(e) = &effort_tier {
-        Some(vec![e.clone()])
-    } else if reasoning {
-        Some(vec![
-            "low".to_string(),
-            "medium".to_string(),
-            "high".to_string(),
-        ])
-    } else {
-        None
-    };
+    let supported_efforts = effort_tier.as_ref().map_or_else(
+        || reasoning.then(|| vec!["low".to_string(), "medium".to_string(), "high".to_string()]),
+        |e| Some(vec![e.clone()]),
+    );
 
     ModelEntry {
         id,

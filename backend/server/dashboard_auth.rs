@@ -524,12 +524,15 @@ async fn callback(
     if verify_login(oidc, &code, &pending).await.is_err() {
         return with_cookie(StatusCode::UNAUTHORIZED.into_response(), &clear);
     }
+    let Some(expires) = Instant::now().checked_add(SESSION_TTL) else {
+        return with_cookie(StatusCode::INTERNAL_SERVER_ERROR.into_response(), &clear);
+    };
     let session = random_token();
     oidc.state
         .lock()
         .await
         .sessions
-        .insert(session.clone(), Instant::now() + SESSION_TTL);
+        .insert(session.clone(), expires);
     let response = with_cookie(Redirect::to(&pending.return_to).into_response(), &clear);
     with_cookie(
         response,
@@ -679,9 +682,10 @@ mod tests {
     #[tokio::test]
     async fn writes_require_trusted_origin_and_host_in_both_modes() {
         let mut store = Store::default();
-        store
-            .sessions
-            .insert("session".into(), Instant::now() + SESSION_TTL);
+        store.sessions.insert(
+            "session".into(),
+            Instant::now().checked_add(SESSION_TTL).unwrap(),
+        );
         let oidc = Mode::Oidc(Box::new(test_oidc(store)));
         for mode in [
             Mode::Basic {
@@ -873,6 +877,7 @@ mod tests {
             assert!(cookie.contains("Max-Age=0") && cookie.contains("Secure"));
         }
     }
+    #[allow(clippy::too_many_lines)]
     #[tokio::test]
     async fn oidc_signed_login_checks_nonce_group_and_session() {
         use ring::signature::{RSA_PKCS1_SHA256, RsaKeyPair};
@@ -923,7 +928,7 @@ mod tests {
                     let (nonce, matching_nonce, allowed_group, valid_signature) = scenario.lock().await.clone();
                     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
                     let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256","kid":"test-key","typ":"JWT"}"#);
-                    let claims = json!({"iss":base,"aud":"client","sub":"subject","iat":now,"exp":now+300,"nonce":if matching_nonce {nonce} else {"wrong".into()},"groups":if allowed_group {vec!["admins"]} else {vec!["users"]}});
+                    let claims = json!({"iss":base,"aud":"client","sub":"subject","iat":now,"exp":now.saturating_add(300),"nonce":if matching_nonce {nonce} else {"wrong".into()},"groups":if allowed_group {vec!["admins"]} else {vec!["users"]}});
                     let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
                     let message = format!("{header}.{payload}");
                     let mut signature = vec![0; key.public().modulus_len()];

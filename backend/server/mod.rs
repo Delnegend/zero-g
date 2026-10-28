@@ -30,6 +30,8 @@ pub(crate) struct AppState {
     pub(crate) dashboard_auth: dashboard_auth::DashboardAuth,
 }
 
+// Route registration is kept together so the authentication boundaries are visible.
+#[allow(clippy::too_many_lines)]
 pub(crate) fn create_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)

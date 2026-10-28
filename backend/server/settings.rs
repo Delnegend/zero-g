@@ -126,11 +126,14 @@ impl SettingsStore {
     }
 
     fn decrypt(&self, name: &str, data: &[u8]) -> Result<String, String> {
-        if data.len() < 12 + aead::AES_256_GCM.tag_len() {
+        let Some((nonce, ciphertext)) = data.split_at_checked(12) else {
+            return Err("Invalid encrypted secret".into());
+        };
+        if ciphertext.len() < aead::AES_256_GCM.tag_len() {
             return Err("Invalid encrypted secret".into());
         }
-        let nonce: [u8; 12] = data[..12].try_into().map_err(|_| "Invalid nonce")?;
-        let mut ciphertext = data[12..].to_vec();
+        let nonce: [u8; 12] = nonce.try_into().map_err(|_| "Invalid nonce")?;
+        let mut ciphertext = ciphertext.to_vec();
         let key = aead::LessSafeKey::new(
             aead::UnboundKey::new(&aead::AES_256_GCM, &self.encryption_key)
                 .map_err(|_| "Invalid encryption key")?,

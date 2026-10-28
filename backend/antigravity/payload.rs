@@ -14,6 +14,8 @@ struct RequestMeta {
 }
 
 impl AntigravityClient {
+    // These values are constructed as JSON objects; mutable indexing inserts optional fields.
+    #[allow(clippy::indexing_slicing)]
     pub(crate) fn build_request_payload(
         req: &ChatCompletionRequest,
         project_id: &str,
@@ -208,6 +210,8 @@ impl AntigravityClient {
         parts
     }
 
+    // The function response is constructed as a JSON object, and indexing inserts its optional id.
+    #[allow(clippy::indexing_slicing)]
     fn handle_tool_message(
         msg: &ChatMessage,
         contents: &mut Vec<Value>,
@@ -266,6 +270,8 @@ impl AntigravityClient {
         }
     }
 
+    // The generation config is constructed as a JSON object; indexing inserts fields.
+    #[allow(clippy::indexing_slicing)]
     fn build_generation_config(req: &ChatCompletionRequest, is_claude: bool) -> Value {
         let mut generation_config = json!({});
         if let Some(temp) = req.temperature {
@@ -287,6 +293,8 @@ impl AntigravityClient {
         generation_config
     }
 
+    // Labels are constructed as a JSON object; indexing inserts optional fields.
+    #[allow(clippy::indexing_slicing)]
     fn build_labels(traj_id: &str, is_claude: bool) -> Value {
         let mut labels = json!({
             "trajectory_id": traj_id,
@@ -299,6 +307,8 @@ impl AntigravityClient {
         labels
     }
 
+    // Each declaration is constructed as a JSON object; indexing inserts optional fields.
+    #[allow(clippy::indexing_slicing)]
     fn tool_declarations(tools: &[Tool]) -> Vec<Value> {
         let mut decls = Vec::new();
         for tool in tools {
@@ -329,19 +339,9 @@ fn push_inline_image(parts: &mut Vec<Value>, url: &str) {
 }
 
 pub(crate) fn parse_data_url(url: &str) -> Option<(&str, &str)> {
-    if !url.starts_with("data:") {
-        return None;
-    }
-    let rest = &url[5..];
-    let semicolon = rest.find(';')?;
-    let mime = &rest[..semicolon];
-    let after_semi = &rest[semicolon + 1..];
-    let base64_prefix = "base64,";
-    if let Some(data) = after_semi.strip_prefix(base64_prefix) {
-        Some((mime, data))
-    } else {
-        None
-    }
+    let rest = url.strip_prefix("data:")?;
+    let (mime, after_semi) = rest.split_once(';')?;
+    after_semi.strip_prefix("base64,").map(|data| (mime, data))
 }
 
 #[cfg(test)]
@@ -406,7 +406,7 @@ mod tests {
 
         assert_eq!(inner["labels"]["used_claude"], "true");
         let temp = inner["generationConfig"]["temperature"].as_f64().unwrap();
-        assert!((temp - 0.7).abs() < 1e-4);
+        assert!((0.6999..0.7001).contains(&temp));
         assert_eq!(inner["generationConfig"]["maxOutputTokens"], 4096);
     }
 
@@ -418,5 +418,16 @@ mod tests {
         let (mime, data) = parsed.unwrap();
         assert_eq!(mime, "image/png");
         assert!(data.starts_with("iVBORw0KGgo"));
+    }
+
+    #[test]
+    fn parse_data_url_handles_unicode_and_invalid_prefixes() {
+        assert_eq!(
+            parse_data_url("data:é/base64;base64,abc"),
+            Some(("é/base64", "abc"))
+        );
+        assert_eq!(parse_data_url("data:image/png,abc"), None);
+        assert_eq!(parse_data_url("data:image/png;plain,abc"), None);
+        assert_eq!(parse_data_url("image/png;base64,abc"), None);
     }
 }

@@ -126,15 +126,15 @@ fn parse_line(line: &str, events: &mut Vec<AntigravityEvent>) {
     if let Some(metadata) = response.get("usageMetadata") {
         let mut usage = Usage::default();
         if let Some(prompt_tokens) = metadata.get("promptTokenCount").and_then(Value::as_u64) {
-            usage.prompt_tokens = prompt_tokens as u32;
+            usage.prompt_tokens = u32::try_from(prompt_tokens).unwrap_or(u32::MAX);
         }
         if let Some(completion_tokens) =
             metadata.get("candidatesTokenCount").and_then(Value::as_u64)
         {
-            usage.completion_tokens = completion_tokens as u32;
+            usage.completion_tokens = u32::try_from(completion_tokens).unwrap_or(u32::MAX);
         }
         if let Some(total_tokens) = metadata.get("totalTokenCount").and_then(Value::as_u64) {
-            usage.total_tokens = total_tokens as u32;
+            usage.total_tokens = u32::try_from(total_tokens).unwrap_or(u32::MAX);
         }
         events.push(AntigravityEvent::Usage(usage));
     }
@@ -264,6 +264,29 @@ mod tests {
                 prompt_tokens: 10,
                 completion_tokens: 5,
                 total_tokens: 15,
+            })]
+        );
+    }
+
+    #[test]
+    fn saturates_oversized_usage_counts() {
+        let mut decoder = EventDecoder::default();
+        let payload = json!({
+            "response": {
+                "usageMetadata": {
+                    "promptTokenCount": u64::MAX,
+                    "candidatesTokenCount": u64::MAX,
+                    "totalTokenCount": u64::MAX
+                }
+            }
+        });
+        let events = decoder.push_chunk(format!("data: {payload}\n").as_bytes());
+        assert_eq!(
+            events,
+            vec![AntigravityEvent::Usage(Usage {
+                prompt_tokens: u32::MAX,
+                completion_tokens: u32::MAX,
+                total_tokens: u32::MAX,
             })]
         );
     }

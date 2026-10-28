@@ -22,13 +22,11 @@ fn model_forbidden() -> Response {
 }
 
 pub(crate) fn strip_codex_prefix(model: &str) -> String {
-    if let Some(rest) = model.strip_prefix("openai-codex/") {
-        rest.to_string()
-    } else if let Some(rest) = model.strip_prefix("codex/") {
-        rest.to_string()
-    } else {
-        model.to_string()
-    }
+    model
+        .strip_prefix("openai-codex/")
+        .or_else(|| model.strip_prefix("codex/"))
+        .unwrap_or(model)
+        .to_string()
 }
 
 pub(crate) async fn models_handler(
@@ -48,7 +46,9 @@ pub(crate) async fn models_handler(
             .into_response();
     };
 
-    match fetch_codex_models(codex_auth).await {
+    let result = fetch_codex_models(codex_auth).await;
+    drop(auth_guard);
+    match result {
         Ok(mut models) => {
             models
                 .data

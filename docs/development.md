@@ -42,6 +42,8 @@ just fmt
 just build
 ```
 
+Rust follows the [Namtao strict Clippy configuration](https://www.namtao.com/rust/#strict-lints): pedantic and nursery lints, plus explicit panic, indexing, arithmetic, conversion, and process-exit checks. `clippy.toml` permits the guide's test-only exceptions. The existing `pub(crate)` visibility convention is retained; individual exceptions document cohesive long functions or JSON object insertion.
+
 ## Settings API contract
 
 The Rust settings request and response types define the settings API. After changing them, run `just api-generate` and commit `frontend/src/api/generated/openapi.json` and `frontend/src/api/generated/settings.ts`; Orval generates the Zod validators used by the settings client in `frontend/src/api/settings.ts`. TanStack Query manages the dashboard's server state. `just check` verifies that both generated files match the Rust contract and runs the frontend client tests.

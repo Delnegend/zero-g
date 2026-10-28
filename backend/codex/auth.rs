@@ -97,11 +97,13 @@ pub(crate) fn decode_jwt_profile(access_token: &str, id_token: Option<&str>) -> 
 }
 
 fn decode_jwt_payload(token: &str) -> Option<serde_json::Value> {
-    let parts: Vec<&str> = token.split('.').collect();
-    if parts.len() != 3 {
+    let mut parts = token.split('.');
+    let _header = parts.next()?;
+    let unpadded = parts.next()?;
+    let _signature = parts.next()?;
+    if parts.next().is_some() {
         return None;
     }
-    let unpadded = parts[1];
     let decoded = URL_SAFE_NO_PAD
         .decode(unpadded)
         .or_else(|_| {
@@ -175,15 +177,13 @@ impl CodexAuthManager {
     pub(crate) async fn get_credentials(&self) -> Result<CodexCredentials, String> {
         let needs_refresh = {
             let r = self.creds.read().await;
-            if let Some(exp) = r.expires_at {
+            r.expires_at.is_some_and(|exp| {
                 let now_ms = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .map_or(0, |d| d.as_millis() as i64);
-                // Refresh if within 60 seconds of expiration
-                now_ms + 60_000 >= exp
-            } else {
-                false
-            }
+                    .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
+                // Refresh if within 60 seconds of expiration.
+                now_ms.saturating_add(60_000) >= exp
+            })
         };
 
         if needs_refresh {
@@ -238,8 +238,12 @@ impl CodexAuthManager {
 
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_millis() as i64);
-        let new_expires_at = now_ms + token_data.expires_in * 1000;
+            .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
+        let new_expires_at = token_data
+            .expires_in
+            .checked_mul(1000)
+            .and_then(|duration| now_ms.checked_add(duration))
+            .ok_or_else(|| "Token expiration is out of range".to_string())?;
 
         updated.access_token = token_data.access_token;
         if let Some(new_rt) = token_data.refresh_token {

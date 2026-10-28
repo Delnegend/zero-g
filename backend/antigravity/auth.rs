@@ -163,15 +163,13 @@ impl AuthManager {
     pub(crate) async fn get_credentials(&self) -> Result<Credentials, String> {
         let needs_refresh = {
             let r = self.creds.read().await;
-            if let Some(exp) = r.expires_at {
+            r.expires_at.is_some_and(|exp| {
                 let now_ms = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .map_or(0, |d| d.as_millis() as i64);
-                // Refresh if within 60 seconds of expiration
-                now_ms + 60_000 >= exp
-            } else {
-                false
-            }
+                    .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
+                // Refresh if within 60 seconds of expiration.
+                now_ms.saturating_add(60_000) >= exp
+            })
         };
 
         if needs_refresh {
@@ -229,8 +227,12 @@ impl AuthManager {
 
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_millis() as i64);
-        let new_expires_at = now_ms + token_resp.expires_in * 1000;
+            .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
+        let new_expires_at = token_resp
+            .expires_in
+            .checked_mul(1000)
+            .and_then(|duration| now_ms.checked_add(duration))
+            .ok_or_else(|| "Token expiration is out of range".to_string())?;
 
         let mut updated = current;
         updated.access_token = token_resp.access_token;

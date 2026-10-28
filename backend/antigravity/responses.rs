@@ -44,7 +44,7 @@ impl crate::server::sse::SseSerializer for ResponsesStreamSerializer {
                 if !self.message_in_progress {
                     self.message_in_progress = true;
                     let index = self.next_output_index;
-                    self.next_output_index += 1;
+                    self.next_output_index = self.next_output_index.saturating_add(1);
                     self.message_index = Some(index);
 
                     let added_event = json!({
@@ -113,68 +113,7 @@ impl crate::server::sse::SseSerializer for ResponsesStreamSerializer {
                 name,
                 arguments,
             } => {
-                self.message_in_progress = false;
-                let index = self.next_output_index;
-                self.next_output_index += 1;
-                let fc_item_id = format!("fc_{}", uuid::Uuid::new_v4().simple());
-
-                let added_event = json!({
-                    "type": "response.output_item.added",
-                    "output_index": index,
-                    "item": {
-                        "id": fc_item_id,
-                        "type": "function_call",
-                        "status": "in_progress",
-                        "name": name,
-                        "call_id": id
-                    }
-                });
-                events.push(
-                    Event::default()
-                        .event("response.output_item.added")
-                        .data(added_event.to_string()),
-                );
-
-                let done_args = json!({
-                    "type": "response.function_call_arguments.done",
-                    "output_index": index,
-                    "name": name,
-                    "arguments": arguments
-                });
-                events.push(
-                    Event::default()
-                        .event("response.function_call_arguments.done")
-                        .data(done_args.to_string()),
-                );
-
-                let done_item = json!({
-                    "type": "response.output_item.done",
-                    "output_index": index,
-                    "item": {
-                        "id": fc_item_id,
-                        "type": "function_call",
-                        "status": "completed",
-                        "name": name,
-                        "call_id": id,
-                        "arguments": arguments
-                    }
-                });
-                events.push(
-                    Event::default()
-                        .event("response.output_item.done")
-                        .data(done_item.to_string()),
-                );
-
-                self.output_items.push((
-                    index,
-                    ResponseOutputItem::FunctionCall {
-                        id: fc_item_id,
-                        status: "completed".to_string(),
-                        name,
-                        call_id: id,
-                        arguments,
-                    },
-                ));
+                self.tool_call_events(id, name, arguments, &mut events);
             }
             AntigravityEvent::Finish { .. } => {}
             AntigravityEvent::Usage(value) => {
@@ -266,5 +205,78 @@ impl crate::server::sse::SseSerializer for ResponsesStreamSerializer {
                 .data(completed_event.to_string()),
         );
         events
+    }
+}
+
+impl ResponsesStreamSerializer {
+    fn tool_call_events(
+        &mut self,
+        id: String,
+        name: String,
+        arguments: String,
+        events: &mut Vec<Event>,
+    ) {
+        self.message_in_progress = false;
+        let index = self.next_output_index;
+        self.next_output_index = self.next_output_index.saturating_add(1);
+        let fc_item_id = format!("fc_{}", uuid::Uuid::new_v4().simple());
+
+        let added_event = json!({
+            "type": "response.output_item.added",
+            "output_index": index,
+            "item": {
+                "id": fc_item_id,
+                "type": "function_call",
+                "status": "in_progress",
+                "name": name,
+                "call_id": id
+            }
+        });
+        events.push(
+            Event::default()
+                .event("response.output_item.added")
+                .data(added_event.to_string()),
+        );
+
+        let done_args = json!({
+            "type": "response.function_call_arguments.done",
+            "output_index": index,
+            "name": name,
+            "arguments": arguments
+        });
+        events.push(
+            Event::default()
+                .event("response.function_call_arguments.done")
+                .data(done_args.to_string()),
+        );
+
+        let done_item = json!({
+            "type": "response.output_item.done",
+            "output_index": index,
+            "item": {
+                "id": fc_item_id,
+                "type": "function_call",
+                "status": "completed",
+                "name": name,
+                "call_id": id,
+                "arguments": arguments
+            }
+        });
+        events.push(
+            Event::default()
+                .event("response.output_item.done")
+                .data(done_item.to_string()),
+        );
+
+        self.output_items.push((
+            index,
+            ResponseOutputItem::FunctionCall {
+                id: fc_item_id,
+                status: "completed".to_string(),
+                name,
+                call_id: id,
+                arguments,
+            },
+        ));
     }
 }

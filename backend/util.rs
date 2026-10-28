@@ -5,7 +5,7 @@ pub(crate) fn urlencode(s: &str) -> String {
     let mut out = String::new();
     for b in s.bytes() {
         if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'~' {
-            out.push(b as char);
+            out.push(char::from(b));
         } else {
             let _ = write!(out, "%{b:02X}");
         }

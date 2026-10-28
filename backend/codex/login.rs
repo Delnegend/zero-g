@@ -48,8 +48,12 @@ pub(crate) async fn exchange_token(
 
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as i64);
-    let expires_at = now_ms + token_data.expires_in * 1000;
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
+    let expires_at = token_data
+        .expires_in
+        .checked_mul(1000)
+        .and_then(|duration| now_ms.checked_add(duration))
+        .ok_or_else(|| "Token expiration is out of range".to_string())?;
 
     Ok(CodexCredentials {
         access_token: token_data.access_token,

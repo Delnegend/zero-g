@@ -41,8 +41,8 @@ pub(crate) enum MessageContent {
 impl MessageContent {
     pub(crate) fn as_text(&self) -> String {
         match self {
-            MessageContent::Text(s) => s.clone(),
-            MessageContent::Parts(parts) => {
+            Self::Text(s) => s.clone(),
+            Self::Parts(parts) => {
                 let mut out = String::new();
                 for part in parts {
                     match part {
@@ -181,6 +181,8 @@ pub(crate) struct ChunkFunctionCall {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+// These names are the OpenAI usage schema.
+#[allow(clippy::struct_field_names)]
 pub(crate) struct Usage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,

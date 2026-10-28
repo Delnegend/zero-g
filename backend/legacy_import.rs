@@ -34,6 +34,8 @@ impl Drop for Cleanup {
     }
 }
 
+// Keep the offline import transaction and its cleanup in one auditable sequence.
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn import(
     source: &std::path::Path,
     dest: &std::path::Path,

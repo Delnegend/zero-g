@@ -75,8 +75,8 @@ pub(crate) async fn ensure_zen_shim(base_url: &str) -> Option<tokio::process::Ch
         })
         .ok()?;
 
-    let deadline = tokio::time::Instant::now() + READY_TIMEOUT;
-    while tokio::time::Instant::now() < deadline {
+    let start = tokio::time::Instant::now();
+    while start.elapsed() < READY_TIMEOUT {
         if is_alive(&client, base_url).await {
             info!("Zen shim ready at {base_url}");
             return Some(child);

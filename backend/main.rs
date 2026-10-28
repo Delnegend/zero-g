@@ -11,6 +11,7 @@ mod util;
 mod zen;
 
 use std::net::SocketAddr;
+use std::process::ExitCode;
 use std::sync::Arc;
 
 use tracing::{Level, error, info};
@@ -45,10 +46,10 @@ enum ServerError {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> ExitCode {
     if std::env::args_os().nth(1).is_some() {
         eprintln!("zero-g is a web service and does not accept command-line arguments");
-        std::process::exit(2);
+        return ExitCode::from(2);
     }
     dotenvy::dotenv().ok();
     let subscriber = FmtSubscriber::builder()
@@ -61,13 +62,14 @@ async fn main() {
         Ok(stores) => stores,
         Err(e) => {
             error!("Storage error: {e}");
-            std::process::exit(1);
+            return ExitCode::FAILURE;
         }
     };
     if let Err(e) = run_server(settings, logs).await {
         error!("Server error: {e}");
-        std::process::exit(1);
+        return ExitCode::FAILURE;
     }
+    ExitCode::SUCCESS
 }
 
 async fn migrate_legacy_settings(settings: &SettingsStore) -> Result<(), String> {

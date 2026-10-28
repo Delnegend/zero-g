@@ -26,20 +26,24 @@ fn session_id() -> String {
     const ALNUM: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis()) as u64;
-    let value = (!(ts * 0x1000 + 1)) & 0xffff_ffff_ffff;
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+    let value = !ts.wrapping_mul(0x1000).wrapping_add(1) & 0xffff_ffff_ffff;
     let hex = format!("{value:012x}");
     let mut rand = String::with_capacity(14);
     // deterministic-ish pseudo-random using timestamp; good enough for attestation
     let mut seed = ts;
     for _ in 0..14 {
         seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
-        let idx = (seed as usize) % ALNUM.len();
-        rand.push(ALNUM.as_bytes()[idx] as char);
+        let idx = usize::try_from(seed % 62).unwrap_or_default();
+        if let Some(&byte) = ALNUM.as_bytes().get(idx) {
+            rand.push(char::from(byte));
+        }
     }
     format!("ses_{hex}{rand}")
 }
 
+// serde_json object indexing inserts optional fields into the object constructed below.
+#[allow(clippy::indexing_slicing)]
 pub(crate) fn transform(
     req: &ChatCompletionRequest,
     zen_key: &str,
@@ -143,6 +147,9 @@ pub(crate) fn transform(
     (body, headers)
 }
 
+// serde_json object indexing updates the known object shapes constructed here.
+#[allow(clippy::indexing_slicing)]
+#[allow(clippy::too_many_lines)]
 fn aggregate_sse(sse: &str) -> Value {
     let mut content = String::new();
     let mut reasoning = String::new();
@@ -153,10 +160,10 @@ fn aggregate_sse(sse: &str) -> Value {
     let mut tool_calls: Vec<Value> = Vec::new();
 
     for line in sse.lines() {
-        if !line.starts_with("data: ") {
+        let Some(payload) = line.strip_prefix("data: ") else {
             continue;
-        }
-        let payload = line[6..].trim();
+        };
+        let payload = payload.trim();
         if payload == "[DONE]" || payload.is_empty() {
             continue;
         }
@@ -200,23 +207,32 @@ fn aggregate_sse(sse: &str) -> Value {
         }
         if let Some(tcs) = d.get("tool_calls").and_then(Value::as_array) {
             for tc in tcs {
-                let i = tc.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
+                let Some(i) = tc
+                    .get("index")
+                    .and_then(Value::as_u64)
+                    .map_or(Some(0), |i| usize::try_from(i).ok())
+                else {
+                    continue;
+                };
                 while tool_calls.len() <= i {
                     tool_calls.push(
                         json!({"id":"","type":"function","function":{"name":"","arguments":""}}),
                     );
                 }
+                let Some(call) = tool_calls.get_mut(i) else {
+                    continue;
+                };
                 if let Some(idv) = tc.get("id").and_then(Value::as_str) {
-                    tool_calls[i]["id"] = json!(idv);
+                    call["id"] = json!(idv);
                 }
                 if let Some(n) = tc
                     .get("function")
                     .and_then(|f| f.get("name"))
                     .and_then(Value::as_str)
                 {
-                    tool_calls[i]["function"]["name"] = json!(format!(
+                    call["function"]["name"] = json!(format!(
                         "{}{}",
-                        tool_calls[i]["function"]["name"].as_str().unwrap_or(""),
+                        call["function"]["name"].as_str().unwrap_or(""),
                         n
                     ));
                 }
@@ -225,11 +241,9 @@ fn aggregate_sse(sse: &str) -> Value {
                     .and_then(|f| f.get("arguments"))
                     .and_then(Value::as_str)
                 {
-                    tool_calls[i]["function"]["arguments"] = json!(format!(
+                    call["function"]["arguments"] = json!(format!(
                         "{}{}",
-                        tool_calls[i]["function"]["arguments"]
-                            .as_str()
-                            .unwrap_or(""),
+                        call["function"]["arguments"].as_str().unwrap_or(""),
                         a
                     ));
                 }

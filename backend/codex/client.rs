@@ -344,6 +344,8 @@ async fn pump_responses_events(
     }
 }
 
+// Streaming events share ordering and tool-call state throughout this loop.
+#[allow(clippy::too_many_lines)]
 async fn pump_chat_chunks(
     tx: mpsc::Sender<Result<Event, Infallible>>,
     upstream: reqwest::Response,
@@ -451,16 +453,13 @@ async fn pump_chat_chunks(
                             }
                         }
                         CodexParsedEvent::ToolCallDelta { key, delta } => {
-                            let index = match tool_calls
+                            let index = tool_calls
                                 .iter()
                                 .position(|call| call.matches(key.as_deref()))
-                            {
-                                Some(index) => index,
-                                None => tool_calls.len().saturating_sub(1),
-                            };
+                                .unwrap_or_else(|| tool_calls.len().saturating_sub(1));
                             if let Some(call) = tool_calls.get_mut(index) {
                                 call.arguments.push_str(&delta);
-                                call.streamed_len += delta.len();
+                                call.streamed_len = call.streamed_len.saturating_add(delta.len());
                             }
                             let chunk = ChatCompletionChunk {
                                 id: chunk_id.clone(),
@@ -492,20 +491,20 @@ async fn pump_chat_chunks(
                             }
                         }
                         CodexParsedEvent::ToolCallDone { key, arguments } => {
-                            let index = match tool_calls
+                            let index = tool_calls
                                 .iter()
                                 .position(|call| call.matches(key.as_deref()))
-                            {
-                                Some(index) => Some(index),
-                                None => tool_calls.len().checked_sub(1),
-                            };
+                                .or_else(|| tool_calls.len().checked_sub(1));
                             let Some(index) = index else { continue };
-                            let emit = tool_calls[index].streamed_len == 0 && !arguments.is_empty();
-                            tool_calls[index].arguments.clone_from(&arguments);
+                            let Some(call) = tool_calls.get_mut(index) else {
+                                continue;
+                            };
+                            let emit = call.streamed_len == 0 && !arguments.is_empty();
+                            call.arguments.clone_from(&arguments);
                             if !emit {
                                 continue;
                             }
-                            tool_calls[index].streamed_len = arguments.len();
+                            call.streamed_len = arguments.len();
                             let chunk = ChatCompletionChunk {
                                 id: chunk_id.clone(),
                                 object: "chat.completion.chunk".to_string(),
@@ -636,10 +635,7 @@ struct PendingToolCall {
 
 impl PendingToolCall {
     fn matches(&self, key: Option<&str>) -> bool {
-        match key {
-            Some(key) => key == self.call_id || self.item_id.as_deref() == Some(key),
-            None => false,
-        }
+        key.is_some_and(|key| key == self.call_id || self.item_id.as_deref() == Some(key))
     }
 }
 
@@ -684,15 +680,15 @@ fn apply_tool_event(calls: &mut Vec<PendingToolCall>, ev: CodexParsedEvent) {
             streamed_len: 0,
         }),
         CodexParsedEvent::ToolCallDelta { key, delta } => {
-            if let Some(index) = calls.iter().position(|call| call.matches(key.as_deref())) {
-                calls[index].arguments.push_str(&delta);
+            if let Some(call) = calls.iter_mut().find(|call| call.matches(key.as_deref())) {
+                call.arguments.push_str(&delta);
             } else if let Some(last) = calls.last_mut() {
                 last.arguments.push_str(&delta);
             }
         }
         CodexParsedEvent::ToolCallDone { key, arguments } => {
-            if let Some(index) = calls.iter().position(|call| call.matches(key.as_deref())) {
-                calls[index].arguments = arguments;
+            if let Some(call) = calls.iter_mut().find(|call| call.matches(key.as_deref())) {
+                call.arguments = arguments;
             }
         }
         _ => {}
@@ -738,6 +734,8 @@ impl SseLineDecoder {
         out
     }
 
+    // The event variants form one protocol dispatch table.
+    #[allow(clippy::too_many_lines)]
     fn parse_json_event(&self, val: &Value, out: &mut Vec<CodexParsedEvent>) {
         let event_type = val
             .get("type")
@@ -822,16 +820,18 @@ impl SseLineDecoder {
                     let prompt_tokens = usage_obj
                         .get("input_tokens")
                         .and_then(Value::as_u64)
-                        .unwrap_or(0) as u32;
+                        .map_or(0, |value| u32::try_from(value).unwrap_or(u32::MAX));
                     let completion_tokens = usage_obj
                         .get("output_tokens")
                         .and_then(Value::as_u64)
-                        .unwrap_or(0) as u32;
+                        .map_or(0, |value| u32::try_from(value).unwrap_or(u32::MAX));
                     let total_tokens = usage_obj
                         .get("total_tokens")
                         .and_then(Value::as_u64)
-                        .unwrap_or(u64::from(prompt_tokens + completion_tokens))
-                        as u32;
+                        .map_or_else(
+                            || prompt_tokens.saturating_add(completion_tokens),
+                            |value| u32::try_from(value).unwrap_or(u32::MAX),
+                        );
 
                     out.push(CodexParsedEvent::Usage(Usage {
                         prompt_tokens,

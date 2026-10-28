@@ -70,7 +70,7 @@ impl LogStore {
         RequestLog::filter(
             RequestLog::fields()
                 .created_at()
-                .lt(now() - self.retention_days * 86400),
+                .lt(now().saturating_sub(self.retention_days.saturating_mul(86400))),
         )
         .delete()
         .exec(&mut (*self.db).clone())
@@ -114,9 +114,10 @@ impl LogStore {
         let count = rows.len();
         let successes = rows.iter().filter(|r| (200..400).contains(&r.0)).count();
         let errors = rows.iter().filter(|r| r.0 >= 400).count();
-        let input_tokens = rows.iter().filter_map(|r| r.2).reduce(|a, b| a + b);
-        let output_tokens = rows.iter().filter_map(|r| r.3).reduce(|a, b| a + b);
-        #[allow(clippy::cast_precision_loss)]
+        let input_tokens = rows.iter().filter_map(|r| r.2).reduce(i64::saturating_add);
+        let output_tokens = rows.iter().filter_map(|r| r.3).reduce(i64::saturating_add);
+        // A floating-point average necessarily approximates large integer values.
+        #[allow(clippy::cast_precision_loss, clippy::as_conversions)]
         let avg_latency_ms = if count == 0 {
             0.0
         } else {
@@ -314,7 +315,10 @@ mod tests {
             request_body: "private prompt".into(),
             response_body: "private response".into(),
         };
-        store.insert(entry(now() - 31 * 86400)).await.unwrap();
+        store
+            .insert(entry(now().saturating_sub(31 * 86400)))
+            .await
+            .unwrap();
         store.insert(entry(now())).await.unwrap();
         let result = store.dashboard().await.unwrap();
         assert_eq!(result["summary"]["requests"], 1);
