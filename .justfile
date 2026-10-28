@@ -11,11 +11,15 @@ dev-backend:
 dev-frontend:
     cd web && bun run --bun vite
 
+# Add example request logs to the initialized development database (server stopped)
+seed:
+    bun run web/scripts/seed.ts
+
 web-build:
     cd web && bun run tsc -b && bun run --bun vite build
 
 lint:
-    cd web && bun run oxlint src
+    cd web && bun run oxlint src scripts
 
 # Regenerate the settings API contract and validators
 api-generate:

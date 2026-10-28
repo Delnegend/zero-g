@@ -22,6 +22,8 @@ Use the exact `127.0.0.1` address above: `localhost` is a different origin and i
 
 Run `just fmt` and `just lint` from the repository root to format and lint the frontend.
 
+To populate the dashboard with example request logs, start zero-g once to initialize its database, then stop it and run `just seed`. It reads `ZERO_G_LOG_DB` from `.env` (or uses `zero-g-logs.db`) and appends 140 example requests spanning the past six days. Each run adds another 140; request and response bodies contain `_seed: true`. Use a development database, not production. Restart `just dev` to view the data.
+
 ## Build & Test
 
 All validation runs through the project's gate command:
