@@ -17,14 +17,14 @@ flowchart TD
 
 ## Core Components
 
-- **Axum HTTP Layer (`src/server/`):** Exposes provider-specific routes (`/agy/v1`, `/codex/v1`, `/zen/v1`) requiring virtual-key Bearer authentication. Dashboard authentication is separate. Unprefixed routes are rejected.
-- **Dashboard OIDC (`src/server/dashboard_auth.rs`):** Uses `openidconnect` for discovery, PKCE, token exchange and signed ID-token validation. Signing keys are refreshed at login; local sessions and email/group authorization remain in zero-g.
-- **Protocol Models (`src/openai.rs`, `src/responses.rs`):** Strongly typed Serde models for Chat Completions and Responses API inputs (prompts, messages, tool outputs).
-- **Auth Managers (`src/antigravity/auth.rs`, `src/codex/auth.rs`):** Store provider credentials encrypted in the database, import legacy plaintext files once, parse JWT claims, and refresh access tokens near expiration.
-- **Login Flows (`src/antigravity/login.rs`, `src/codex/login.rs`):** Run local OAuth callbacks with device-code flow for headless Codex environments.
-- **Wire Translators (`src/antigravity/`, `src/codex/`):** Translates message roles, formats system instructions into appropriate wire parts, strips unsupported sampling parameters for Codex, and injects required backend headers.
+- **Axum HTTP Layer (`backend/server/`):** Exposes provider-specific routes (`/agy/v1`, `/codex/v1`, `/zen/v1`) requiring virtual-key Bearer authentication. Dashboard authentication is separate. Unprefixed routes are rejected.
+- **Dashboard OIDC (`backend/server/dashboard_auth.rs`):** Uses `openidconnect` for discovery, PKCE, token exchange and signed ID-token validation. Signing keys are refreshed at login; local sessions and email/group authorization remain in zero-g.
+- **Protocol Models (`backend/openai.rs`, `backend/responses.rs`):** Strongly typed Serde models for Chat Completions and Responses API inputs (prompts, messages, tool outputs).
+- **Auth Managers (`backend/antigravity/auth.rs`, `backend/codex/auth.rs`):** Store provider credentials encrypted in the database, import legacy plaintext files once, parse JWT claims, and refresh access tokens near expiration.
+- **Login Flows (`backend/antigravity/login.rs`, `backend/codex/login.rs`):** Run local OAuth callbacks with device-code flow for headless Codex environments.
+- **Wire Translators (`backend/antigravity/`, `backend/codex/`):** Translates message roles, formats system instructions into appropriate wire parts, strips unsupported sampling parameters for Codex, and injects required backend headers.
 - **Codex tool history:** Function-call arguments are sent upstream as JSON strings, including when a Responses request supplies an object.
-- **Stream Parsers (`src/antigravity/stream.rs`, `src/codex/client.rs`):** Decodes upstream SSE streams into standard OpenAI chat completion chunks or Responses API lifecycle events.
+- **Stream Parsers (`backend/antigravity/stream.rs`, `backend/codex/client.rs`):** Decodes upstream SSE streams into standard OpenAI chat completion chunks or Responses API lifecycle events.
 - **Storage:** Toasty with the Turso driver stores settings, encrypted secrets, virtual keys and request logs; embedded migrations run at startup.
 ## Invariants & Guarantees
 

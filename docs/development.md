@@ -6,7 +6,7 @@
 - `just` task runner
 - Bun 1.4.4
 
-Install frontend dependencies with `(cd web && bun install --frozen-lockfile)`. Build the frontend with `just web-build` before invoking `cargo build` directly; its files are embedded into the binary. `just build`, `just test`, and `just check` build it automatically.
+Install frontend dependencies with `(cd frontend && bun install --frozen-lockfile)`. Build the frontend with `just frontend-build` before invoking `cargo build` directly; its files are embedded into the binary. `just build`, `just test`, and `just check` build it automatically.
 
 For live frontend reload, start the Rust backend and Vite together:
 
@@ -44,13 +44,13 @@ just build
 
 ## Settings API contract
 
-The Rust settings request and response types define the settings API. After changing them, run `just api-generate` and commit `web/src/api/generated/openapi.json` and `web/src/api/generated/settings.ts`; Orval generates the Zod validators used by the settings client in `web/src/api/settings.ts`. TanStack Query manages the dashboard's server state. `just check` verifies that both generated files match the Rust contract and runs the frontend client tests.
+The Rust settings request and response types define the settings API. After changing them, run `just api-generate` and commit `frontend/src/api/generated/openapi.json` and `frontend/src/api/generated/settings.ts`; Orval generates the Zod validators used by the settings client in `frontend/src/api/settings.ts`. TanStack Query manages the dashboard's server state. `just check` verifies that both generated files match the Rust contract and runs the frontend client tests.
 
 This is a pilot for `/api/settings`; the other dashboard endpoints still use their existing handwritten types and fetch calls.
 
 ## Database migrations
 
-The models in `src/storage.rs` define the Turso schema. After changing them, generate a migration with `cargo run --bin migrate -- migration generate --name describe_change`; commit `toasty/history.toml`, the generated migration and its snapshot together. The server embeds and applies tracked migrations on startup. Do not use `push_schema` on production databases. Stop writers and back up the database before upgrading. Legacy libSQL databases require the separate import procedure in the [deployment guide](deployment.md#upgrade-migration-and-backup).
+The models in `backend/storage.rs` define the Turso schema. After changing them, generate a migration with `cargo run --bin migrate -- migration generate --name describe_change`; commit `toasty/history.toml`, the generated migration and its snapshot together. The server embeds and applies tracked migrations on startup. Do not use `push_schema` on production databases. Stop writers and back up the database before upgrading. Legacy libSQL databases require the separate import procedure in the [deployment guide](deployment.md#upgrade-migration-and-backup).
 
 ## Release Workflow
 

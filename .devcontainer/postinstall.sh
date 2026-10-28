@@ -8,5 +8,5 @@ if ! command -v bun >/dev/null 2>&1; then
     export PATH="${BUN_INSTALL}/bin:${PATH}"
 fi
 
-(cd web && bun install --frozen-lockfile)
-just web-build
+(cd frontend && bun install --frozen-lockfile)
+just frontend-build

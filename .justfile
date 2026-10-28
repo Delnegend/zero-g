@@ -2,31 +2,31 @@ default:
     @just --list
 
 # Run the Rust backend and Vite together
-dev: web-build
+dev: frontend-build
     bun run --parallel 'just dev-backend' 'just dev-frontend'
 
 dev-backend:
     ZERO_G_DASHBOARD_ORIGIN=http://127.0.0.1:5173 cargo run --bin zero-g
 
 dev-frontend:
-    cd web && bun run --bun vite
+    cd frontend && bun run --bun vite
 
 # Add example request logs to the initialized development database (server stopped)
 seed:
-    bun run web/scripts/seed.ts
+    bun run frontend/scripts/seed.ts
 
-web-build:
-    cd web && bun run tsc -b && bun run --bun vite build
+frontend-build:
+    cd frontend && bun run tsc -b && bun run --bun vite build
 
 lint:
-    cd web && bun run oxlint src scripts
+    cd frontend && bun run oxlint src scripts
 
 # Regenerate the settings API contract and validators
 api-generate:
-    ZERO_G_OPENAPI_OUTPUT="$PWD/web/src/api/generated/openapi.json" cargo test --quiet --bin zero-g contract::tests::settings_contract_exposes_operations_and_u32_bounds -- --exact
-    bun fmt --no-script web/src/api/generated/openapi.json
-    cd web && bun run orval --config orval.config.ts
-    bun fmt --no-script web/src/api/generated/settings.ts
+    ZERO_G_OPENAPI_OUTPUT="$PWD/frontend/src/api/generated/openapi.json" cargo test --quiet --bin zero-g contract::tests::settings_contract_exposes_operations_and_u32_bounds -- --exact
+    bun fmt --no-script frontend/src/api/generated/openapi.json
+    cd frontend && bun run orval --config orval.config.ts
+    bun fmt --no-script frontend/src/api/generated/settings.ts
 
 # Detect stale generated settings contracts without changing project files
 api-check:
@@ -36,18 +36,18 @@ api-check:
     trap 'rm -rf "$tmp"' EXIT
     ZERO_G_OPENAPI_OUTPUT="$tmp/openapi.json" cargo test --quiet --bin zero-g contract::tests::settings_contract_exposes_operations_and_u32_bounds -- --exact
     bun fmt --no-script "$tmp/openapi.json"
-    cmp "$tmp/openapi.json" web/src/api/generated/openapi.json || { echo "OpenAPI is stale; run just api-generate" >&2; exit 1; }
-    (cd web && ZERO_G_OPENAPI_INPUT="$tmp/openapi.json" ZERO_G_CONTRACT_OUTPUT="$tmp/settings.ts" bun run orval --config orval.config.ts)
+    cmp "$tmp/openapi.json" frontend/src/api/generated/openapi.json || { echo "OpenAPI is stale; run just api-generate" >&2; exit 1; }
+    (cd frontend && ZERO_G_OPENAPI_INPUT="$tmp/openapi.json" ZERO_G_CONTRACT_OUTPUT="$tmp/settings.ts" bun run orval --config orval.config.ts)
     bun fmt --no-script "$tmp/settings.ts"
-    cmp "$tmp/settings.ts" web/src/api/generated/settings.ts || { echo "Zod validators are stale; run just api-generate" >&2; exit 1; }
+    cmp "$tmp/settings.ts" frontend/src/api/generated/settings.ts || { echo "Zod validators are stale; run just api-generate" >&2; exit 1; }
 
 # Single gate CI verification
 check:
-    bun fmt --check --no-script web assets/zen_shim.ts
+    bun fmt --check --no-script frontend assets/zen_shim.ts
     just lint
-    just web-build
+    just frontend-build
     just api-check
-    cd web && bun test src/api/settings.test.ts
+    cd frontend && bun test src/api/settings.test.ts
     cargo fmt --check
     cargo clippy --all-targets -- -D warnings
     cargo test
@@ -55,14 +55,14 @@ check:
 # Format all code
 fmt:
     cargo fmt
-    bun fmt --no-script web assets/zen_shim.ts
+    bun fmt --no-script frontend assets/zen_shim.ts
 
 # Run tests
-test: web-build
+test: frontend-build
     cargo test
 
 # Build release binary
-build: web-build
+build: frontend-build
     cargo build --release
 
 # Compile the Zen TLS shim to a standalone binary (pinned Bun: the gate

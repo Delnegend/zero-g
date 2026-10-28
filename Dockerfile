@@ -1,6 +1,6 @@
 FROM oven/bun:1.4.4 AS frontend
-WORKDIR /app/web
-COPY web ./
+WORKDIR /app/frontend
+COPY frontend ./
 RUN bun install --frozen-lockfile && bun run tsc -b && bun run --bun vite build
 
 # Build stage
@@ -9,10 +9,10 @@ RUN apk add --no-cache musl-dev clang-dev cmake make
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY assets ./assets
-COPY src ./src
+COPY backend ./backend
 COPY Toasty.toml ./
 COPY toasty ./toasty
-COPY --from=frontend /app/web/dist ./web/dist
+COPY --from=frontend /app/frontend/dist ./frontend/dist
 RUN mkdir -p /app/data && chown 65532:65532 /app/data
 RUN cargo build --release --locked
 

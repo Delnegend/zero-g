@@ -37,7 +37,7 @@ Under **Observability**, the **Dashboard** shows totals and requests by UTC day;
 The dashboard theme toggle follows your system preference initially and remembers your choice in the browser.
 
 
-Source builds from checkout: run `(cd web && bun install --frozen-lockfile) && just web-build` before `cargo install --path .`.
+Source builds from checkout: run `(cd frontend && bun install --frozen-lockfile) && just frontend-build` before `cargo install --path .`.
 
 ## Highlights
 

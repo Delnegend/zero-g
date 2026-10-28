@@ -1,5 +1,5 @@
 {
-  "name": "zero-g-web",
+  "name": "zero-g-frontend",
   "private": true,
   "type": "module",
   "dependencies": {

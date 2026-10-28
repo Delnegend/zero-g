@@ -2,7 +2,7 @@
 
 ## Install and initial setup
 
-Install with `brew install Delnegend/tap/zero-g`, download a [release](https://github.com/Delnegend/zero-g/releases/latest), or build from checkout with `(cd web && bun install --frozen-lockfile) && just web-build && cargo install --path .`.
+Install with `brew install Delnegend/tap/zero-g`, download a [release](https://github.com/Delnegend/zero-g/releases/latest), or build from checkout with `(cd frontend && bun install --frozen-lockfile) && just frontend-build && cargo install --path .`.
 
 Copy `.env.example` to `.env`, set `ZERO_G_ENCRYPTION_KEY` to the output of `openssl rand -base64 32`, and set a strong dashboard password. Keep this key unchanged across restarts and backups. Protect `.env` from other users. Run `zero-g`, sign in at `http://127.0.0.1:8080/`, and create and copy a virtual key under **Virtual keys**. Configure Google OAuth and other settings under **Settings**. For Antigravity, create a Desktop OAuth client as described in [configuration](configuration.md#google-oauth), then use **Providers** to start Google sign-in. A local browser can complete the callback automatically; on another machine, paste the entire redirected loopback URL into the dashboard even if it fails to load. Keep this URL private. For Codex, use the **Providers** device sign-in link and enter the displayed code.
 Set `ZERO_G_DASHBOARD_ORIGIN` to the exact browser-facing origin: `http://127.0.0.1:8080` for local provisioning, or the public HTTPS origin behind a reverse proxy. Update it when changing the dashboard origin.

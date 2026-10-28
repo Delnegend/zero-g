@@ -398,7 +398,7 @@ mod tests {
                     r#type: "function".to_string(),
                     function: crate::openai::FunctionCall {
                         name: "read".to_string(),
-                        arguments: r#"{"path":"src/main.rs"}"#.to_string(),
+                        arguments: r#"{"path":"backend/main.rs"}"#.to_string(),
                     },
                 }]),
                 tool_call_id: None,
@@ -419,7 +419,7 @@ mod tests {
         assert_eq!(payload["input"][0]["type"], "function_call");
         assert_eq!(
             payload["input"][0]["arguments"].as_str(),
-            Some(r#"{"path":"src/main.rs"}"#)
+            Some(r#"{"path":"backend/main.rs"}"#)
         );
     }
 
@@ -527,14 +527,14 @@ mod tests {
             "model": "gpt-6.1-terra",
             "input": [
                 {"type": "function_call", "call_id": "call_1", "name": "read", "arguments": {"path": "Cargo.toml"}},
-                {"type": "function_call", "call_id": "call_2", "name": "read", "arguments": "{\"path\":\"src/main.rs\"}"}
+                {"type": "function_call", "call_id": "call_2", "name": "read", "arguments": "{\"path\":\"backend/main.rs\"}"}
             ]
         })).unwrap();
         let payload = build_codex_payload_from_responses(&req);
         assert_eq!(payload["input"][0]["arguments"], r#"{"path":"Cargo.toml"}"#);
         assert_eq!(
             payload["input"][1]["arguments"],
-            r#"{"path":"src/main.rs"}"#
+            r#"{"path":"backend/main.rs"}"#
         );
     }
 

@@ -5,6 +5,18 @@ edition = "2024"
 description = "OpenAI-compatible proxy for Google Antigravity subscriptions"
 license = "MIT OR Apache-2.0"
 
+[[bin]]
+name = "zero-g"
+path = "backend/main.rs"
+
+[[bin]]
+name = "migrate"
+path = "backend/bin/migrate.rs"
+
+[[bin]]
+name = "zero-g-import-legacy"
+path = "backend/bin/zero-g-import-legacy.rs"
+
 [dependencies]
 tokio = { version = "1.54.1", features = ["full"] }
 axum = { version = "0.8.9", features = ["tokio"] }

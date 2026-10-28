@@ -5,7 +5,7 @@ use rust_embed::Embed;
 use std::borrow::Cow;
 
 #[derive(Embed)]
-#[folder = "web/"]
+#[folder = "frontend/"]
 #[include = "dist/**"]
 struct DashboardAssets;
 
@@ -13,7 +13,7 @@ pub(crate) async fn index() -> Response {
     serve_asset("dist/index.html").unwrap_or_else(|| {
         (
             StatusCode::SERVICE_UNAVAILABLE,
-            "Build the dashboard first with `just web-build`.",
+            "Build the dashboard first with `just frontend-build`.",
         )
             .into_response()
     })
