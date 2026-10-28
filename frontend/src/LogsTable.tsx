@@ -3,16 +3,22 @@ import {
   flexRender,
   getCoreRowModel,
   getFilteredRowModel,
+  getPaginationRowModel,
   getSortedRowModel,
   useReactTable,
   type ColumnDef,
   type SortingState,
 } from "@tanstack/react-table";
-import { ArrowUpDown, Search } from "lucide-react";
+import { ArrowUpDown, ChevronLeft, ChevronRight, Search } from "lucide-react";
 import type { Log } from "./App";
 import { Button } from "./components/ui/button";
 import { Card } from "./components/ui/card";
 import { Input } from "./components/ui/input";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+} from "./components/ui/pagination";
 import {
   Table,
   TableBody,
@@ -104,6 +110,7 @@ export function LogsTable({
   const table = useReactTable({
     data: logs,
     columns,
+    initialState: { pagination: { pageIndex: 0, pageSize: 20 } },
     state: { sorting, globalFilter: query.trim() },
     onSortingChange: setSorting,
     globalFilterFn: (row, _columnId, filterValue: string) => {
@@ -125,8 +132,11 @@ export function LogsTable({
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getSortedRowModel: getSortedRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
   });
   const rows = table.getRowModel().rows;
+  const total = table.getFilteredRowModel().rows.length;
+  const { pageIndex, pageSize } = table.getState().pagination;
 
   return (
     <Card aria-labelledby="logs-heading" className="min-w-0 py-0">
@@ -136,7 +146,7 @@ export function LogsTable({
             Request logs
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Select a request to inspect its details.
+            The latest 200 requests. Select one to inspect its details.
           </p>
         </div>
         <div className="relative w-full sm:w-72">
@@ -299,6 +309,47 @@ export function LogsTable({
           </p>
         )}
       </div>
+      {total > 0 && (
+        <Pagination
+          aria-label="Request log pages"
+          className="flex flex-wrap items-center justify-between gap-3 border-t px-5 py-4"
+        >
+          <p aria-live="polite" className="text-sm text-muted-foreground">
+            {number.format(pageIndex * pageSize + 1)}–
+            {number.format(Math.min((pageIndex + 1) * pageSize, total))} of{" "}
+            {number.format(total)} requests
+          </p>
+          <PaginationContent>
+            <PaginationItem>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label="Go to previous page"
+                disabled={!table.getCanPreviousPage()}
+                onClick={() => table.previousPage()}
+              >
+                <ChevronLeft aria-hidden="true" /> Previous
+              </Button>
+            </PaginationItem>
+            <PaginationItem>
+              <span className="px-2 text-sm" aria-current="page">
+                {pageIndex + 1} / {table.getPageCount()}
+              </span>
+            </PaginationItem>
+            <PaginationItem>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label="Go to next page"
+                disabled={!table.getCanNextPage()}
+                onClick={() => table.nextPage()}
+              >
+                Next <ChevronRight aria-hidden="true" />
+              </Button>
+            </PaginationItem>
+          </PaginationContent>
+        </Pagination>
+      )}
     </Card>
   );
 }
