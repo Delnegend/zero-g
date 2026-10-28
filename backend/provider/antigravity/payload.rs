@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use rand::RngCore;
 use serde_json::{Value, json};
 
-use crate::antigravity::AntigravityClient;
+use crate::provider::antigravity::AntigravityClient;
 use crate::openai::{ChatCompletionRequest, ChatMessage, ContentPart, MessageContent, Tool};
 
 struct RequestMeta {

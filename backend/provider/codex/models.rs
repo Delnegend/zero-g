@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use crate::codex::auth::{CODEX_BASE_URL, CODEX_CLIENT_VERSION, CodexAuthManager};
+use crate::provider::codex::auth::{CODEX_BASE_URL, CODEX_CLIENT_VERSION, CodexAuthManager};
 use crate::openai::{ModelEntry, ModelListResponse};
 
 #[derive(Deserialize)]

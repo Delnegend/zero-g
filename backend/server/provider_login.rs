@@ -11,8 +11,8 @@ use serde_json::json;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::antigravity::auth::{self as agy, AuthManager, Credentials};
-use crate::codex::auth::{
+use crate::provider::antigravity::auth::{self as agy, AuthManager, Credentials};
+use crate::provider::codex::auth::{
     CODEX_CLIENT_ID, CODEX_DEVICE_AUTH_URL, CODEX_DEVICE_REDIRECT_URI, CODEX_DEVICE_TOKEN_URL,
     CODEX_DEVICE_USERCODE_URL, CodexAuthManager,
 };
@@ -310,7 +310,7 @@ async fn finish_google_exchange(
             .and_then(|v| v.get("email").and_then(|v| v.as_str()).map(str::to_string)),
         _ => None,
     };
-    let project_id = crate::antigravity::login::fetch_or_onboard_project(
+    let project_id = crate::provider::antigravity::login::fetch_or_onboard_project(
         &client,
         &token.access_token,
         email.as_deref(),
@@ -546,7 +546,7 @@ pub(crate) async fn codex_poll(
     let verifier = data
         .code_verifier
         .ok_or_else(|| error("Missing code verifier"))?;
-    let creds = crate::codex::login::exchange_token(&code, &verifier, CODEX_DEVICE_REDIRECT_URI)
+    let creds = crate::provider::codex::login::exchange_token(&code, &verifier, CODEX_DEVICE_REDIRECT_URI)
         .await
         .map_err(error)?;
     CodexAuthManager::save(settings, &creds)

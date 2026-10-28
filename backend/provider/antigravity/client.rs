@@ -3,10 +3,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use reqwest::Response;
 use serde_json::Value;
 
-use crate::antigravity::AntigravityClient;
-use crate::antigravity::auth::{ANTIGRAVITY_USER_AGENT, CLOUD_CODE_ASSIST_ENDPOINT, Credentials};
-use crate::antigravity::models::{CLAUDE_THINKING_BETA_HEADER, SANDBOX_ENDPOINT};
-use crate::antigravity::{AntigravityEvent, map_finish_reason, spawn_event_stream};
+use crate::provider::antigravity::AntigravityClient;
+use crate::provider::antigravity::auth::{ANTIGRAVITY_USER_AGENT, CLOUD_CODE_ASSIST_ENDPOINT, Credentials};
+use crate::provider::antigravity::models::{CLAUDE_THINKING_BETA_HEADER, SANDBOX_ENDPOINT};
+use crate::provider::antigravity::{AntigravityEvent, map_finish_reason, spawn_event_stream};
 use crate::openai::{
     ChatCompletionRequest, ChatCompletionResponse, Choice, FunctionCall, ToolCall, Usage,
 };
@@ -159,7 +159,7 @@ impl CollectedResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::antigravity::AntigravityEvent;
+    use crate::provider::antigravity::AntigravityEvent;
     use crate::openai::Usage;
 
     #[test]

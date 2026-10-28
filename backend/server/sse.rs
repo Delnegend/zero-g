@@ -6,7 +6,7 @@ use axum::response::{IntoResponse, Json, Response};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
-use crate::antigravity::{AntigravityEvent, spawn_event_stream};
+use crate::provider::antigravity::{AntigravityEvent, spawn_event_stream};
 
 pub(crate) type SseSender = mpsc::Sender<Result<Event, Infallible>>;
 

@@ -57,7 +57,7 @@ pub(crate) fn build_codex_payload_from_chat(req: &ChatCompletionRequest) -> Valu
                 let output = msg
                     .content
                     .as_ref()
-                    .map(super::super::openai::MessageContent::as_text)
+                    .map(MessageContent::as_text)
                     .unwrap_or_default();
                 input_items.push(json!({
                     "type": "function_call_output",

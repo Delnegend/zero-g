@@ -3,7 +3,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 
-use crate::codex::models::fetch_codex_models;
+use crate::provider::codex::models::fetch_codex_models;
 use crate::openai::ChatCompletionRequest;
 use crate::responses::ResponseCreateRequest;
 use crate::server::AppState;

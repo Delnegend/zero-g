@@ -10,8 +10,8 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::error;
 
-use crate::codex::auth::{CODEX_BASE_URL, CODEX_CLIENT_VERSION, CodexCredentials};
-use crate::codex::payload::{build_codex_payload_from_chat, build_codex_payload_from_responses};
+use crate::provider::codex::auth::{CODEX_BASE_URL, CODEX_CLIENT_VERSION, CodexCredentials};
+use crate::provider::codex::payload::{build_codex_payload_from_chat, build_codex_payload_from_responses};
 use crate::openai::{
     AssistantMessage, ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse, Choice,
     ChunkChoice, ChunkDelta, ChunkFunctionCall, ChunkToolCall, FunctionCall, ToolCall, Usage,

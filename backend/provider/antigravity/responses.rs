@@ -1,7 +1,7 @@
 use axum::response::sse::Event;
 use serde_json::json;
 
-use crate::antigravity::AntigravityEvent;
+use crate::provider::antigravity::AntigravityEvent;
 use crate::responses::{ResponseContentPart, ResponseObject, ResponseOutputItem, ResponseUsage};
 
 #[allow(clippy::struct_excessive_bools)]

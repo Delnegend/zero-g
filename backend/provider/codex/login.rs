@@ -2,7 +2,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 
-use crate::codex::auth::{CODEX_CLIENT_ID, CODEX_TOKEN_URL, CodexCredentials, decode_jwt_profile};
+use crate::provider::codex::auth::{CODEX_CLIENT_ID, CODEX_TOKEN_URL, CodexCredentials, decode_jwt_profile};
 
 #[derive(Deserialize)]
 struct TokenExchangeResponse {

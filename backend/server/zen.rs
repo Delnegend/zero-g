@@ -9,7 +9,7 @@ use crate::server::AppState;
 use crate::server::settings::Permissions;
 
 pub(crate) async fn models_handler(Extension(permissions): Extension<Permissions>) -> Json<Value> {
-    let mut models = crate::zen::models_json();
+    let mut models = crate::provider::zen::models_json();
     if let Some(data) = models.get_mut("data").and_then(Value::as_array_mut) {
         data.retain(|model| {
             model
@@ -48,7 +48,7 @@ pub(crate) async fn chat_handler(
         Ok(value) => value.unwrap_or_else(|| "public".to_string()),
         Err(e) => return settings_error(&e),
     };
-    crate::zen::handle_chat(req, &url, &key).await
+    crate::provider::zen::handle_chat(req, &url, &key).await
 }
 
 fn settings_error(error: &str) -> Response {

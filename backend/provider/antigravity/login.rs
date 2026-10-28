@@ -3,7 +3,7 @@ use std::time::Duration;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::antigravity::auth::{ANTIGRAVITY_USER_AGENT, CLOUD_CODE_ASSIST_ENDPOINT};
+use crate::provider::antigravity::auth::{ANTIGRAVITY_USER_AGENT, CLOUD_CODE_ASSIST_ENDPOINT};
 
 #[derive(Deserialize)]
 struct LoadCodeAssistResponse {

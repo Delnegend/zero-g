@@ -8,8 +8,8 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use crate::openai::{ChatCompletionRequest, MessageContent};
 
-const SYSTEM_PROMPT: &str = include_str!("../assets/opencode_system_prompt.txt");
-const CORE_TOOLS: &str = include_str!("../assets/core_tools.json");
+const SYSTEM_PROMPT: &str = include_str!("../../assets/opencode_system_prompt.txt");
+const CORE_TOOLS: &str = include_str!("../../assets/core_tools.json");
 
 const ZEN_MODELS: &[&str] = &[
     "beam-free",

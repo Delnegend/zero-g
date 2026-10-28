@@ -1,14 +1,11 @@
-mod antigravity;
-mod codex;
 #[cfg(test)]
 mod contract;
 mod openai;
+mod provider;
 mod responses;
 mod server;
-mod shim;
 mod storage;
 mod util;
-mod zen;
 
 use std::net::SocketAddr;
 use std::process::ExitCode;
@@ -17,8 +14,8 @@ use std::sync::Arc;
 use tracing::{Level, error, info};
 use tracing_subscriber::FmtSubscriber;
 
-use crate::antigravity::{AntigravityClient, AuthManager};
-use crate::codex::{CodexAuthManager, CodexClient};
+use crate::provider::antigravity::{AntigravityClient, AuthManager};
+use crate::provider::codex::{CodexAuthManager, CodexClient};
 use crate::server::observability::LogStore;
 use crate::server::settings::SettingsStore;
 use crate::server::{AppState, create_router};
@@ -121,7 +118,7 @@ async fn open_stores() -> Result<(SettingsStore, LogStore), String> {
         return Err(ServerError::LogRetentionOutOfRange.to_string());
     }
     logs.set_retention(retention).await?;
-    antigravity::auth::migrate_oauth_settings(&settings).await?;
+    provider::antigravity::auth::migrate_oauth_settings(&settings).await?;
     Ok((settings, logs))
 }
 
@@ -237,6 +234,6 @@ async fn run_server(settings: SettingsStore, logs: LogStore) -> Result<(), Serve
     let state = init_state(settings, logs).await?;
     log_endpoints(addr);
     let app = create_router(state);
-    let shim = crate::shim::ensure_zen_shim(&zen_url).await;
+    let shim = crate::provider::shim::ensure_zen_shim(&zen_url).await;
     bind_and_serve(addr, app, shim).await
 }

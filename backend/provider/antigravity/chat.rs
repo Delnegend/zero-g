@@ -1,8 +1,8 @@
 use axum::response::sse::Event;
 use serde_json::json;
 
-use crate::antigravity::AntigravityEvent;
-use crate::antigravity::map_finish_reason;
+use crate::provider::antigravity::AntigravityEvent;
+use crate::provider::antigravity::map_finish_reason;
 use crate::openai::{
     ChatCompletionChunk, ChunkChoice, ChunkDelta, ChunkFunctionCall, ChunkToolCall, Usage,
 };

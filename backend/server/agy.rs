@@ -6,10 +6,10 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 use serde_json::Value;
 
-use crate::antigravity::AntigravityClient;
-use crate::antigravity::AntigravityModelInfo;
-use crate::antigravity::chat::ChatStreamSerializer;
-use crate::antigravity::responses::ResponsesStreamSerializer;
+use crate::provider::antigravity::AntigravityClient;
+use crate::provider::antigravity::AntigravityModelInfo;
+use crate::provider::antigravity::chat::ChatStreamSerializer;
+use crate::provider::antigravity::responses::ResponsesStreamSerializer;
 use crate::openai::{ChatCompletionRequest, ModelEntry, ModelListResponse, StreamOptions};
 use crate::responses::{
     ResponseContentPart, ResponseCreateRequest, ResponseObject, ResponseOutputItem, ResponseUsage,
@@ -199,7 +199,7 @@ pub(crate) async fn chat_handler(
 
 async fn handle_chat_streaming(
     state: AppState,
-    creds: crate::antigravity::Credentials,
+    creds: crate::provider::antigravity::Credentials,
     req: ChatCompletionRequest,
 ) -> Response {
     let wire_model = req.model.clone();
@@ -357,7 +357,7 @@ pub(crate) async fn responses_handler(
 
 async fn handle_responses_streaming(
     state: AppState,
-    creds: crate::antigravity::Credentials,
+    creds: crate::provider::antigravity::Credentials,
     chat_req: ChatCompletionRequest,
     original_model: String,
 ) -> Response {

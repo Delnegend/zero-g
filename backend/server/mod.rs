@@ -16,8 +16,8 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use tower_http::cors::{Any, CorsLayer};
 
-use crate::antigravity::{AntigravityClient, AuthManager};
-use crate::codex::{CodexAuthManager, CodexClient};
+use crate::provider::antigravity::{AntigravityClient, AuthManager};
+use crate::provider::codex::{CodexAuthManager, CodexClient};
 
 #[derive(Clone)]
 pub(crate) struct AppState {
