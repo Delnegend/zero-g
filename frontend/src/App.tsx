@@ -25,6 +25,7 @@ import { Management } from "./Management";
 import { Card } from "./components/ui/card";
 import { LogsTable } from "./LogsTable";
 import { ObservabilityCharts } from "./ObservabilityCharts";
+import { RequestBody, requestBodyTheme } from "./RequestBody";
 import { Alert, AlertDescription } from "./components/ui/alert";
 import {
   Drawer,
@@ -82,17 +83,6 @@ const number = new Intl.NumberFormat();
 
 function formatTokens(value: number | null): string {
   return value == null ? "Unknown" : number.format(value);
-}
-function formatBody(body: unknown): string {
-  if (body == null) return "No body recorded";
-  if (typeof body === "string") {
-    try {
-      return JSON.stringify(JSON.parse(body), null, 2);
-    } catch {
-      return body || "Empty body";
-    }
-  }
-  return JSON.stringify(body, null, 2) ?? "No body recorded";
 }
 
 function formatDate(value: number): string {
@@ -281,6 +271,7 @@ function ObservabilityPage({ logsOnly = false }: { logsOnly?: boolean }) {
                         </dd>
                       </div>
                     </dl>
+                    <style>{requestBodyTheme}</style>
                     <div className="mt-5 grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
                       {(
                         [
@@ -290,9 +281,7 @@ function ObservabilityPage({ logsOnly = false }: { logsOnly?: boolean }) {
                       ).map(([title, body]) => (
                         <div key={title} className="min-w-0">
                           <h3 className="mb-2 text-sm font-medium">{title}</h3>
-                          <pre className="max-h-96 overflow-auto rounded-lg border bg-muted/50 p-4 text-xs leading-relaxed">
-                            <code>{formatBody(body)}</code>
-                          </pre>
+                          <RequestBody body={body} />
                         </div>
                       ))}
                     </div>

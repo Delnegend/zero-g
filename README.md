@@ -33,7 +33,7 @@ curl -H "Authorization: Bearer $ZERO_G_VIRTUAL_KEY" http://127.0.0.1:8080/agy/v1
 ```
 
 Configure retention, Zen and Google OAuth settings and provider credentials in the dashboard. Set the listening address with `ZERO_G_BIND` in `.env`. Full request and response bodies are stored locally for 30 days by default. See [configuration](docs/configuration.md) and [deployment](docs/deployment.md) for secure setup and backups.
-Under **Observability**, the **Dashboard** shows totals and requests by UTC day; **LLM Logs** lets you search and sort requests in pages of 20. Select **View** to inspect a request in the right-side drawer. On phones, requests appear as cards instead of a wide table. The chart and log list cover the latest 200 requests, while the summary covers all retained requests. Dashboard pages have shareable URLs and support browser navigation.
+Under **Observability**, the **Dashboard** shows totals and requests by UTC day; **LLM Logs** lets you search and sort requests in pages of 20. Select **View** to inspect a request in the right-side drawer, with JSON syntax highlighting for recorded bodies. On phones, requests appear as cards instead of a wide table. The chart and log list cover the latest 200 requests, while the summary covers all retained requests. Dashboard pages have shareable URLs and support browser navigation.
 The dashboard theme toggle follows your system preference initially and remembers your choice in the browser.
 
 
