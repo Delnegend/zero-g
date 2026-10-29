@@ -275,7 +275,9 @@ pub(crate) enum ResponseOutputItem {
 #[serde(tag = "type")]
 pub(crate) enum ResponseContentPart {
     #[serde(rename = "output_text")]
-    OutputText { text: String },
+    OutputText {
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

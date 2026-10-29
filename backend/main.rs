@@ -10,14 +10,12 @@ mod util;
 
 use std::net::SocketAddr;
 use std::process::ExitCode;
-use std::sync::Arc;
 
 use tracing::{Level, error, info};
 use tracing_subscriber::FmtSubscriber;
 
 use crate::database::Database;
-use crate::provider::antigravity::AntigravityClient;
-use crate::provider::codex::CodexClient;
+use crate::provider::Providers;
 use crate::server::observability::LogStore;
 use crate::server::settings::SettingsStore;
 use crate::server::{AppState, create_router};
@@ -90,15 +88,12 @@ async fn open_stores() -> Result<(SettingsStore, LogStore), String> {
 }
 
 async fn init_state(settings: SettingsStore, logs: LogStore) -> Result<AppState, ServerError> {
-    let client = Arc::new(AntigravityClient::new());
-    let codex_client = Arc::new(CodexClient::new());
     let dashboard_auth = crate::server::dashboard_auth::DashboardAuth::from_env()
         .await
         .map_err(ServerError::DashboardAuth)?;
 
     Ok(AppState {
-        client,
-        codex_client,
+        providers: Providers::new(),
         settings,
         logs,
         dashboard_auth,
@@ -135,7 +130,7 @@ async fn shutdown_signal() {
 async fn bind_and_serve(
     addr: SocketAddr,
     app: axum::Router,
-    mut shim: Option<tokio::process::Child>,
+    mut provider_process: Option<tokio::process::Child>,
 ) -> Result<(), ServerError> {
     let listener = tokio::net::TcpListener::bind(addr)
         .await
@@ -146,7 +141,7 @@ async fn bind_and_serve(
         .await
         .map_err(ServerError::Serve)?;
 
-    if let Some(child) = shim.as_mut() {
+    if let Some(child) = provider_process.as_mut() {
         let _ = child.kill().await;
     }
 
@@ -163,6 +158,6 @@ async fn run_server(settings: SettingsStore, logs: LogStore) -> Result<(), Serve
     tokio::spawn(crate::server::model_settings::run_background(state.clone()));
     log_endpoints(addr);
     let app = create_router(state);
-    let shim = crate::provider::shim::ensure_zen_shim("http://127.0.0.1:8090/v1").await;
-    bind_and_serve(addr, app, shim).await
+    let provider_process = crate::provider::start().await;
+    bind_and_serve(addr, app, provider_process).await
 }

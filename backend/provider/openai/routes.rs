@@ -1,11 +1,14 @@
 use axum::body::{Body, Bytes};
 use axum::extract::{RawQuery, State};
 use axum::http::{HeaderMap, Method, StatusCode, header};
-use axum::response::{IntoResponse, Json, Response};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Router};
 use serde_json::Value;
 
+use crate::provider::common::proxy::{
+    ProxyError, check_model, error, filter_models, settings_error,
+};
 use crate::provider::openai;
 use crate::provider::registry::Provider;
 use crate::server::{
@@ -80,78 +83,6 @@ async fn send(
             "no_credentials",
         )
     })
-}
-
-#[derive(Debug)]
-struct ProxyError(StatusCode, &'static str, &'static str, &'static str);
-
-impl IntoResponse for ProxyError {
-    fn into_response(self) -> Response {
-        (
-            self.0,
-            Json(crate::server::error_body(self.1, self.2, Some(self.3))),
-        )
-            .into_response()
-    }
-}
-
-const fn error(
-    status: StatusCode,
-    message: &'static str,
-    kind: &'static str,
-    code: &'static str,
-) -> ProxyError {
-    ProxyError(status, message, kind, code)
-}
-
-const fn settings_error() -> ProxyError {
-    error(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "Failed to load OpenAI-compatible provider settings",
-        "server_error",
-        "internal_error",
-    )
-}
-
-fn check_model(body: &[u8], permissions: &Permissions) -> Result<(), ProxyError> {
-    let model = serde_json::from_slice::<Value>(body)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("model")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        });
-    let Some(model) = model.filter(|model| !model.is_empty()) else {
-        return Err(error(
-            StatusCode::BAD_REQUEST,
-            "A model is required",
-            "invalid_request_error",
-            "invalid_model",
-        ));
-    };
-    if !permissions.allows_model(&model) {
-        return Err(error(
-            StatusCode::FORBIDDEN,
-            "Model is not allowed for this virtual key",
-            "permission_error",
-            "model_not_allowed",
-        ));
-    }
-    Ok(())
-}
-
-fn filter_models(value: &mut Value, permissions: &Permissions) -> bool {
-    let Some(data) = value.get_mut("data").and_then(Value::as_array_mut) else {
-        return false;
-    };
-    data.retain(|model| {
-        model
-            .get("id")
-            .and_then(Value::as_str)
-            .is_some_and(|id| permissions.allows_model(id))
-    });
-    true
 }
 
 async fn models_handler(

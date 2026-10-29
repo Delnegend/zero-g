@@ -74,30 +74,6 @@ function JsonDetails({ title, value }: { title: string; value: unknown }) {
   );
 }
 
-type ModelGroup = { id: string; models: Model[] };
-
-function groupModels(provider: Provider): ModelGroup[] {
-  if (provider.kind !== "agy") {
-    return provider.models.map((model) => ({ id: model.id, models: [model] }));
-  }
-  const candidates = new Map<string, Model[]>();
-  for (const model of provider.models) {
-    const effort = model.default_reasoning_effort;
-    const suffix =
-      typeof effort === "string" && /^(low|medium|high)$/.test(effort)
-        ? `-${effort}`
-        : "";
-    const base =
-      suffix && model.id.endsWith(suffix)
-        ? model.id.slice(0, -suffix.length)
-        : model.id;
-    const group = candidates.get(base) ?? [];
-    group.push(model);
-    candidates.set(base, group);
-  }
-  return Array.from(candidates, ([id, group]) => ({ id, models: group }));
-}
-
 function modelName(model: Model): string {
   return typeof model.name === "string" && model.name.trim()
     ? model.name
@@ -107,17 +83,14 @@ function modelName(model: Model): string {
 }
 
 function ModelCard({
-  group,
+  model,
   provider,
   data,
 }: {
-  group: ModelGroup;
+  model: Model;
   provider: Provider;
   data?: Datasheets;
 }) {
-  const [selected, setSelected] = useState(group.models[0].id);
-  const model =
-    group.models.find((item) => item.id === selected) ?? group.models[0];
   const price = lookup(data?.pricing, provider, model.id);
   const parameters = lookup(data?.parameters, provider, model.id);
   const pricing =
@@ -132,10 +105,7 @@ function ModelCard({
     typeof value === "number" && Number.isFinite(value)
       ? `$${(value * 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })}`
       : "—";
-  const title =
-    group.models.length > 1
-      ? modelName(model).replace(/\s*\((?:low|medium|high)\)$/i, "")
-      : modelName(model);
+  const title = modelName(model);
   const efforts = Array.isArray(model.supported_reasoning_efforts)
     ? model.supported_reasoning_efforts.filter(
         (value): value is string => typeof value === "string",
@@ -161,34 +131,18 @@ function ModelCard({
         </p>
       )}
       <dl className="mt-4 divide-y text-sm">
-        {(group.models.length > 1 || efforts.length > 0) && (
+        {efforts.length > 0 && (
           <div className="flex items-start justify-between gap-4 py-2">
             <dt className="shrink-0 text-muted-foreground">Reasoning</dt>
             <dd className="flex min-w-0 flex-wrap justify-end gap-1">
-              {group.models.length > 1
-                ? group.models.map((variant) => (
-                    <Button
-                      key={variant.id}
-                      type="button"
-                      size="sm"
-                      variant={model.id === variant.id ? "default" : "outline"}
-                      className="h-6 rounded-full px-2 text-xs"
-                      aria-pressed={model.id === variant.id}
-                      onClick={() => setSelected(variant.id)}
-                    >
-                      {typeof variant.default_reasoning_effort === "string"
-                        ? variant.default_reasoning_effort
-                        : variant.id}
-                    </Button>
-                  ))
-                : efforts.map((effort) => (
-                    <span
-                      key={effort}
-                      className="rounded-full border px-2 py-0.5 text-xs"
-                    >
-                      {effort}
-                    </span>
-                  ))}
+              {efforts.map((effort) => (
+                <span
+                  key={effort}
+                  className="rounded-full border px-2 py-0.5 text-xs"
+                >
+                  {effort}
+                </span>
+              ))}
             </dd>
           </div>
         )}
@@ -222,19 +176,17 @@ function ProviderModels({
   const providerMatches = `${provider.name} ${provider.id} ${provider.kind}`
     .toLowerCase()
     .includes(needle);
-  const models = groupModels(provider).filter(
-    (group) =>
+  const models = provider.models.filter(
+    (model) =>
       providerMatches ||
-      group.models.some((model) =>
-        [
-          model.id,
-          model.name,
-          model.display_name,
-          model.default_reasoning_effort,
-        ].some(
-          (value) =>
-            typeof value === "string" && value.toLowerCase().includes(needle),
-        ),
+      [
+        model.id,
+        model.name,
+        model.display_name,
+        model.default_reasoning_effort,
+      ].some(
+        (value) =>
+          typeof value === "string" && value.toLowerCase().includes(needle),
       ),
   );
   if (needle && !providerMatches && models.length === 0 && !provider.error)
@@ -256,10 +208,10 @@ function ProviderModels({
         <p className="mt-3 text-sm text-muted-foreground">No models found.</p>
       ) : (
         <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {models.slice(0, limit).map((group) => (
+          {models.slice(0, limit).map((model, index) => (
             <ModelCard
-              key={group.id}
-              group={group}
+              key={`${model.id}-${index}`}
+              model={model}
               provider={provider}
               data={data}
             />

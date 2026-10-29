@@ -1,128 +1,21 @@
-use axum::http::{HeaderMap, Method};
-use futures_util::StreamExt;
+use crate::provider::{ProviderKind, registry::Provider};
+use crate::server::AppState;
 use serde_json::Value;
 
-use crate::provider::{
-    antigravity::routes::{fetch_models, to_model_entry},
-    codex::models::fetch_catalog_pool,
-    go, openai,
-    registry::Provider,
-    zen,
-};
-use crate::server::{AppState, settings::SettingsStore};
-
-const MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
-
-async fn openai_models(store: &SettingsStore, provider: &Provider) -> Result<Vec<Value>, String> {
-    let credentials = crate::provider::credentials::list(store, &provider.id).await?;
-    let mut response = None;
-    for credential in credentials {
-        let key = store
-            .secret_get(&format!("credential.{}.api_key", credential.id))
-            .await
-            .map_err(|_| "Failed to load provider credentials")?
-            .ok_or("Provider credential is not connected")?;
-        let current = if provider.kind == "go" {
-            go::send_upstream(
-                go::base(provider, true),
-                &key,
-                "models",
-                None,
-                Method::GET,
-                &HeaderMap::new(),
-                None,
-            )
-            .await
-        } else {
-            openai::send(
-                &provider.base_url,
-                &key,
-                "models",
-                None,
-                Method::GET,
-                &HeaderMap::new(),
-                None,
-            )
-            .await
-        }
-        .map_err(str::to_owned)?;
-        let status = current.status();
-        response = Some(current);
-        if !matches!(status.as_u16(), 401 | 403 | 429) {
-            break;
-        }
-    }
-    let response = response.ok_or("Provider has no connected credentials")?;
-    if !response.status().is_success() {
-        return Err(format!(
-            "Provider model discovery returned HTTP {}",
-            response.status().as_u16()
-        ));
-    }
-    let mut bytes = Vec::new();
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|_| "Failed to read provider model list")?;
-        if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
-            return Err("Provider model list is too large".into());
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    let value: Value = serde_json::from_slice(&bytes).map_err(|_| "Invalid provider model list")?;
-    let models = value
-        .get("data")
-        .and_then(Value::as_array)
-        .ok_or("Invalid provider model list")?;
-    Ok(models
-        .iter()
-        .filter(|model| {
-            model
-                .get("id")
-                .and_then(Value::as_str)
-                .is_some_and(|id| !id.is_empty())
-        })
-        .cloned()
-        .collect())
-}
-
 pub(crate) async fn discover(state: &AppState, provider: &Provider) -> Result<Vec<Value>, String> {
-    match provider.kind.as_str() {
-        "openai" | "go" => openai_models(&state.settings, provider).await,
-        "zen" => zen::models_json()
-            .get("data")
-            .and_then(Value::as_array)
-            .cloned()
-            .ok_or_else(|| "Invalid Zen model list".into()),
-        "agy" => {
-            let models = fetch_models(state, provider).await?;
-            models
-                .into_iter()
-                .map(|(id, info)| {
-                    let mut raw = serde_json::to_value(&info)
-                        .map_err(|_| "Failed to serialize Antigravity model")?;
-                    let normalized = serde_json::to_value(to_model_entry(id, info))
-                        .map_err(|_| "Failed to serialize Antigravity model")?;
-                    if let (Some(raw), Value::Object(normalized)) =
-                        (raw.as_object_mut(), normalized)
-                    {
-                        raw.extend(normalized.into_iter().filter(|(_, value)| !value.is_null()));
-                    }
-                    Ok(raw)
-                })
-                .collect()
-        }
-        "codex" => fetch_catalog_pool(state, provider)
-            .await
-            .map(|(_, catalog)| catalog),
-        _ => Err("Unsupported provider kind".into()),
-    }
+    ProviderKind::from_str(&provider.kind)
+        .ok_or_else(|| "Unsupported provider kind".to_string())?
+        .discover(state, provider)
+        .await
 }
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use super::*;
+    use crate::provider::openai::{self, Backend};
+    use crate::server::settings::SettingsStore;
     use crate::{database::Database, provider::registry};
+    use axum::http::HeaderMap;
     use axum::{
         Json, Router,
         body::Body,
@@ -161,7 +54,9 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let models = openai_models(&store, &provider).await.unwrap();
+        let models = openai::discover::<Backend>(&store, &provider)
+            .await
+            .unwrap();
         assert_eq!(
             models,
             vec![json!({"id":"model-a","capabilities":{"vision":true},"context_window":1234})]
@@ -231,7 +126,7 @@ mod tests {
                 .await
                 .unwrap()
                 .unwrap();
-            let result = openai_models(&store, &provider).await;
+            let result = openai::discover::<Backend>(&store, &provider).await;
             let retryable = matches!(status.as_u16(), 401 | 403 | 429);
             assert_eq!(result.is_ok(), retryable, "status {status}");
             assert_eq!(calls.load(Ordering::SeqCst), if retryable { 2 } else { 1 });

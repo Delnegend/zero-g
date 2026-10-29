@@ -21,9 +21,9 @@ pub(super) async fn index() -> Response {
 
 pub(super) async fn fallback(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
-    if ["agy", "codex", "zen", "go", "openai", "health"]
-        .iter()
-        .any(|prefix| path == *prefix || path.starts_with(&format!("{prefix}/")))
+    if crate::provider::is_provider_path(uri.path())
+        || path == "health"
+        || path.starts_with("health/")
     {
         return StatusCode::NOT_FOUND.into_response();
     }

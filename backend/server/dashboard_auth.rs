@@ -117,7 +117,10 @@ const SESSION_TTL: Duration = Duration::from_hours(8);
 pub(crate) struct DashboardAuth(Arc<Mode>, Arc<reqwest::Url>);
 
 enum Mode {
-    Basic { username: String, password: String },
+    Basic {
+        username: String,
+        password: String,
+    },
     Oidc(Box<Oidc>),
 }
 

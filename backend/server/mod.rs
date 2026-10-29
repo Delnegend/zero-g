@@ -5,22 +5,17 @@ pub(crate) mod observability;
 pub(crate) mod settings;
 mod web;
 
-use std::sync::Arc;
-
 use axum::Router;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use tower_http::cors::{Any, CorsLayer};
 
-use crate::provider::antigravity::AntigravityClient;
-use crate::provider::codex::CodexClient;
-use crate::provider::{go, login as provider_login, openai, registry, zen};
+use crate::provider::{self, registry};
 
 #[derive(Clone)]
 pub(crate) struct AppState {
-    pub(crate) client: Arc<AntigravityClient>,
-    pub(crate) codex_client: Arc<CodexClient>,
+    pub(crate) providers: provider::Providers,
     pub(crate) settings: settings::SettingsStore,
     pub(crate) logs: observability::LogStore,
     pub(crate) dashboard_auth: dashboard_auth::DashboardAuth,
@@ -32,12 +27,6 @@ pub(crate) fn create_router(state: AppState) -> Router {
         .allow_methods(Any)
         .allow_headers(Any)
         .allow_private_network(true);
-
-    let agy_routes = crate::provider::antigravity::routes::router(&state.settings);
-    let codex_routes = crate::provider::codex::routes::router(&state.settings);
-    let zen_routes = zen::routes::router(&state.settings);
-    let go_routes = go::router(&state.settings);
-    let openai_routes = openai::routes::router(&state.settings);
 
     let dashboard = Router::new()
         .route("/", get(web::index))
@@ -62,7 +51,7 @@ pub(crate) fn create_router(state: AppState) -> Router {
             axum::routing::delete(settings::revoke_key).with_state(state.settings.clone()),
         )
         .merge(registry::router(state.settings.clone()))
-        .merge(provider_login::router(state.clone()))
+        .merge(provider::dashboard_router(&state))
         .merge(model_catalog::router(state.clone()))
         .merge(model_settings::router(state.clone()))
         .fallback(get(web::fallback));
@@ -70,11 +59,7 @@ pub(crate) fn create_router(state: AppState) -> Router {
 
     Router::new()
         .route("/health", get(health_handler))
-        .nest("/agy/{id}", agy_routes)
-        .nest("/codex/{id}", codex_routes)
-        .nest("/zen/{id}", zen_routes)
-        .nest("/go/{id}", go_routes)
-        .nest("/openai/{id}", openai_routes)
+        .merge(provider::router(&state.settings))
         .layer(cors)
         .layer(axum::middleware::from_fn_with_state(
             state.logs.clone(),

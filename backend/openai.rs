@@ -62,13 +62,21 @@ impl MessageContent {
 #[serde(tag = "type")]
 pub(crate) enum ContentPart {
     #[serde(rename = "text")]
-    Text { text: String },
+    Text {
+        text: String,
+    },
     #[serde(rename = "input_text")]
-    InputText { text: String },
+    InputText {
+        text: String,
+    },
     #[serde(rename = "output_text")]
-    OutputText { text: String },
+    OutputText {
+        text: String,
+    },
     #[serde(rename = "image_url")]
-    ImageUrl { image_url: ImageUrl },
+    ImageUrl {
+        image_url: ImageUrl,
+    },
     #[serde(rename = "input_image")]
     InputImage {
         #[serde(default)]

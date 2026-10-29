@@ -2,8 +2,11 @@ use std::time::Duration;
 
 use tracing::{info, warn};
 
+/// Maximum time to wait for a spawned shim to become ready.
 const READY_TIMEOUT: Duration = Duration::from_secs(10);
+/// Delay between shim readiness probes.
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
+/// Timeout for a single shim health probe.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Extract the TCP port from an http(s) base URL like `http://127.0.0.1:8090/v1`.
@@ -21,6 +24,7 @@ fn shim_port(base_url: &str) -> Option<u16> {
     port_str.parse().ok()
 }
 
+/// Check whether the shim health endpoint responds successfully.
 async fn is_alive(client: &reqwest::Client, base_url: &str) -> bool {
     let url = format!("{}/health", base_url.trim_end_matches('/'));
     match tokio::time::timeout(PROBE_TIMEOUT, client.get(&url).send()).await {
@@ -29,6 +33,7 @@ async fn is_alive(client: &reqwest::Client, base_url: &str) -> bool {
     }
 }
 
+/// Locate a bundled shim next to the current executable.
 fn sibling_shim() -> Option<std::path::PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;

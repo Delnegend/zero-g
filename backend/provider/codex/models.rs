@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::openai::{ModelEntry, ModelListResponse};
 use crate::provider::codex::auth::{CODEX_BASE_URL, CODEX_CLIENT_VERSION, CodexCredentials};
-use crate::provider::codex::client::UpstreamError;
+use crate::provider::common::errors::UpstreamError;
 use crate::provider::registry::Provider;
 use crate::server::AppState;
 

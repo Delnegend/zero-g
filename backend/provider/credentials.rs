@@ -29,7 +29,9 @@ async fn info(
     row: ProviderCredential,
     kind: &str,
 ) -> Result<Credential, String> {
-    let suffix = if matches!(kind, "agy" | "codex") {
+    let suffix = if crate::provider::ProviderKind::from_str(kind)
+        .is_some_and(crate::provider::ProviderKind::oauth)
+    {
         "credential"
     } else {
         "api_key"
@@ -132,7 +134,7 @@ pub(crate) async fn save_oauth(
         let mut tx = db.transaction().await?;
         let provider = ProviderRecord::filter_by_id(provider_id).first().exec(&mut tx).await?;
         let credential = ProviderCredential::filter_by_id(credential_id).first().exec(&mut tx).await?;
-        if !matches!(provider, Some(row) if !row.deleted && row.kind == kind && matches!(kind, "agy" | "codex"))
+        if !matches!(provider, Some(row) if !row.deleted && row.kind == kind && crate::provider::ProviderKind::from_str(kind).is_some_and(crate::provider::ProviderKind::oauth))
             || !matches!(credential, Some(row) if row.provider_id == provider_id && row.enabled) {
             return Ok(Err("Credential no longer exists, is disabled, or has the wrong provider".to_string()));
         }
@@ -216,10 +218,16 @@ async fn create(
             let Some(provider) = provider else {
                 return Ok(StatusCode::NOT_FOUND);
             };
-            if encrypted.is_some() && matches!(provider.kind.as_str(), "agy" | "codex") {
+            let Some(kind) = crate::provider::ProviderKind::from_str(&provider.kind) else {
+                return Ok(StatusCode::BAD_REQUEST);
+            };
+            if encrypted.is_some() && kind.oauth() {
                 return Ok(StatusCode::BAD_REQUEST);
             }
-            if provider.kind == "go" && input.api_key.as_deref().is_none_or(str::is_empty) {
+            if kind.api_key()
+                && !kind.keyless()
+                && input.api_key.as_deref().is_none_or(str::is_empty)
+            {
                 return Ok(StatusCode::BAD_REQUEST);
             }
             toasty::create!(ProviderCredential {
@@ -295,10 +303,16 @@ async fn update(
             if !matches!(row, Some(row) if row.provider_id == provider_id) {
                 return Ok(StatusCode::NOT_FOUND);
             }
-            if encrypted.is_some() && matches!(provider.kind.as_str(), "agy" | "codex") {
+            let Some(kind) = crate::provider::ProviderKind::from_str(&provider.kind) else {
+                return Ok(StatusCode::BAD_REQUEST);
+            };
+            if encrypted.is_some() && kind.oauth() {
                 return Ok(StatusCode::BAD_REQUEST);
             }
-            if provider.kind == "go" && input.api_key.as_deref().is_some_and(str::is_empty) {
+            if kind.api_key()
+                && !kind.keyless()
+                && input.api_key.as_deref().is_some_and(str::is_empty)
+            {
                 return Ok(StatusCode::BAD_REQUEST);
             }
             ProviderCredential::upsert_by_id(id.as_str())
@@ -405,20 +419,29 @@ pub(crate) async fn migrate_legacy(store: &SettingsStore) -> Result<(), String> 
     let mut remap = std::collections::HashMap::<String, String>::new();
     let mut groups = std::collections::HashMap::<String, Vec<String>>::new();
     let mut entries = Vec::new();
-    let mut zen_url = None;
+    let mut singleton_urls = std::collections::HashMap::new();
     for provider in &providers {
-        if provider.kind == "zen" {
+        let kind = crate::provider::ProviderKind::from_str(&provider.kind)
+            .ok_or_else(|| format!("Unsupported provider kind: {}", provider.kind))?;
+        let descriptor = kind.descriptor();
+        if descriptor.legacy.same_base {
             let url = reqwest::Url::parse(provider.base_url.trim_end_matches('/'))
-                .map_err(|e| format!("Invalid existing Zen provider URL: {e}"))?;
-            if zen_url.as_ref().is_some_and(|existing| existing != &url) {
-                return Err("Existing Zen providers use different base URLs. Reconcile them before upgrading; no credentials have been changed.".to_string());
+                .map_err(|e| format!("Invalid existing {} provider URL: {e}", descriptor.label))?;
+            if singleton_urls
+                .get(&provider.kind)
+                .is_some_and(|existing| existing != &url)
+            {
+                return Err(format!(
+                    "Existing {} providers use different base URLs. Reconcile them before upgrading; no credentials have been changed.",
+                    descriptor.label
+                ));
             }
-            zen_url = Some(url);
+            singleton_urls.insert(provider.kind.clone(), url);
         }
-        let group = if provider.kind == "openai" {
+        let group = if descriptor.fixed_id.is_none() {
             let url = reqwest::Url::parse(provider.base_url.trim_end_matches('/'))
                 .map_err(|e| format!("Invalid existing provider URL: {e}"))?;
-            format!("openai:{url}")
+            format!("{}:{url}", provider.kind)
         } else {
             provider.kind.clone()
         };
@@ -432,19 +455,14 @@ pub(crate) async fn migrate_legacy(store: &SettingsStore) -> Result<(), String> 
             .push(provider.id.clone());
         remap.insert(provider.id.clone(), target.clone());
         let id = uuid::Uuid::new_v4().to_string();
-        let suffix = if matches!(provider.kind.as_str(), "agy" | "codex") {
+        let suffix = if kind.oauth() {
             "credential"
         } else {
             "api_key"
         };
         let old_name = format!("provider.{}.{suffix}", provider.id);
         let value = store.secret_get(&old_name).await?;
-        // Preserve the legacy anonymous OpenAI and public Zen defaults.
-        let value = match (value, provider.kind.as_str()) {
-            (None, "openai") => Some(String::new()),
-            (None, "zen") => Some("public".to_string()),
-            (value, _) => value,
-        };
+        let value = value.or_else(|| descriptor.legacy.key.map(str::to_owned));
         let new_name = format!("credential.{id}.{suffix}");
         let encrypted = value
             .as_deref()

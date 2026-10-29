@@ -10,7 +10,7 @@ use serde_json::json;
 
 use crate::{
     database::Database,
-    provider::credentials,
+    provider::{PROVIDER_KINDS, credentials},
     server::settings::SettingsStore,
     storage::{ProviderCredential, ProviderRecord, Secret, Setting, VirtualKey},
 };
@@ -55,58 +55,6 @@ pub(crate) async fn list(database: &Database) -> Result<Vec<Provider>, String> {
         .collect())
 }
 
-#[derive(Serialize)]
-struct ProviderKind {
-    value: &'static str,
-    label: &'static str,
-    oauth: bool,
-    api_key: bool,
-    fixed_id: Option<&'static str>,
-    fixed_name: Option<&'static str>,
-}
-const PROVIDER_KINDS: &[ProviderKind] = &[
-    ProviderKind {
-        value: "agy",
-        label: "Antigravity (Google)",
-        oauth: true,
-        api_key: false,
-        fixed_id: Some("agy"),
-        fixed_name: Some("Google Antigravity"),
-    },
-    ProviderKind {
-        value: "codex",
-        label: "Codex (OpenAI)",
-        oauth: true,
-        api_key: false,
-        fixed_id: Some("codex"),
-        fixed_name: Some("OpenAI Codex"),
-    },
-    ProviderKind {
-        value: "zen",
-        label: "Zen (OpenCode)",
-        oauth: false,
-        api_key: true,
-        fixed_id: Some("zen"),
-        fixed_name: Some("OpenCode Zen"),
-    },
-    ProviderKind {
-        value: "go",
-        label: "OpenCode Go",
-        oauth: false,
-        api_key: true,
-        fixed_id: Some("go"),
-        fixed_name: Some("OpenCode Go"),
-    },
-    ProviderKind {
-        value: "openai",
-        label: "OpenAI-compatible",
-        oauth: false,
-        api_key: true,
-        fixed_id: None,
-        fixed_name: None,
-    },
-];
-
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CreateProvider {
@@ -136,12 +84,9 @@ fn validate(id: &str, name: &str, kind: &str, base_url: &str) -> Result<(), &'st
     if name.trim().is_empty() {
         return Err("Provider name must not be empty");
     }
-    let kind = PROVIDER_KINDS
-        .iter()
-        .find(|candidate| candidate.value == kind)
-        .ok_or("Unsupported provider kind")?;
+    let kind = crate::provider::ProviderKind::from_str(kind).ok_or("Unsupported provider kind")?;
     if base_url.is_empty() {
-        if kind.api_key && kind.value != "go" {
+        if kind.api_key() && kind.default_base_url().is_none() {
             return Err("Provider base URL is required for this kind");
         }
     } else {
@@ -162,7 +107,11 @@ fn duplicate(rows: &[ProviderRecord], id: &str, kind: &str, base_url: &str) -> b
     rows.iter()
         .filter(|row| !row.deleted && row.id != id && row.kind == kind)
         .any(|row| {
-            if kind != "openai" {
+            if PROVIDER_KINDS
+                .iter()
+                .find(|item| item.value == kind)
+                .is_none_or(|item| item.fixed_id.is_some())
+            {
                 return true;
             }
             match (

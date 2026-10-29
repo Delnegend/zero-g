@@ -1,21 +1,99 @@
 use axum::body::{Body, Bytes};
 use axum::extract::{RawQuery, State};
 use axum::http::{HeaderMap, Method, StatusCode, header};
-use axum::response::{IntoResponse, Json, Response};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Router};
 use serde_json::Value;
 
+use crate::provider::common::proxy::{
+    ProxyError, check_model, error, filter_models, settings_error,
+};
 use crate::provider::openai;
+use crate::provider::quota::{QuotaSnapshot, QuotaWindow};
 use crate::provider::registry::Provider;
 use crate::server::{
     AppState,
     settings::{self, Permissions, SettingsStore},
 };
+use std::time::Duration;
 
+/// Default `OpenCode` Go inference API base URL.
 const DEFAULT_BASE: &str = "https://opencode.ai/inference/go/openai/v1";
+/// `OpenCode` Go model discovery API base URL.
 const MODELS_BASE: &str = "https://opencode.ai/zen/go/v1";
+/// Convert an `OpenCode` Go usage response into a quota snapshot.
+pub(crate) fn parse_go(value: &Value) -> Result<QuotaSnapshot, String> {
+    let usage = value
+        .get("usage")
+        .ok_or("Invalid OpenCode Go usage response")?;
+    let mut windows = Vec::new();
+    for (field, label) in [
+        ("rolling", "5 hours"),
+        ("weekly", "7 days"),
+        ("monthly", "Monthly"),
+    ] {
+        let window = usage
+            .get(field)
+            .ok_or("Incomplete OpenCode Go usage response")?;
+        let used = window
+            .get("percent")
+            .and_then(Value::as_f64)
+            .filter(|n| n.is_finite())
+            .ok_or("Invalid OpenCode Go usage percentage")?;
+        let reset_at = window
+            .get("resetsAt")
+            .and_then(Value::as_str)
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|d| d.timestamp());
+        windows.push(QuotaWindow {
+            label: label.to_string(),
+            remaining_percent: Some(100.0 - used.clamp(0.0, 100.0)),
+            reset_at,
+        });
+    }
+    Ok(QuotaSnapshot::Quota { windows })
+}
 
+/// Fetch usage for an `OpenCode` Go credential.
+pub(crate) async fn go_usage(
+    store: &SettingsStore,
+    credential: &str,
+) -> Result<QuotaSnapshot, String> {
+    let key = store
+        .secret_get(&format!("credential.{credential}.api_key"))
+        .await?
+        .ok_or("OpenCode Go API key is not connected")?;
+    if key.is_empty() {
+        return Err("OpenCode Go requires an API key".into());
+    }
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|_| "Unable to create OpenCode Go client")?;
+    let response = client
+        .get("https://opencode.ai/zen/go/v1/usage")
+        .bearer_auth(key)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .send()
+        .await
+        .map_err(|_| "Unable to contact OpenCode Go")?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "OpenCode Go returned HTTP {}",
+            response.status().as_u16()
+        ));
+    }
+    parse_go(
+        &response
+            .json::<Value>()
+            .await
+            .map_err(|_| "Invalid OpenCode Go usage response")?,
+    )
+}
+
+/// Select the configured or default base URL for inference or model discovery.
 pub(crate) fn base(provider: &Provider, models: bool) -> &str {
     if provider.base_url.is_empty() || provider.base_url.trim_end_matches('/') == DEFAULT_BASE {
         if models { MODELS_BASE } else { DEFAULT_BASE }
@@ -24,6 +102,7 @@ pub(crate) fn base(provider: &Provider, models: bool) -> &str {
     }
 }
 
+/// Send an authenticated request to an `OpenCode` Go upstream.
 pub(crate) async fn send_upstream(
     base: &str,
     key: &str,
@@ -75,6 +154,7 @@ pub(crate) async fn send_upstream(
         .map_err(|_| "Failed to contact OpenCode Go provider")
 }
 
+/// Build the authenticated `OpenCode` Go proxy routes.
 pub(crate) fn router(settings: &SettingsStore) -> Router<AppState> {
     Router::new()
         .route("/v1/models", get(models_handler))
@@ -89,6 +169,7 @@ pub(crate) fn router(settings: &SettingsStore) -> Router<AppState> {
         ))
 }
 
+/// Resolve credentials and send an `OpenCode` Go proxy request.
 async fn send(
     settings: &SettingsStore,
     provider: &Provider,
@@ -144,78 +225,7 @@ async fn send(
     })
 }
 
-#[derive(Debug)]
-struct ProxyError(StatusCode, &'static str, &'static str, &'static str);
-
-impl IntoResponse for ProxyError {
-    fn into_response(self) -> Response {
-        (
-            self.0,
-            Json(crate::server::error_body(self.1, self.2, Some(self.3))),
-        )
-            .into_response()
-    }
-}
-
-const fn error(
-    status: StatusCode,
-    message: &'static str,
-    kind: &'static str,
-    code: &'static str,
-) -> ProxyError {
-    ProxyError(status, message, kind, code)
-}
-
-const fn settings_error() -> ProxyError {
-    error(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "Failed to load OpenAI-compatible provider settings",
-        "server_error",
-        "internal_error",
-    )
-}
-
-fn check_model(body: &[u8], permissions: &Permissions) -> Result<(), ProxyError> {
-    let model = serde_json::from_slice::<Value>(body)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("model")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        });
-    let Some(model) = model.filter(|model| !model.is_empty()) else {
-        return Err(error(
-            StatusCode::BAD_REQUEST,
-            "A model is required",
-            "invalid_request_error",
-            "invalid_model",
-        ));
-    };
-    if !permissions.allows_model(&model) {
-        return Err(error(
-            StatusCode::FORBIDDEN,
-            "Model is not allowed for this virtual key",
-            "permission_error",
-            "model_not_allowed",
-        ));
-    }
-    Ok(())
-}
-
-fn filter_models(value: &mut Value, permissions: &Permissions) -> bool {
-    let Some(data) = value.get_mut("data").and_then(Value::as_array_mut) else {
-        return false;
-    };
-    data.retain(|model| {
-        model
-            .get("id")
-            .and_then(Value::as_str)
-            .is_some_and(|id| permissions.allows_model(id))
-    });
-    true
-}
-
+/// Fetch and filter models allowed by the virtual key.
 async fn models_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
@@ -268,6 +278,7 @@ async fn models_handler(
     result
 }
 
+/// Forward an inference request after checking model permissions.
 async fn inference(
     state: AppState,
     permissions: Permissions,
@@ -296,6 +307,7 @@ async fn inference(
     }
 }
 
+/// Handle chat completion requests.
 async fn chat_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
@@ -316,6 +328,7 @@ async fn chat_handler(
     .await
 }
 
+/// Handle responses API requests.
 async fn responses_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
@@ -336,6 +349,56 @@ async fn responses_handler(
     .await
 }
 
+/// `OpenCode` Go provider backend.
+pub(crate) struct Backend;
+
+impl super::openai::ModelEndpoint for Backend {
+    async fn request(provider: &Provider, key: &str) -> Result<reqwest::Response, &'static str> {
+        send_upstream(
+            base(provider, true),
+            key,
+            "models",
+            None,
+            Method::GET,
+            &HeaderMap::new(),
+            None,
+        )
+        .await
+    }
+}
+
+impl super::common::Provider for Backend {
+    const DESCRIPTOR: super::common::ProviderDescriptor = super::common::ProviderDescriptor {
+        value: "go",
+        label: "OpenCode Go",
+        oauth: false,
+        api_key: true,
+        fixed_id: Some("go"),
+        fixed_name: Some("OpenCode Go"),
+        keyless: false,
+        default_base_url: Some(DEFAULT_BASE),
+        legacy: super::common::LegacyPolicy {
+            key: None,
+            same_base: false,
+        },
+    };
+    fn router(settings: &SettingsStore) -> Router<AppState> {
+        router(settings)
+    }
+    async fn discover(state: &AppState, provider: &Provider) -> Result<Vec<Value>, String> {
+        openai::discover::<Self>(&state.settings, provider).await
+    }
+}
+
+impl super::common::QuotaProvider for Backend {
+    async fn quota(
+        store: &SettingsStore,
+        _provider: &str,
+        credential: &str,
+    ) -> Result<QuotaSnapshot, String> {
+        go_usage(store, credential).await
+    }
+}
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {

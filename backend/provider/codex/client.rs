@@ -17,43 +17,10 @@ use crate::provider::codex::auth::{CODEX_BASE_URL, CODEX_CLIENT_VERSION, CodexCr
 use crate::provider::codex::payload::{
     build_codex_payload_from_chat, build_codex_payload_from_responses,
 };
+use crate::provider::common::errors::UpstreamError;
 use crate::responses::{
     ResponseContentPart, ResponseCreateRequest, ResponseObject, ResponseOutputItem, ResponseUsage,
 };
-
-#[derive(Debug)]
-pub(crate) struct UpstreamError {
-    pub(crate) status: Option<reqwest::StatusCode>,
-    pub(crate) message: String,
-}
-
-impl UpstreamError {
-    pub(crate) fn retryable(&self) -> bool {
-        matches!(
-            self.status,
-            Some(
-                reqwest::StatusCode::UNAUTHORIZED
-                    | reqwest::StatusCode::FORBIDDEN
-                    | reqwest::StatusCode::TOO_MANY_REQUESTS
-            )
-        )
-    }
-}
-
-impl From<String> for UpstreamError {
-    fn from(message: String) -> Self {
-        Self {
-            status: None,
-            message,
-        }
-    }
-}
-
-impl From<&str> for UpstreamError {
-    fn from(message: &str) -> Self {
-        message.to_string().into()
-    }
-}
 
 #[derive(Clone)]
 pub(crate) struct CodexClient {

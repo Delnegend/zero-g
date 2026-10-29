@@ -12,9 +12,10 @@ use serde_json::Value;
 use crate::openai::{ChatCompletionRequest, ModelEntry, ModelListResponse, StreamOptions};
 use crate::provider::antigravity::AntigravityModelInfo;
 use crate::provider::antigravity::chat::ChatStreamSerializer;
-use crate::provider::antigravity::client::UpstreamError;
+use crate::provider::antigravity::models::{ResolveError, normalize_models};
 use crate::provider::antigravity::responses::ResponsesStreamSerializer;
 use crate::provider::antigravity::{AntigravityClient, AuthManager};
+use crate::provider::common::errors::UpstreamError;
 use crate::provider::registry::Provider;
 use crate::responses::{
     ResponseContentPart, ResponseCreateRequest, ResponseObject, ResponseOutputItem, ResponseUsage,
@@ -136,6 +137,7 @@ async fn pooled_stream(
     with_pool(state, provider, |creds| async move {
         let payload = AntigravityClient::build_request_payload(req, &creds.project_id, &req.model);
         state
+            .providers
             .client
             .stream_request(&creds, &payload, req.model.contains("claude"))
             .await
@@ -148,7 +150,7 @@ async fn pool_models(
     provider: &Provider,
 ) -> Result<Vec<(String, AntigravityModelInfo)>, PoolError> {
     with_pool(state, provider, |creds| async move {
-        state.client.fetch_models(&creds).await
+        state.providers.client.fetch_models(&creds).await
     })
     .await
 }
@@ -194,10 +196,9 @@ async fn models_handler(
         Err(error) => return pool_error_response(error),
     };
 
-    let data = live_models
-        .into_iter()
-        .filter(|(id, _)| permissions.allows_model(id))
-        .map(|(id, info)| to_model_entry(id, info))
+    let data = normalize_models(live_models)
+        .iter()
+        .filter_map(|family| family.entry(&permissions).map(|(entry, _)| entry))
         .collect();
     Json(ModelListResponse {
         object: "list".to_string(),
@@ -211,19 +212,13 @@ async fn models_handler(
 /// their own defaults, so both are carried through.
 pub(crate) fn to_model_entry(id: String, info: AntigravityModelInfo) -> ModelEntry {
     let reasoning = info.supports_thinking.unwrap_or(false);
-    let effort_tier = if id.ends_with("-low") {
-        Some("low".to_string())
-    } else if id.ends_with("-medium") {
-        Some("medium".to_string())
-    } else if id.ends_with("-high") {
-        Some("high".to_string())
-    } else {
-        None
-    };
-
+    let effort_tier = [("-low", "low"), ("-medium", "medium"), ("-high", "high")]
+        .into_iter()
+        .find(|(suffix, _)| id.ends_with(suffix))
+        .map(|(_, effort)| effort.to_string());
     let supported_efforts = effort_tier.as_ref().map_or_else(
         || reasoning.then(|| vec!["low".to_string(), "medium".to_string(), "high".to_string()]),
-        |e| Some(vec![e.clone()]),
+        |effort| Some(vec![effort.clone()]),
     );
 
     ModelEntry {
@@ -241,19 +236,73 @@ pub(crate) fn to_model_entry(id: String, info: AntigravityModelInfo) -> ModelEnt
     }
 }
 
-fn map_agy_model_effort(model: &str, effort: Option<&str>) -> String {
-    let Some(effort) = effort else {
-        return model.to_string();
-    };
-    if model.ends_with("-low") || model.ends_with("-medium") || model.ends_with("-high") {
-        return model.to_string();
+fn resolve_model(
+    models: Vec<(String, AntigravityModelInfo)>,
+    model: &str,
+    effort: Option<&str>,
+    permissions: &Permissions,
+) -> Result<String, ResolveError> {
+    for family in normalize_models(models) {
+        if family.id == model {
+            return family.resolve(effort, permissions);
+        }
+        if family.grouped && family.variants.iter().any(|(id, _)| id == model) {
+            return if permissions.allows_model(model) || permissions.allows_model(&family.id) {
+                Ok(model.to_owned())
+            } else {
+                Err(ResolveError::Forbidden)
+            };
+        }
     }
-    match effort.to_lowercase().as_str() {
-        "low" | "minimal" => format!("{model}-low"),
-        "medium" => format!("{model}-medium"),
-        "high" | "xhigh" | "max" | "ultra" => format!("{model}-high"),
-        _ => model.to_string(),
+    // Preserve direct access to upstream models not present in discovery.
+    if permissions.allows_model(model) {
+        Ok(model.to_owned())
+    } else {
+        Err(ResolveError::Forbidden)
     }
+}
+
+enum RequestModelError {
+    Pool(PoolError),
+    Resolve(ResolveError),
+}
+
+impl RequestModelError {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Pool(error) => pool_error_response(error),
+            Self::Resolve(ResolveError::Forbidden) => model_forbidden(),
+            Self::Resolve(ResolveError::Unsupported) => (
+                StatusCode::BAD_REQUEST,
+                Json(crate::server::error_body(
+                    "Reasoning effort is not supported by this model",
+                    "invalid_request_error",
+                    Some("unsupported_reasoning_effort"),
+                )),
+            )
+                .into_response(),
+        }
+    }
+}
+
+async fn resolve_request_model(
+    state: &AppState,
+    provider: &Provider,
+    permissions: &Permissions,
+    model: &str,
+    effort: Option<&str>,
+) -> Result<String, RequestModelError> {
+    if ["-low", "-medium", "-high"]
+        .iter()
+        .any(|suffix| model.ends_with(suffix))
+        && permissions.allows_model(model)
+    {
+        return Ok(model.to_owned());
+    }
+    let models = pool_models(state, provider)
+        .await
+        .map_err(RequestModelError::Pool)?;
+    resolve_model(models, model, effort, permissions).map_err(RequestModelError::Resolve)
 }
 
 async fn chat_handler(
@@ -268,10 +317,11 @@ async fn chat_handler(
             .and_then(|r| r.get("effort"))
             .and_then(Value::as_str)
     });
-    req.model = map_agy_model_effort(&req.model, effort);
-    if !permissions.allows_model(&req.model) {
-        return model_forbidden();
-    }
+    req.model =
+        match resolve_request_model(&state, &provider, &permissions, &req.model, effort).await {
+            Ok(model) => model,
+            Err(error) => return error.into_response(),
+        };
 
     let is_streaming = req.stream.unwrap_or(false);
 
@@ -280,7 +330,7 @@ async fn chat_handler(
     } else {
         match with_pool(&state, &provider, |creds| {
             let req = &req;
-            let client = &state.client;
+            let client = &state.providers.client;
             async move { client.complete_non_streaming(&creds, req).await }
         })
         .await
@@ -339,10 +389,11 @@ async fn responses_handler(
             .and_then(|r| r.get("effort"))
             .and_then(Value::as_str)
     });
-    req.model = map_agy_model_effort(&req.model, effort);
-    if !permissions.allows_model(&req.model) {
-        return model_forbidden();
-    }
+    req.model =
+        match resolve_request_model(&state, &provider, &permissions, &req.model, effort).await {
+            Ok(model) => model,
+            Err(error) => return error.into_response(),
+        };
 
     let is_streaming = req.stream.unwrap_or(false);
 
@@ -354,7 +405,7 @@ async fn responses_handler(
     } else {
         match with_pool(&state, &provider, |creds| {
             let chat_req = &chat_req;
-            let client = &state.client;
+            let client = &state.providers.client;
             async move { client.complete_non_streaming(&creds, chat_req).await }
         })
         .await
@@ -518,54 +569,171 @@ mod tests {
         assert!(matches!(internal, Err(PoolError::Internal(_))));
     }
 
-    #[test]
-    fn policy_checks_mapped_effort() {
-        let permissions = Permissions {
+    fn models(ids: &[&str]) -> Vec<(String, AntigravityModelInfo)> {
+        ids.iter()
+            .map(|id| {
+                (
+                    (*id).to_owned(),
+                    AntigravityModelInfo {
+                        display_name: Some("Model (High)".into()),
+                        supports_thinking: Some(true),
+                        max_tokens: Some(1_000_000),
+                        max_output_tokens: Some(128_000),
+                        disabled: None,
+                        extra: std::collections::HashMap::from([(
+                            "metadata".into(),
+                            serde_json::json!(42),
+                        )]),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn permissions(ids: &[&str]) -> Permissions {
+        Permissions {
             providers: vec![],
-            models: vec!["model-low".into()],
-        };
-        assert!(permissions.allows_model(&map_agy_model_effort("model", Some("low"))));
-        assert!(!permissions.allows_model(&map_agy_model_effort("model", Some("high"))));
-        assert!(!permissions.allows_model(&map_agy_model_effort("model-high", Some("low"))));
+            models: ids.iter().map(|id| (*id).to_owned()).collect(),
+        }
     }
 
     #[test]
-    fn test_to_model_entry_reports_upstream_context_window() {
-        let info = AntigravityModelInfo {
-            display_name: Some("Claude Sonnet 5.5 (High)".to_string()),
-            supports_thinking: Some(true),
-            max_tokens: Some(1_000_000),
-            max_output_tokens: Some(128_000),
-            disabled: None,
-            extra: std::collections::HashMap::new(),
-        };
-        let entry = to_model_entry("claude-sonnet-5-5-high".to_string(), info);
+    fn grouped_discovery_and_permissions_match_routing() {
+        let ids = ["model-high", "model-low", "model-medium", "unrelated-low"];
+        let groups = normalize_models(models(&ids));
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].id, "model");
+        assert_eq!(groups[1].id, "unrelated-low");
+        let (entry, raw) = groups[0]
+            .entry(&permissions(&["model-low"]))
+            .expect("visible");
+        assert_eq!(entry.name.as_deref(), Some("Model"));
+        assert_eq!(entry.display_name.as_deref(), Some("Model"));
+        assert_eq!(entry.id, "model");
         assert_eq!(entry.context_window, Some(1_000_000));
         assert_eq!(entry.max_output_tokens, Some(128_000));
-        assert_eq!(entry.default_reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(raw.extra["metadata"], 42);
+        assert_eq!(entry.supported_reasoning_efforts, Some(vec!["low".into()]));
+        assert_eq!(entry.default_reasoning_effort.as_deref(), Some("low"));
+        let all = groups[0]
+            .entry(&permissions(&["model"]))
+            .expect("visible")
+            .0;
         assert_eq!(
-            entry.supported_reasoning_efforts,
-            Some(vec!["high".to_string()])
+            all.supported_reasoning_efforts,
+            Some(vec!["low".into(), "medium".into(), "high".into()])
+        );
+        assert_eq!(all.default_reasoning_effort.as_deref(), Some("medium"));
+        let reversed = normalize_models(models(&[
+            "unrelated-low",
+            "model-medium",
+            "model-low",
+            "model-high",
+        ]));
+        let reordered = reversed[0]
+            .entry(&permissions(&["model"]))
+            .expect("visible")
+            .0;
+        assert_eq!(
+            serde_json::to_value(all).expect("serialize"),
+            serde_json::to_value(reordered).expect("serialize")
+        );
+        assert!(groups[0].entry(&permissions(&["unrelated-low"])).is_none());
+        assert_eq!(
+            resolve_model(models(&ids), "model", None, &permissions(&["model-low"])),
+            Ok("model-low".into())
+        );
+        assert_eq!(
+            resolve_model(
+                models(&ids),
+                "model",
+                Some("high"),
+                &permissions(&["model-low"])
+            ),
+            Err(ResolveError::Forbidden)
+        );
+        assert_eq!(
+            resolve_model(
+                models(&ids),
+                "model-high",
+                Some("low"),
+                &permissions(&["model-low"])
+            ),
+            Err(ResolveError::Forbidden)
+        );
+        assert_eq!(
+            resolve_model(
+                models(&ids),
+                "model",
+                Some("high"),
+                &permissions(&["model"])
+            ),
+            Ok("model-high".into())
+        );
+        assert_eq!(
+            resolve_model(
+                models(&ids),
+                "model",
+                Some("xhigh"),
+                &permissions(&["model"])
+            ),
+            Ok("model-high".into())
+        );
+        assert_eq!(
+            resolve_model(models(&ids), "model", None, &permissions(&["model"])),
+            Ok("model-medium".into())
+        );
+        assert_eq!(
+            resolve_model(
+                models(&ids),
+                "model",
+                Some("invalid"),
+                &permissions(&["model"])
+            ),
+            Err(ResolveError::Unsupported)
         );
     }
 
     #[test]
-    fn test_map_agy_model_effort() {
+    fn defaults_are_discovered_and_ambiguous_suffixes_stay_separate() {
+        let ids = ["model-low", "model-high", "model", "other", "other-high"];
+        let groups = normalize_models(models(&ids));
         assert_eq!(
-            map_agy_model_effort("gemini-3.8-flash", Some("high")),
-            "gemini-3.8-flash-high"
+            groups
+                .iter()
+                .map(|group| group.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["model", "other", "other-high"]
         );
         assert_eq!(
-            map_agy_model_effort("gemini-3.8-flash", Some("low")),
-            "gemini-3.8-flash-low"
+            resolve_model(models(&ids), "model", None, &permissions(&["model"])),
+            Ok("model".into())
         );
         assert_eq!(
-            map_agy_model_effort("claude-sonnet-5-5-high", Some("low")),
-            "claude-sonnet-5-5-high"
+            resolve_model(
+                models(&ids),
+                "model",
+                Some("medium"),
+                &permissions(&["model"])
+            ),
+            Err(ResolveError::Unsupported)
         );
         assert_eq!(
-            map_agy_model_effort("gemini-2.5-flash", None),
-            "gemini-2.5-flash"
+            resolve_model(models(&ids), "model", None, &permissions(&["model-high"])),
+            Ok("model-high".into())
         );
+        assert_eq!(
+            resolve_model(
+                models(&ids),
+                "other-high",
+                Some("low"),
+                &permissions(&["other-high"])
+            ),
+            Ok("other-high".into())
+        );
+        let entry = groups[2].entry(&permissions(&[])).expect("visible").0;
+        assert_eq!(entry.supported_reasoning_efforts, Some(vec!["high".into()]));
+        assert_eq!(entry.default_reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(entry.display_name.as_deref(), Some("Model (High)"));
     }
 }

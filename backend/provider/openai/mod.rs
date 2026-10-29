@@ -1,11 +1,96 @@
+/// HTTP routes for OpenAI-compatible providers.
 pub(crate) mod routes;
 
 use std::sync::LazyLock;
 
+use crate::provider::registry::Provider;
+use crate::server::settings::SettingsStore;
 use axum::body::{Body, Bytes};
 use axum::http::{HeaderMap, Method, header};
 use axum::response::Response;
+use futures_util::StreamExt;
+use serde_json::Value;
 
+/// OpenAI-compatible provider backend.
+pub(crate) struct Backend;
+
+/// Provider-specific model discovery endpoint.
+pub(crate) trait ModelEndpoint {
+    /// Request the upstream model list using the supplied credential.
+    async fn request(provider: &Provider, key: &str) -> Result<reqwest::Response, &'static str>;
+}
+
+impl ModelEndpoint for Backend {
+    async fn request(provider: &Provider, key: &str) -> Result<reqwest::Response, &'static str> {
+        send(
+            &provider.base_url,
+            key,
+            "models",
+            None,
+            Method::GET,
+            &HeaderMap::new(),
+            None,
+        )
+        .await
+    }
+}
+
+/// Maximum accepted model discovery response size.
+const MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
+
+/// Discover models using the provider's available credentials.
+pub(crate) async fn discover<E: ModelEndpoint>(
+    store: &SettingsStore,
+    provider: &Provider,
+) -> Result<Vec<Value>, String> {
+    let credentials = crate::provider::credentials::list(store, &provider.id).await?;
+    let mut response = None;
+    for credential in credentials {
+        let key = store
+            .secret_get(&format!("credential.{}.api_key", credential.id))
+            .await
+            .map_err(|_| "Failed to load provider credentials")?
+            .ok_or("Provider credential is not connected")?;
+        let current = E::request(provider, &key).await.map_err(str::to_owned)?;
+        let status = current.status();
+        response = Some(current);
+        if !matches!(status.as_u16(), 401 | 403 | 429) {
+            break;
+        }
+    }
+    let response = response.ok_or("Provider has no connected credentials")?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Provider model discovery returned HTTP {}",
+            response.status().as_u16()
+        ));
+    }
+    let mut bytes = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|_| "Failed to read provider model list")?;
+        if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
+            return Err("Provider model list is too large".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let value: Value = serde_json::from_slice(&bytes).map_err(|_| "Invalid provider model list")?;
+    let models = value
+        .get("data")
+        .and_then(Value::as_array)
+        .ok_or("Invalid provider model list")?;
+    Ok(models
+        .iter()
+        .filter(|model| {
+            model
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| !id.is_empty())
+        })
+        .cloned()
+        .collect())
+}
+/// Shared client used for OpenAI-compatible upstream requests.
 static CLIENT: LazyLock<Result<reqwest::Client, reqwest::Error>> = LazyLock::new(|| {
     reqwest::Client::builder()
         // Never send the upstream credential to a redirect target.
@@ -13,6 +98,7 @@ static CLIENT: LazyLock<Result<reqwest::Client, reqwest::Error>> = LazyLock::new
         .build()
 });
 
+/// Send an authenticated OpenAI-compatible upstream request.
 pub(crate) async fn send(
     base: &str,
     key: &str,
@@ -49,6 +135,7 @@ pub(crate) async fn send(
         .map_err(|_| "Failed to contact OpenAI-compatible provider")
 }
 
+/// Forward an upstream response to the caller.
 pub(crate) fn forward(response: reqwest::Response) -> Response {
     let status = response.status();
     let content_type = response.headers().get(header::CONTENT_TYPE).cloned();
@@ -60,6 +147,31 @@ pub(crate) fn forward(response: reqwest::Response) -> Response {
     result
 }
 
+impl super::common::Provider for Backend {
+    const DESCRIPTOR: super::common::ProviderDescriptor = super::common::ProviderDescriptor {
+        value: "openai",
+        label: "OpenAI-compatible",
+        oauth: false,
+        api_key: true,
+        fixed_id: None,
+        fixed_name: None,
+        keyless: true,
+        default_base_url: None,
+        legacy: super::common::LegacyPolicy {
+            key: Some(""),
+            same_base: false,
+        },
+    };
+    fn router(settings: &SettingsStore) -> axum::Router<crate::server::AppState> {
+        routes::router(settings)
+    }
+    async fn discover(
+        state: &crate::server::AppState,
+        provider: &Provider,
+    ) -> Result<Vec<Value>, String> {
+        discover::<Self>(&state.settings, provider).await
+    }
+}
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {

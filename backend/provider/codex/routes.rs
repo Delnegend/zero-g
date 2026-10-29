@@ -10,8 +10,8 @@ use axum::routing::{get, post};
 use crate::openai::ChatCompletionRequest;
 use crate::provider::codex::CodexAuthManager;
 use crate::provider::codex::auth::CodexCredentials;
-use crate::provider::codex::client::UpstreamError;
 use crate::provider::codex::models::fetch_codex_models;
+use crate::provider::common::errors::{UpstreamError, retryable_status};
 use crate::provider::registry::Provider;
 use crate::responses::ResponseCreateRequest;
 use crate::server::AppState;
@@ -75,11 +75,7 @@ impl PoolError {
     }
 
     fn credential(error: crate::provider::login::CredentialError) -> Self {
-        let retryable = UpstreamError {
-            status: error.upstream_status,
-            message: String::new(),
-        }
-        .retryable();
+        let retryable = retryable_status(error.upstream_status);
         Self {
             message: error.message,
             local: true,
@@ -180,7 +176,7 @@ async fn chat_handler(
     if !permissions.allows_model(&req.model) {
         return model_forbidden();
     }
-    let client = &state.codex_client;
+    let client = &state.providers.codex_client;
     let req = &req;
     match with_pool(&state, &provider, |creds| async move {
         if req.stream.unwrap_or(false) {
@@ -209,7 +205,7 @@ async fn responses_handler(
     if !permissions.allows_model(&req.model) {
         return model_forbidden();
     }
-    let client = &state.codex_client;
+    let client = &state.providers.codex_client;
     let req = &req;
     match with_pool(&state, &provider, |creds| async move {
         if req.stream.unwrap_or(false) {
