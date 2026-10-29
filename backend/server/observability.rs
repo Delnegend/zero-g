@@ -484,8 +484,149 @@ fn usage(body: &str) -> (Option<i64>, Option<i64>) {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use axum::{Router, routing::get};
+    use axum::{
+        Router, middleware,
+        routing::{get, post},
+    };
+    use futures_util::StreamExt;
     use tower::ServiceExt;
+
+    /// Capture completed and abandoned responses through the HTTP routes.
+    // Keep the completed and interrupted requests with their persisted results.
+    #[allow(clippy::too_many_lines)]
+    #[tokio::test]
+    async fn capture_persists_complete_and_interrupted_responses() {
+        let path =
+            std::env::temp_dir().join(format!("zero-g-log-test-{}.db", uuid::Uuid::new_v4()));
+        let database = Database::open(path.to_str().unwrap()).await.unwrap();
+        let store = LogStore::new(database);
+        let complete_body =
+            r#"{"answer":"hello","usage":{"prompt_tokens":7,"completion_tokens":4}}"#;
+        let partial_body =
+            "data: {\"response\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":5}}}\n\n";
+        let (release, wait) = tokio::sync::oneshot::channel::<()>();
+        let wait = std::sync::Arc::new(tokio::sync::Mutex::new(Some(wait)));
+        let app = Router::new()
+            .route("/complete", post(move || async move { complete_body }))
+            .route(
+                "/stream",
+                post(move || {
+                    let wait = wait.clone();
+                    async move {
+                        let receiver = wait.lock().await.take().unwrap();
+                        let first = futures_util::stream::once(async move {
+                            Ok::<_, std::convert::Infallible>(Bytes::from_static(
+                                partial_body.as_bytes(),
+                            ))
+                        });
+                        let remainder = futures_util::stream::once(async move {
+                            let _ = receiver.await;
+                            Ok::<_, std::convert::Infallible>(Bytes::from_static(
+                                b"unexpected remainder",
+                            ))
+                        });
+                        Body::from_stream(first.chain(remainder))
+                    }
+                }),
+            )
+            .route_layer(middleware::from_fn_with_state(store.clone(), capture))
+            .route("/api/observability", get(dashboard))
+            .with_state(store.clone());
+
+        let request = |uri, body: &'static str| {
+            Request::builder()
+                .method(Method::POST)
+                .uri(uri)
+                .body(Body::from(body))
+                .unwrap()
+        };
+        let complete_request = r#"{"model":"codex/model-a","input":"ordinary"}"#;
+        let response = app
+            .clone()
+            .oneshot(request("/complete", complete_request))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+            complete_body
+        );
+
+        let stream_request = r#"{"model":"antigravity/model-b","input":"stream"}"#;
+        let response = app
+            .clone()
+            .oneshot(request("/stream", stream_request))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut body = response.into_body().into_data_stream();
+        assert_eq!(body.next().await.unwrap().unwrap(), partial_body);
+        drop(body);
+        drop(release);
+
+        let logs = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .uri("/api/observability")
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+                let dashboard: Value = serde_json::from_slice(&bytes).unwrap();
+                if dashboard["summary"]["requests"] == 2 {
+                    break dashboard["logs"].as_array().unwrap().clone();
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("both capture logs must be persisted");
+        for (request, provider, model, route, status, response, input, output) in [
+            (
+                complete_request,
+                "codex",
+                "model-a",
+                "/complete",
+                200,
+                complete_body,
+                7,
+                4,
+            ),
+            (
+                stream_request,
+                "antigravity",
+                "model-b",
+                "/stream",
+                499,
+                partial_body,
+                3,
+                5,
+            ),
+        ] {
+            let matching: Vec<_> = logs
+                .iter()
+                .filter(|log| log["request_body"] == request)
+                .collect();
+            assert_eq!(matching.len(), 1);
+            let log = matching[0];
+            assert_eq!(log["provider"], provider);
+            assert_eq!(log["model"], model);
+            assert_eq!(log["path"], route);
+            assert_eq!(log["status"], status);
+            assert_eq!(log["response_body"], response);
+            assert_eq!(log["input_tokens"], input);
+            assert_eq!(log["output_tokens"], output);
+        }
+        drop(app);
+        drop(store);
+        std::fs::remove_file(path).unwrap();
+    }
 
     /// Persist request bodies and prune expired logs.
     #[tokio::test]
@@ -677,7 +818,7 @@ mod tests {
             store.insert(entry(-1, 200, i.to_string())).await.unwrap();
         }
         store
-            .insert(entry(2_000_000_000, 500, "future".into()))
+            .insert(entry(now().saturating_add(86400), 500, "future".into()))
             .await
             .unwrap();
 
