@@ -27,10 +27,10 @@ model_list:
       api_key: os.environ/ZERO_G_VIRTUAL_KEY
 ```
 
-LiteLLM calls `zero-g`'s `/v1/chat/completions` for chat traffic and
-`/v1/responses` for Responses requests. No Responses-to-chat bridge is
-required for providers that support both APIs. Supply the created key securely
-via the gateway environment.
+LiteLLM can call `zero-g`'s `/v1/chat/completions` for chat traffic and
+`/v1/responses` for Responses requests. Provider support differs: Zen supports
+Chat Completions only; the other provider types support both APIs. Supply the
+created key securely via the gateway environment.
 
 ## Bifrost
 
@@ -61,11 +61,13 @@ the base URL is the zero-g origin. Use the provider-prefixed model IDs from
 }
 ```
 
-Successful Chat Completions streams terminate with `data: [DONE]`, so leave
-`does_not_send_done_marker` unset. An interrupted upstream stream instead reports
-an error without a success marker. Chat streaming honors
-`stream_options.include_usage`, so Bifrost's usage tracking works without
-additional configuration.
+Codex and Antigravity translated Chat Completions streams emit `data: [DONE]`
+on success and report an error without a success marker if they end without a
+terminal response. Antigravity emits a final usage chunk when requested with
+`stream_options.include_usage` and usage is available; Codex does not emit
+streaming usage. Go and custom OpenAI-compatible providers forward upstream
+streams; Zen re-emits upstream events. Their termination and usage reporting
+depend on the upstream.
 
 ## Notes
 

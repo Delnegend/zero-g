@@ -15,9 +15,9 @@ The server requires `ZERO_G_ENCRYPTION_KEY`: standard Base64 encoding of exactly
 | `ZERO_G_OIDC_ISSUER`, `ZERO_G_OIDC_CLIENT_ID`, `ZERO_G_OIDC_CLIENT_SECRET` | None | Required in OIDC mode |
 | `ZERO_G_OIDC_ALLOWED_EMAILS` | None | OIDC comma-separated allowlist of verified email addresses |
 | `ZERO_G_OIDC_ALLOWED_GROUPS` | None | OIDC comma-separated allowlist of exact group names, for example `admins` |
-| `ZERO_G_OIDC_REDIRECT_URL` | None | OIDC callback URL ending in `/auth/callback`: HTTPS except loopback HTTP for local development |
+| `ZERO_G_OIDC_REDIRECT_URL` | None | Required in OIDC mode: the dashboard origin followed by `/auth/callback` |
 
-Register the exact redirect URL with the identity provider. OIDC sessions expire after eight hours and are lost on restart. Never disable dashboard authentication on an untrusted network; use HTTPS outside localhost.
+Register the exact redirect URL with the identity provider. OIDC sessions expire after eight hours and are lost on restart. Dashboard authentication is required; use HTTPS outside localhost.
 At least one allowed email or group is required. If both are configured, a verified email match **or** a group match grants access. Group membership is checked in the signed ID token; the provider must support the `groups` scope. Group names are case-sensitive and may differ from display names. Sessions last eight hours, so membership changes do not invalidate existing sessions until they expire or the server restarts.
 
 ## Dashboard settings and virtual keys
@@ -32,7 +32,7 @@ Under **Models → Providers**, create one Antigravity, Codex, Zen or OpenCode G
 
 Each enabled, connected credential has a positive weight: a weight of 3 receives roughly three times as many initial requests as a weight of 1. On upstream authentication errors (401 or 403) or rate limits (429), zero-g tries another credential before returning a response. It does not retry after streaming has begun.
 
-Credential cards show available quota windows and reset times for Codex, Antigravity and OpenCode Go. Figures are remaining capacity; unavailable data is shown as unknown or an error rather than an estimated quota. The dashboard refreshes usage when opened and caches it for five minutes.
+Credential cards show available quota windows and reset times for Codex, Antigravity and OpenCode Go. Figures are remaining capacity; unavailable data is shown as unknown or an error rather than an estimated quota. The Providers page fetches usage for connected credentials and treats results as fresh for five minutes; reopening it within that time can reuse the cached result.
 
 Zen balance requires a separate Console login: select **Configure console** on its credential and enter the workspace ID and the value of the `__Host-console_session` cookie. In your browser's developer tools on `opencode.ai`, find the cookie under storage and the workspace ID in the `x-org-id` header of the Console billing request. Treat the session like a password: it grants access to your Console account, is stored encrypted, expires, and can be removed or replaced in the same dialog. An inference API key alone cannot retrieve the balance.
 
@@ -40,7 +40,7 @@ Zen balance requires a separate Console login: select **Configure console** on i
 
 Create a key under **Virtual keys**, copy it from the dialog before dismissing it (it cannot be retrieved later), and supply `Authorization: Bearer <key>` to inference and model endpoints. Restrict it to individual provider IDs and models as needed; selecting none permits all. Revoke compromised keys in the same screen. Dashboard authentication and virtual keys are separate controls.
 
-Use model IDs in the form `<provider-id>/<upstream-model-id>`, as returned by `/v1/models`, for both Chat Completions and Responses. Upstream model IDs may themselves contain slashes. The old provider-specific URLs no longer work; update clients to the shared `/v1` base URL and namespaced model IDs. Virtual-key model restrictions use the upstream model ID without the provider prefix. Response bodies and streams retain the upstream's model ID.
+Use model IDs in the form `<provider-id>/<upstream-model-id>`, as returned by `/v1/models`, for both Chat Completions and Responses. Upstream model IDs may themselves contain slashes. The old provider-specific URLs no longer work; update clients to the shared `/v1` base URL and namespaced model IDs. Virtual-key model restrictions use the upstream model ID without the provider prefix. Response bodies and streams do not add the provider prefix to their model fields.
 
 Model discovery queries permitted providers concurrently. If some providers fail, the response includes their IDs in an `errors` field alongside successful results; if all fail, it returns an error. Providers that do not support a requested API still return an error for that API.
 
@@ -50,7 +50,9 @@ Antigravity responses may include `provider_parts` and tool-call `thought_signat
 
 Deleting a provider removes its credentials. Custom provider IDs cannot be reused. A deleted built-in provider can be recreated only after revoking any restricted virtual key that still references its ID; this prevents an old key from silently gaining access to the replacement.
 
-**Models → Catalog** shows discovered models as cards grouped by provider, with available context, output limits and pricing. Antigravity models with matching low, medium or high reasoning variants share one model ID and display their available efforts as badges; the unified `/v1/models` endpoint exposes the same normalized model with its provider prefix. Search by model or provider, filter by provider, and expand a card's details for the original metadata and datasheets. A dash means the information is unavailable. Refresh the catalog to fetch models immediately; failed providers retain their last successful list and show an error. Zen uses the model list advertised by zero-g.
+**Models → Catalog** shows discovered models as cards grouped by provider, with available context, output limits and pricing. Antigravity models with matching low, medium or high reasoning variants share one model ID and display their available efforts as badges; the unified `/v1/models` endpoint exposes the same normalized model with its provider prefix. Search by model or provider, filter by provider, and expand a card's details for syntax-highlighted metadata and datasheets. A dash means the information is unavailable. Refresh the catalog to fetch models immediately; failed providers retain their last successful list and show an error. Zen uses the model list advertised by zero-g.
+
+For Antigravity, matching Gemini and Claude API prices from the configured datasheet are shown as a reference, not as Antigravity charges. Prices can differ from the actual plan or credit overage costs; models without a matching price show a dash.
 
 For a normalized Antigravity model, pass its base ID and set `reasoning_effort` to an advertised effort. If omitted, zero-g chooses an accessible base model, then medium, low or high. A virtual key restricted to the base ID permits its variants; a key restricted to a variant permits only that variant. Resolving an unsuffixed Antigravity request checks the discovered model list, cached for up to five minutes per credential and project.
 

@@ -26,7 +26,7 @@ export ZERO_G_DASHBOARD_PASSWORD='replace-with-a-strong-password'
 zero-g
 ```
 
-Open `http://127.0.0.1:8080/` and sign in. Under **Providers**, create the Antigravity provider and sign in. Under **Virtual keys**, create a key and copy it immediately; it is shown only once. Set `ZERO_G_VIRTUAL_KEY` to the copied value and use it as the bearer token for every inference request, including model discovery:
+Open `http://127.0.0.1:8080/` and sign in. Configure Google OAuth under **Settings**, then create the Antigravity provider, add a credential, and sign in under **Providers**. Under **Virtual keys**, create a key and copy it immediately; it is shown only once. Set `ZERO_G_VIRTUAL_KEY` to the copied value and use it as the bearer token for every inference request, including model discovery:
 
 ```bash
 curl -H "Authorization: Bearer $ZERO_G_VIRTUAL_KEY" http://127.0.0.1:8080/v1/models
@@ -37,7 +37,7 @@ Use the returned model ID, such as `agy/gemini-3-pro`, in requests to the shared
 The API reference is available at `http://127.0.0.1:8080/redoc` after dashboard sign-in. Its OpenAPI document is at `/api/openapi.json`.
 
 Configure retention and Google OAuth settings under **Settings**, and add accounts or custom OpenAI-compatible upstreams under **Providers**. Set the listening address with `ZERO_G_BIND` in `.env`. Full request and response bodies are stored locally for 30 days by default. See [configuration](docs/configuration.md) and [deployment](docs/deployment.md) for secure setup and backups.
-Under **Observability**, the **Dashboard** shows totals and requests by UTC day; **LLM Logs** lets you search and sort requests in pages of 20. Select **View** to inspect a request in the right-side drawer, with JSON syntax highlighting for recorded bodies. On phones, requests appear as cards instead of a wide table. The chart and log list cover the latest 200 requests, while the summary covers all retained requests. Dashboard pages have shareable URLs and support browser navigation.
+Under **Observability**, the **Dashboard** shows totals and request trends for the selected time range; **LLM Logs** lets you search and sort the latest 200 requests in pages of 20. Select **View** to inspect a request in the right-side drawer, with JSON syntax highlighting for recorded bodies. On phones, requests appear as cards instead of a wide table. Dashboard pages have shareable URLs and support browser navigation.
 The dashboard theme toggle follows your system preference initially and remembers your choice in the browser.
 
 
@@ -47,7 +47,7 @@ Source builds from checkout: run `(cd frontend && bun install --frozen-lockfile)
 
 - **Unified API** — All providers share `/v1`; model IDs include the provider ID to distinguish identical names.
 - **Multi-Provider Backends** — Connect Google Antigravity, OpenAI Codex, OpenCode Zen, OpenCode Go, and multiple OpenAI-compatible upstreams, with weighted credentials per provider.
-- **Auto-Refresh** — Refreshes expired OAuth tokens in the background automatically.
+- **OAuth Refresh** — Refreshes supported access tokens on demand when they approach expiration.
 - **Claude & Gemini Support** — Formats Anthropic thinking beta headers, system instructions, and tool calling signatures automatically.
 - **Multi-Turn Tool Calling** — End-to-end function declaration, execution, and tool response turn merging.
 
