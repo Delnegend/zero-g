@@ -1,7 +1,7 @@
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fragment, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, Info } from "lucide-react";
+import { Fragment, useMemo, useRef, useState } from "react";
+import { Info } from "lucide-react";
 import { antigravityReferencePrice } from "./modelPricing";
 import { message } from "./server/api/client";
 import {
@@ -22,14 +22,22 @@ import { RefreshButton } from "./components/RefreshButton";
 import { Alert, AlertDescription } from "./components/ui/alert";
 import { Button } from "./components/ui/button";
 import { Card } from "./components/ui/card";
+import {
+  Carousel,
+  CarouselContent,
+  CarouselItem,
+  CarouselNext,
+  CarouselPrevious,
+  useCarousel,
+} from "./components/ui/carousel";
 import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
 import { Separator } from "./components/ui/separator";
 import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-} from "./components/ui/pagination";
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "./components/ui/tooltip";
 import {
   Popover,
   PopoverContent,
@@ -46,7 +54,6 @@ import {
 const pageClass =
   "mx-auto w-full min-w-0 max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-12";
 const inputClass = "mt-1 w-full";
-const modelsPerPage = 12;
 
 function lookup(
   sheet: Record<string, unknown> | undefined,
@@ -104,11 +111,27 @@ function ModelCard({
   provider: Provider;
   data?: Datasheets;
 }) {
+  const descriptionRef = useRef<HTMLButtonElement>(null);
+  const zenMetadata =
+    provider.kind === "zen" &&
+    model.zen_metadata &&
+    typeof model.zen_metadata === "object" &&
+    !Array.isArray(model.zen_metadata)
+      ? (model.zen_metadata as Record<string, unknown>)
+      : undefined;
+  const zenCost =
+    zenMetadata?.cost &&
+    typeof zenMetadata.cost === "object" &&
+    !Array.isArray(zenMetadata.cost)
+      ? (zenMetadata.cost as Record<string, unknown>)
+      : undefined;
   const price =
-    lookup(data?.pricing, provider, model.id) ??
-    (provider.kind === "agy"
-      ? antigravityReferencePrice(data?.pricing, model.id)
-      : undefined);
+    provider.kind === "zen"
+      ? zenCost
+      : (lookup(data?.pricing, provider, model.id) ??
+        (provider.kind === "agy"
+          ? antigravityReferencePrice(data?.pricing, model.id)
+          : undefined));
   const parameters = lookup(data?.parameters, provider, model.id);
   const pricing =
     price && typeof price === "object" && !Array.isArray(price)
@@ -120,7 +143,7 @@ function ModelCard({
       : "—";
   const cost = (value: unknown) =>
     typeof value === "number" && Number.isFinite(value)
-      ? `$${(value * 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })}`
+      ? `$${(value * (provider.kind === "zen" ? 1 : 1_000_000)).toLocaleString(undefined, { maximumFractionDigits: 6 })}`
       : "—";
   const title = modelName(model);
   const efforts = Array.isArray(model.supported_reasoning_efforts)
@@ -130,22 +153,91 @@ function ModelCard({
     : [];
   const description =
     typeof model.description === "string" ? model.description : null;
+  const modalities =
+    zenMetadata?.modalities &&
+    typeof zenMetadata.modalities === "object" &&
+    !Array.isArray(zenMetadata.modalities)
+      ? (zenMetadata.modalities as Record<string, unknown>)
+      : undefined;
+  const inputModalities = Array.isArray(modalities?.input)
+    ? modalities.input.filter(
+        (value): value is string => typeof value === "string",
+      )
+    : [];
+  const capabilities = [
+    ...(typeof zenMetadata?.reasoning === "boolean"
+      ? [["Reasoning support", zenMetadata.reasoning ? "Yes" : "No"]]
+      : []),
+    ...(typeof zenMetadata?.tool_call === "boolean"
+      ? [["Tool calling", zenMetadata.tool_call ? "Yes" : "No"]]
+      : []),
+    ...(inputModalities.length > 0
+      ? [["Input modalities", inputModalities.join(", ")]]
+      : []),
+  ];
   const rows = [
     ["Model ID", `${provider.id}/${model.id}`],
     ["Context window", number(model.context_window)],
     ["Max output", number(model.max_output_tokens)],
-    ["Input price / 1M tokens", cost(pricing.input_cost_per_token)],
-    ["Output price / 1M tokens", cost(pricing.output_cost_per_token)],
-    ["Cache write / 1M tokens", cost(pricing.cache_creation_input_token_cost)],
-    ["Cache read / 1M tokens", cost(pricing.cache_read_input_token_cost)],
+    [
+      "Input price / 1M tokens",
+      cost(
+        provider.kind === "zen" ? pricing.input : pricing.input_cost_per_token,
+      ),
+    ],
+    [
+      "Output price / 1M tokens",
+      cost(
+        provider.kind === "zen"
+          ? pricing.output
+          : pricing.output_cost_per_token,
+      ),
+    ],
+    [
+      "Cache write / 1M tokens",
+      cost(
+        provider.kind === "zen"
+          ? pricing.cache_write
+          : pricing.cache_creation_input_token_cost,
+      ),
+    ],
+    [
+      "Cache read / 1M tokens",
+      cost(
+        provider.kind === "zen"
+          ? pricing.cache_read
+          : pricing.cache_read_input_token_cost,
+      ),
+    ],
+    ...capabilities,
   ];
   return (
     <Card className="min-w-0 gap-0 p-5">
       <h3 className="break-words text-lg font-semibold">{title}</h3>
       {description && (
-        <p className="mt-1 break-words text-sm text-muted-foreground">
-          {description}
-        </p>
+        <Tooltip
+          onOpenChange={(open, details) => {
+            const element = descriptionRef.current;
+            if (
+              open &&
+              (!element || element.scrollHeight <= element.clientHeight)
+            ) {
+              details.cancel();
+            }
+          }}
+        >
+          <TooltipTrigger
+            ref={descriptionRef}
+            className="mt-1 line-clamp-3 break-words text-left text-sm text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-2"
+          >
+            {description}
+          </TooltipTrigger>
+          <TooltipContent>
+            <span className="block max-h-[50vh] overflow-y-auto whitespace-pre-wrap break-words">
+              {description}
+            </span>
+          </TooltipContent>
+        </Tooltip>
       )}
       <dl className="mt-4 divide-y text-sm">
         {efforts.length > 0 && (
@@ -191,10 +283,26 @@ function ModelCard({
       </dl>
       <div className="mt-2">
         <JsonDetails title="Model metadata" value={model} />
+        <JsonDetails title="Models.dev metadata" value={zenMetadata} />
         <JsonDetails title="Pricing and limits" value={price} />
         <JsonDetails title="Supported parameters" value={parameters} />
       </div>
     </Card>
+  );
+}
+function CarouselEdgeFades() {
+  const { canScrollPrev, canScrollNext } = useCarousel();
+  return (
+    <>
+      <div
+        aria-hidden="true"
+        className={`pointer-events-none absolute inset-y-0 left-0 w-4 bg-gradient-to-r from-background to-transparent transition-opacity duration-200 motion-reduce:transition-none ${canScrollPrev ? "opacity-100" : "opacity-0"}`}
+      />
+      <div
+        aria-hidden="true"
+        className={`pointer-events-none absolute inset-y-0 right-0 w-4 bg-gradient-to-l from-background to-transparent transition-opacity duration-200 motion-reduce:transition-none ${canScrollNext ? "opacity-100" : "opacity-0"}`}
+      />
+    </>
   );
 }
 
@@ -207,60 +315,9 @@ function ProviderModels({
   models: Model[];
   data?: Datasheets;
 }) {
-  const [page, setPage] = useState(0);
-  const total = models.length;
-  const pageCount = Math.ceil(total / modelsPerPage);
-  const currentPage = Math.min(page, Math.max(0, pageCount - 1));
-  const first = currentPage * modelsPerPage;
-  const pagination = (position: "top" | "bottom") =>
-    pageCount > 1 && (
-      <Pagination
-        aria-label={`${provider.name} model pages (${position})`}
-        className="m-0 w-auto flex-wrap items-center justify-between gap-3"
-      >
-        <p
-          aria-live={position === "bottom" ? "polite" : "off"}
-          className="text-sm text-muted-foreground"
-        >
-          {first + 1}–{Math.min(first + modelsPerPage, total)} of {total} models
-        </p>
-        <PaginationContent>
-          <PaginationItem>
-            <Button
-              variant="ghost"
-              size="sm"
-              aria-label="Go to previous page"
-              disabled={currentPage === 0}
-              onClick={() => setPage(currentPage - 1)}
-            >
-              <ChevronLeft aria-hidden="true" /> Previous
-            </Button>
-          </PaginationItem>
-          <PaginationItem>
-            <span className="px-2 text-sm" aria-current="page">
-              {currentPage + 1} / {pageCount}
-            </span>
-          </PaginationItem>
-          <PaginationItem>
-            <Button
-              variant="ghost"
-              size="sm"
-              aria-label="Go to next page"
-              disabled={currentPage + 1 >= pageCount}
-              onClick={() => setPage(currentPage + 1)}
-            >
-              Next <ChevronRight aria-hidden="true" />
-            </Button>
-          </PaginationItem>
-        </PaginationContent>
-      </Pagination>
-    );
   return (
-    <section>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">{provider.name}</h2>
-        {pagination("top")}
-      </div>
+    <section className="min-w-0">
+      <h2 className="text-lg font-semibold">{provider.name}</h2>
       {provider.error && (
         <Alert variant="destructive" className="mt-3">
           <AlertDescription>{provider.error}</AlertDescription>
@@ -269,18 +326,30 @@ function ProviderModels({
       {models.length === 0 ? (
         <p className="mt-3 text-sm text-muted-foreground">No models found.</p>
       ) : (
-        <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {models.slice(first, first + modelsPerPage).map((model, index) => (
-            <ModelCard
-              key={`${model.id}-${index}`}
-              model={model}
-              provider={provider}
-              data={data}
-            />
-          ))}
-        </div>
+        <Carousel
+          className="mt-3 min-w-0"
+          aria-label={`${provider.name} model cards`}
+          opts={{ align: "start" }}
+        >
+          <div className="relative py-2">
+            <CarouselContent>
+              {models.map((model, index) => (
+                <CarouselItem
+                  key={`${model.id}-${index}`}
+                  className="basis-full md:basis-1/2 xl:basis-1/3 [&>div]:h-full"
+                >
+                  <ModelCard model={model} provider={provider} data={data} />
+                </CarouselItem>
+              ))}
+            </CarouselContent>
+            <CarouselEdgeFades />
+          </div>
+          <div className="flex justify-center gap-2">
+            <CarouselPrevious className="static" />
+            <CarouselNext className="static" />
+          </div>
+        </Carousel>
       )}
-      {pageCount > 1 && <div className="mt-5">{pagination("bottom")}</div>}
     </section>
   );
 }
