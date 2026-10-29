@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
   createRootRoute,
   createRoute,
@@ -30,8 +30,7 @@ import { LogsTable } from "./LogsTable";
 import { ObservabilityCharts } from "./ObservabilityCharts";
 import { RequestBody, requestBodyTheme } from "./RequestBody";
 import {
-  getObservability,
-  rangeStart,
+  observabilityQueryOptions,
   type DashboardRange,
   type Log,
 } from "./server/api/observability";
@@ -84,29 +83,7 @@ function ObservabilityPage({ logsOnly = false }: { logsOnly?: boolean }) {
     error: queryError,
     isFetching: loading,
     refetch,
-  } = useQuery({
-    queryKey: ["observability", logsOnly ? "all" : range],
-    queryFn: ({ signal }) => {
-      if (logsOnly) return getObservability(signal);
-      if (range.kind === "preset") {
-        const until = Math.floor(Date.now() / 1000);
-        const since =
-          range.value === "24h"
-            ? until - 24 * 60 * 60
-            : rangeStart(range.value);
-        return getObservability(signal, { since, until });
-      }
-      return getObservability(signal, {
-        since: range.from,
-        until: range.until,
-      });
-    },
-    placeholderData: logsOnly ? undefined : keepPreviousData,
-    retry: false,
-    gcTime: 0,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-  });
+  } = useQuery(observabilityQueryOptions(range, logsOnly));
   const error =
     !loading && queryError
       ? queryError instanceof Error

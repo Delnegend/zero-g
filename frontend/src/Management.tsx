@@ -17,18 +17,18 @@ import {
   DialogTitle,
 } from "./components/ui/dialog";
 import {
-  getSettings,
+  settingsOptions,
   updateSettings,
   type SettingsUpdate,
 } from "./server/api/settings";
 import { message } from "./server/api/client";
 import {
   createKey,
-  getKeys,
+  keysOptions,
   revokeKey as revokeKeyRequest,
   type VirtualKey,
 } from "./server/api/keys";
-import { getProviders } from "./server/api/providers";
+import { providersOptions } from "./server/api/providers";
 import { ProvidersPage } from "./ProvidersPage";
 
 const inputClass =
@@ -42,11 +42,7 @@ function SettingsPage() {
   const [busy, setBusy] = useState(false);
   const saveController = useRef<AbortController | null>(null);
 
-  const settingsQuery = useQuery({
-    queryKey: ["settings"],
-    retry: false,
-    queryFn: ({ signal }) => getSettings(signal),
-  });
+  const settingsQuery = useQuery(settingsOptions());
   const queryClient = useQueryClient();
   const saveMutation = useMutation({
     gcTime: 0,
@@ -107,7 +103,7 @@ function SettingsPage() {
         signal: controller.signal,
       });
       if (controller.signal.aborted) return;
-      await queryClient.cancelQueries({ queryKey: ["settings"] });
+      await queryClient.cancelQueries({ queryKey: settingsOptions().queryKey });
       if (controller.signal.aborted) return;
       const current = form.state.values;
       const logRetention =
@@ -121,7 +117,7 @@ function SettingsPage() {
       draftStarted.current =
         logRetention !== updated.log_retention_days ||
         oauthClientId !== updated.oauth_client_id;
-      queryClient.setQueryData(["settings"], updated);
+      queryClient.setQueryData(settingsOptions().queryKey, updated);
       form.setFieldValue("log_retention_days", logRetention);
       form.setFieldValue("oauth_client_id", oauthClientId);
       if (current.oauthSecret === value.oauthSecret)
@@ -255,16 +251,8 @@ function SettingsPage() {
 
 function KeysPage() {
   const queryClient = useQueryClient();
-  const keysQuery = useQuery({
-    queryKey: ["virtual-keys"],
-    retry: false,
-    queryFn: ({ signal }) => getKeys(signal),
-  });
-  const providersQuery = useQuery({
-    queryKey: ["providers"],
-    retry: false,
-    queryFn: ({ signal }) => getProviders(signal),
-  });
+  const keysQuery = useQuery(keysOptions());
+  const providersQuery = useQuery(providersOptions());
   const keys = keysQuery.data?.keys ?? [];
   const createMutation = useMutation({
     gcTime: 0,
@@ -307,7 +295,7 @@ function KeysPage() {
       setNewKey(result.key);
       form.reset();
       await queryClient.invalidateQueries(
-        { queryKey: ["virtual-keys"] },
+        { queryKey: keysOptions().queryKey },
         { throwOnError: true },
       );
     } catch (err) {
@@ -322,9 +310,9 @@ function KeysPage() {
     setError("");
     try {
       await revokeMutation.mutateAsync(key.id);
-      await queryClient.cancelQueries({ queryKey: ["virtual-keys"] });
+      await queryClient.cancelQueries({ queryKey: keysOptions().queryKey });
       queryClient.setQueryData<{ keys: VirtualKey[] }>(
-        ["virtual-keys"],
+        keysOptions().queryKey,
         (current) =>
           current && {
             ...current,
@@ -332,7 +320,7 @@ function KeysPage() {
           },
       );
       await queryClient.invalidateQueries(
-        { queryKey: ["virtual-keys"] },
+        { queryKey: keysOptions().queryKey },
         { throwOnError: true },
       );
       setRevokeKey(null);

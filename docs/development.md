@@ -55,6 +55,8 @@ Clippy also requires documentation comments on private Rust items, including fie
 
 Rust handlers and their request and response types define the OpenAPI document. After changing a dashboard or inference contract, run `just api-generate` and commit the generated files in `frontend/src/server/api/generated/`. Orval generates the dashboard request functions and Zod response validators from that document; `just check` detects stale generated files and runs the frontend client tests.
 
+Shared TanStack Query options and cache keys live with the corresponding API functions in `frontend/src/server/api/`. Components call `useQuery` with those options and reuse their keys when updating or invalidating cached data.
+
 ## Database migrations
 
 The models in `backend/storage.rs` define the Turso schema. After changing them, generate a migration with `cargo run --bin migrate -- migration generate --name describe_change`; commit `toasty/history.toml`, the generated migration and its snapshot together. The server embeds and applies tracked migrations on startup. Do not use `push_schema` on production databases. Stop writers and back up the database before upgrading.

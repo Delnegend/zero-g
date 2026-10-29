@@ -5,7 +5,7 @@ import { PolarAngleAxis, RadialBar, RadialBarChart } from "recharts";
 import { message } from "../server/api/client";
 import {
   deleteConsoleSession,
-  getCredentialUsage,
+  credentialUsageOptions,
   saveConsoleSession,
   type QuotaWindow,
 } from "../server/api/providers";
@@ -94,7 +94,7 @@ function ConsoleDialog({
   const [error, setError] = useState("");
   const refresh = () =>
     queryClient.invalidateQueries({
-      queryKey: ["credential-usage", providerId, credentialId],
+      queryKey: credentialUsageOptions(providerId, credentialId).queryKey,
     });
   const form = useForm({
     defaultValues: { workspace_id: "", session: "" },
@@ -234,15 +234,9 @@ export function CredentialUsage({
   connected: boolean;
 }) {
   const [configuring, setConfiguring] = useState(false);
-  const usage = useQuery({
-    queryKey: ["credential-usage", providerId, credentialId],
-    queryFn: ({ signal }) =>
-      getCredentialUsage(providerId, credentialId, signal),
-    enabled: connected,
-    staleTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: false,
-    retry: false,
-  });
+  const usage = useQuery(
+    credentialUsageOptions(providerId, credentialId, connected),
+  );
 
   return (
     <div

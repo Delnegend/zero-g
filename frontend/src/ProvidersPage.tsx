@@ -7,9 +7,11 @@ import {
   deleteCredential,
   deleteProvider as deleteProviderRequest,
   finishGoogleSignIn,
-  getCredentials,
-  getProviderKinds,
-  getProviders,
+  credentialsOptions,
+  credentialUsageKey,
+  credentialUsageOptions,
+  providerKindsOptions,
+  providersOptions,
   pollSignIn,
   saveCredential,
   saveProvider,
@@ -93,10 +95,10 @@ function ProviderForm({
       try {
         const updated = await save.mutateAsync(body);
         await queryClient.cancelQueries({
-          queryKey: ["providers"],
+          queryKey: providersOptions().queryKey,
         });
         queryClient.setQueryData<{ providers: Provider[] }>(
-          ["providers"],
+          providersOptions().queryKey,
           (current) => ({
             providers: [
               ...(current?.providers ?? []).filter(
@@ -107,7 +109,7 @@ function ProviderForm({
           }),
         );
         await queryClient.invalidateQueries({
-          queryKey: ["providers"],
+          queryKey: providersOptions().queryKey,
         });
         onDone();
       } catch (err) {
@@ -297,12 +299,8 @@ function Credentials({
   loginBusy: boolean;
 }) {
   const queryClient = useQueryClient();
-  const key = ["credentials", provider.id];
-  const credentials = useQuery({
-    queryKey: key,
-    queryFn: ({ signal }) => getCredentials(provider.id, signal),
-    retry: false,
-  });
+  const key = credentialsOptions(provider.id).queryKey;
+  const credentials = useQuery(credentialsOptions(provider.id));
   const [editing, setEditing] = useState<ProviderCredential | "new" | null>(
     null,
   );
@@ -351,7 +349,7 @@ function Credentials({
         await queryClient.invalidateQueries({ queryKey: key });
         if (editing !== "new") {
           await queryClient.invalidateQueries({
-            queryKey: ["credential-usage", provider.id, editing.id],
+            queryKey: credentialUsageOptions(provider.id, editing.id).queryKey,
           });
         }
       } catch (err) {
@@ -700,11 +698,11 @@ function ProviderCard({
   const refresh = useCallback(() => {
     void queryClient
       .invalidateQueries({
-        queryKey: ["credentials", provider.id],
+        queryKey: credentialsOptions(provider.id).queryKey,
       })
       .then(() =>
         queryClient.invalidateQueries({
-          queryKey: ["credential-usage", provider.id],
+          queryKey: credentialUsageKey(provider.id),
         }),
       );
   }, [queryClient, provider.id]);
@@ -958,16 +956,8 @@ function ProviderCard({
 
 export function ProvidersPage() {
   const queryClient = useQueryClient();
-  const providers = useQuery({
-    queryKey: ["providers"],
-    retry: false,
-    queryFn: ({ signal }) => getProviders(signal),
-  });
-  const kinds = useQuery({
-    queryKey: ["provider-kinds"],
-    retry: false,
-    queryFn: ({ signal }) => getProviderKinds(signal),
-  });
+  const providers = useQuery(providersOptions());
+  const kinds = useQuery(providerKindsOptions());
   const remove = useMutation({
     mutationFn: deleteProviderRequest,
   });
@@ -990,10 +980,10 @@ export function ProvidersPage() {
     try {
       await remove.mutateAsync(provider.id);
       await queryClient.cancelQueries({
-        queryKey: ["providers"],
+        queryKey: providersOptions().queryKey,
       });
       queryClient.setQueryData<{ providers: Provider[] }>(
-        ["providers"],
+        providersOptions().queryKey,
         (current) =>
           current && {
             providers: current.providers.filter(
@@ -1003,7 +993,7 @@ export function ProvidersPage() {
       );
       if (editing !== "new" && editing?.id === provider.id) setEditing(null);
       await queryClient.invalidateQueries({
-        queryKey: ["providers"],
+        queryKey: providersOptions().queryKey,
       });
       setDeleteTarget(null);
     } catch (err) {

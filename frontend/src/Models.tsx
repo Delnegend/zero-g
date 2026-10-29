@@ -3,9 +3,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { message } from "./server/api/client";
 import {
-  getModelCatalog,
-  getModelDatasheets,
-  getModelSettings,
+  modelCatalogQueryOptions,
+  modelDatasheetsQueryOptions,
+  modelSettingsQueryOptions,
   refreshModelCatalog,
   saveModelSettings,
   syncModelSettings,
@@ -229,26 +229,17 @@ export function ModelCatalogPage() {
   const [search, setSearch] = useState("");
   const [providerFilter, setProviderFilter] = useState("");
   const queryClient = useQueryClient();
-  const catalog = useQuery({
-    queryKey: ["model-catalog"],
-    retry: false,
-    queryFn: ({ signal }) => getModelCatalog(signal),
-  });
-  const data = useQuery({
-    queryKey: ["model-settings-data"],
-    retry: false,
-    staleTime: 30_000,
-    queryFn: ({ signal }) => getModelDatasheets(signal),
-  });
+  const catalog = useQuery(modelCatalogQueryOptions());
+  const data = useQuery(modelDatasheetsQueryOptions());
   const refresh = useMutation({
     mutationFn: refreshModelCatalog,
     onSuccess: async (result) => {
       await queryClient.cancelQueries({
-        queryKey: ["model-catalog"],
+        queryKey: modelCatalogQueryOptions().queryKey,
       });
-      queryClient.setQueryData(["model-catalog"], result);
+      queryClient.setQueryData(modelCatalogQueryOptions().queryKey, result);
       await queryClient.invalidateQueries({
-        queryKey: ["model-settings-data"],
+        queryKey: modelDatasheetsQueryOptions().queryKey,
       });
     },
   });
@@ -378,7 +369,7 @@ function SettingsForm({ initial }: { initial: Settings }) {
       try {
         const updated = await save.mutateAsync(value);
         await queryClient.cancelQueries({
-          queryKey: ["model-settings"],
+          queryKey: modelSettingsQueryOptions().queryKey,
         });
         if (form.state.values.pricing_url === value.pricing_url) {
           form.setFieldValue("pricing_url", updated.pricing_url);
@@ -386,7 +377,7 @@ function SettingsForm({ initial }: { initial: Settings }) {
         if (form.state.values.parameters_url === value.parameters_url) {
           form.setFieldValue("parameters_url", updated.parameters_url);
         }
-        queryClient.setQueryData(["model-settings"], updated);
+        queryClient.setQueryData(modelSettingsQueryOptions().queryKey, updated);
         setStatus("Settings saved.");
       } catch (err) {
         setError(message(err));
@@ -399,7 +390,7 @@ function SettingsForm({ initial }: { initial: Settings }) {
     try {
       await sync.mutateAsync();
       await queryClient.invalidateQueries({
-        queryKey: ["model-settings-data"],
+        queryKey: modelDatasheetsQueryOptions().queryKey,
       });
       setStatus("Datasheets synced.");
     } catch (err) {
@@ -536,11 +527,7 @@ function SettingsForm({ initial }: { initial: Settings }) {
 }
 
 export function ModelSettingsPage() {
-  const settings = useQuery({
-    queryKey: ["model-settings"],
-    retry: false,
-    queryFn: ({ signal }) => getModelSettings(signal),
-  });
+  const settings = useQuery(modelSettingsQueryOptions());
   return (
     <main className={pageClass}>
       <h1 className="text-3xl font-semibold tracking-tight">Model settings</h1>
