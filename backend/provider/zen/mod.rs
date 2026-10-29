@@ -1,27 +1,19 @@
 /// HTTP routes for Zen models and chat completions.
 pub(crate) mod routes;
-/// Lifecycle management for the local Zen shim.
-mod shim;
 
-use axum::Json;
-use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::response::{IntoResponse, Response};
-use futures_util::StreamExt;
-use serde_json::{Value, json};
-use std::time::{SystemTime, UNIX_EPOCH};
-use tokio_stream::wrappers::ReceiverStream;
-
-use crate::openai::{ChatCompletionRequest, MessageContent};
 use crate::provider::quota::QuotaSnapshot;
 use crate::server::settings::SettingsStore;
-use crate::storage::{ProviderCredential, ProviderRecord, Secret, Setting};
+use crate::storage::{ProviderCredential, ProviderRecord, Secret};
+use axum::Json;
+use axum::response::{IntoResponse, Response};
 use axum::{
     Router,
     extract::{Path, State},
     http::StatusCode,
     routing::put,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde_json::Value;
 use std::time::Duration;
 
 /// `OpenCode` Console credentials used to retrieve a workspace balance.
@@ -123,8 +115,8 @@ pub(crate) async fn connection(
 /// Zen Console connection API.
 #[derive(utoipa::OpenApi)]
 #[openapi(
-    paths(save_console, delete_console, get_free_models, update_free_models),
-    components(schemas(ConsoleConnection, FreeModelsStatus, FreeModelsInput))
+    paths(save_console, delete_console),
+    components(schemas(ConsoleConnection))
 )]
 pub(crate) struct Api;
 
@@ -146,103 +138,9 @@ async fn delete_console(
 ) -> Response {
     connection(&store, &provider, &credential, None).await
 }
-/// Persisted opt-in for free Zen models.
-const FREE_MODELS_SETTING: &str = "zen.include_free_models";
-/// Local shim used when no provider-specific URL is configured.
-const DEFAULT_SHIM: &str = "http://127.0.0.1:8090/v1";
-
-/// Free-model setting and current shim health.
-#[derive(Serialize, utoipa::ToSchema)]
-struct FreeModelsStatus {
-    /// Whether free-model routing is enabled.
-    enabled: bool,
-    /// Whether the configured shim is responding.
-    shim_ready: bool,
-}
-
-/// Requested free-model setting.
-#[derive(Deserialize, utoipa::ToSchema)]
-#[serde(deny_unknown_fields)]
-struct FreeModelsInput {
-    /// Whether to enable free-model routing.
-    enabled: bool,
-}
-
-/// Read the persisted free-model setting.
-pub(crate) async fn free_models_enabled(store: &SettingsStore) -> Result<bool, String> {
-    Ok(store.setting_get(FREE_MODELS_SETTING).await?.as_deref() == Some("true"))
-}
-
-/// Resolve the configured shim URL or its local default.
-const fn shim_url(base_url: &str) -> &str {
-    if base_url.is_empty() {
-        DEFAULT_SHIM
-    } else {
-        base_url
-    }
-}
-
-/// Read the setting and probe the configured shim.
-async fn free_models_status(store: &SettingsStore) -> Result<FreeModelsStatus, String> {
-    let providers = crate::provider::registry::list(&store.database).await?;
-    let base = providers
-        .iter()
-        .find(|p| p.kind == "zen")
-        .map_or(DEFAULT_SHIM, |p| shim_url(&p.base_url));
-    Ok(FreeModelsStatus {
-        enabled: free_models_enabled(store).await?,
-        shim_ready: shim::is_alive(&reqwest::Client::new(), base).await,
-    })
-}
-
-/// Return the free-model setting and shim status.
-#[utoipa::path(get, path = "/api/providers/zen/free-models", operation_id = "getZenFreeModels", responses((status = 200, body = FreeModelsStatus)))]
-async fn get_free_models(State(store): State<SettingsStore>) -> Response {
-    free_models_status(&store).await.map_or_else(
-        |error| {
-            tracing::error!("Failed to read Zen free-model status: {error}");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        },
-        |status| Json(status).into_response(),
-    )
-}
-
-/// Update the free-model setting after checking shim availability.
-#[utoipa::path(put, path = "/api/providers/zen/free-models", operation_id = "updateZenFreeModels", request_body = FreeModelsInput, responses((status = 200, body = FreeModelsStatus), (status = 409, description = "Shim unavailable")))]
-async fn update_free_models(
-    State(store): State<SettingsStore>,
-    Json(input): Json<FreeModelsInput>,
-) -> Response {
-    let Ok(mut status) = free_models_status(&store).await else {
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-    };
-    if input.enabled && !status.shim_ready {
-        return (StatusCode::CONFLICT, "Zen shim is not ready").into_response();
-    }
-    if let Err(error) = Setting::upsert_by_name(FREE_MODELS_SETTING)
-        .value(input.enabled.to_string())
-        .exec(&mut (*store.database.db).clone())
-        .await
-    {
-        tracing::error!("Failed to save Zen free-model setting: {error}");
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-    }
-    status.enabled = input.enabled;
-    Json(status).into_response()
-}
-
-/// Identify free model IDs advertised by the `OpenCode` model catalog.
-pub(crate) fn is_free_model(model: &str) -> bool {
-    model == "big-pickle" || model.ends_with("-free")
-}
-
 /// Build dashboard routes for managing Console connections.
 pub(crate) fn dashboard_router(app: crate::server::AppState) -> Router {
     Router::new()
-        .route(
-            "/api/providers/zen/free-models",
-            axum::routing::get(get_free_models).put(update_free_models),
-        )
         .route(
             "/api/providers/{id}/credentials/{credential_id}/console",
             put(save_console).delete(delete_console),
@@ -250,10 +148,6 @@ pub(crate) fn dashboard_router(app: crate::server::AppState) -> Router {
         .with_state(app.settings)
 }
 
-/// System prompt required by the Zen request format.
-const SYSTEM_PROMPT: &str = include_str!("../../../assets/opencode_system_prompt.txt");
-/// Built-in tool definitions included in Zen requests.
-const CORE_TOOLS: &str = include_str!("../../../assets/core_tools.json");
 /// Convert Console microcents to a USD balance snapshot.
 pub(crate) fn parse_balance(value: &Value) -> Result<QuotaSnapshot, String> {
     let amount = value
@@ -314,336 +208,6 @@ pub(crate) async fn zen_balance(
     parse_balance(&value)
 }
 
-/// Generate an OpenCode-shaped session identifier for request attestation.
-fn session_id() -> String {
-    const ALNUM: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
-    let value = !ts.wrapping_mul(0x1000).wrapping_add(1) & 0xffff_ffff_ffff;
-    let hex = format!("{value:012x}");
-    let mut rand = String::with_capacity(14);
-    // deterministic-ish pseudo-random using timestamp; good enough for attestation
-    let mut seed = ts;
-    for _ in 0..14 {
-        seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
-        let idx = usize::try_from(seed % 62).unwrap_or_default();
-        if let Some(&byte) = ALNUM.as_bytes().get(idx) {
-            rand.push(char::from(byte));
-        }
-    }
-    format!("ses_{hex}{rand}")
-}
-
-/// Convert an `OpenAI` chat request into the Zen request and headers.
-// serde_json object indexing inserts optional fields into the object constructed below.
-#[allow(clippy::indexing_slicing)]
-fn transform(req: &ChatCompletionRequest, zen_key: &str) -> (Value, Vec<(String, String)>) {
-    let caller_system = req
-        .messages
-        .iter()
-        .filter(|m| m.role == "system" || m.role == "developer")
-        .map(|m| {
-            m.content
-                .as_ref()
-                .map(MessageContent::as_text)
-                .unwrap_or_default()
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n");
-
-    let mut messages = vec![json!({"role": "system", "content": SYSTEM_PROMPT})];
-    if !caller_system.trim().is_empty() {
-        messages.push(json!({"role": "user", "content": caller_system}));
-    }
-    for m in &req.messages {
-        if m.role != "system" && m.role != "developer" {
-            messages.push(serde_json::to_value(m).unwrap_or(Value::Null));
-        }
-    }
-
-    let core_tools: Value = serde_json::from_str(CORE_TOOLS).unwrap_or_else(|_| json!([]));
-    let core_names: std::collections::HashSet<String> = core_tools
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|t| {
-                    t.get("function")
-                        .and_then(|f| f.get("name"))
-                        .and_then(Value::as_str)
-                })
-                .map(String::from)
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let mut tools = core_tools.as_array().cloned().unwrap_or_default();
-    if let Some(req_tools) = &req.tools {
-        for t in req_tools {
-            let name = t.function.name.clone();
-            if !core_names.contains(&name)
-                && let Ok(v) = serde_json::to_value(t)
-            {
-                tools.push(v);
-            }
-        }
-    }
-
-    let mut body = json!({
-        "model": req.model,
-        "messages": messages,
-        "tools": tools,
-        "stream": true,
-    });
-    if let Some(so) = &req.stream_options {
-        body["stream_options"] = serde_json::to_value(so).unwrap_or(Value::Null);
-    }
-    for (src, dst) in [
-        ("max_tokens", "max_completion_tokens"),
-        ("max_completion_tokens", "max_completion_tokens"),
-    ] {
-        if let Some(v) = match src {
-            "max_tokens" => req.max_tokens,
-            "max_completion_tokens" => req.max_completion_tokens,
-            _ => None,
-        } {
-            body[dst] = json!(v);
-        }
-    }
-    if let Some(t) = req.temperature {
-        body["temperature"] = json!(t);
-    }
-    if let Some(p) = req.top_p {
-        body["top_p"] = json!(p);
-    }
-    if let Some(tc) = &req.tool_choice {
-        body["tool_choice"] = tc.clone();
-    }
-
-    let s = session_id();
-    let mut headers = vec![
-        ("Content-Type".to_string(), "application/json".to_string()),
-        (
-            "User-Agent".to_string(),
-            "opencode/latest/2.1.4/cli".to_string(),
-        ),
-        ("x-opencode-client".to_string(), "cli".to_string()),
-        ("x-opencode-session".to_string(), s.clone()),
-        ("x-opencode-session-id".to_string(), s.clone()),
-        ("x-session-affinity".to_string(), s.clone()),
-        ("x-session-id".to_string(), s),
-    ];
-    if !zen_key.is_empty() {
-        headers.push(("Authorization".to_string(), format!("Bearer {zen_key}")));
-    }
-    (body, headers)
-}
-
-/// Combine streamed chat completion events into a single response object.
-// serde_json object indexing updates the known object shapes constructed here.
-#[allow(clippy::indexing_slicing)]
-#[allow(clippy::too_many_lines)]
-fn aggregate_sse(sse: &str) -> Value {
-    let mut content = String::new();
-    let mut reasoning = String::new();
-    let mut finish = None;
-    let mut id = String::new();
-    let mut model = String::new();
-    let mut usage = None;
-    let mut tool_calls: Vec<Value> = Vec::new();
-
-    for line in sse.lines() {
-        let Some(payload) = line.strip_prefix("data: ") else {
-            continue;
-        };
-        let payload = payload.trim();
-        if payload == "[DONE]" || payload.is_empty() {
-            continue;
-        }
-        let j: Value = match serde_json::from_str(payload) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        if id.is_empty() {
-            id = j
-                .get("id")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string();
-        }
-        if model.is_empty() {
-            model = j
-                .get("model")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string();
-        }
-        if let Some(u) = j.get("usage") {
-            usage = Some(u.clone());
-        }
-        let Some(ch) = j
-            .get("choices")
-            .and_then(Value::as_array)
-            .and_then(|a| a.first())
-        else {
-            continue;
-        };
-        if let Some(fr) = ch.get("finish_reason").and_then(Value::as_str) {
-            finish = Some(fr.to_string());
-        }
-        let d = ch.get("delta").cloned().unwrap_or(Value::Null);
-        if let Some(c) = d.get("content").and_then(Value::as_str) {
-            content.push_str(c);
-        }
-        if let Some(r) = d.get("reasoning_content").and_then(Value::as_str) {
-            reasoning.push_str(r);
-        }
-        if let Some(tcs) = d.get("tool_calls").and_then(Value::as_array) {
-            for tc in tcs {
-                let Some(i) = tc
-                    .get("index")
-                    .and_then(Value::as_u64)
-                    .map_or(Some(0), |i| usize::try_from(i).ok())
-                else {
-                    continue;
-                };
-                while tool_calls.len() <= i {
-                    tool_calls.push(
-                        json!({"id":"","type":"function","function":{"name":"","arguments":""}}),
-                    );
-                }
-                let Some(call) = tool_calls.get_mut(i) else {
-                    continue;
-                };
-                if let Some(idv) = tc.get("id").and_then(Value::as_str) {
-                    call["id"] = json!(idv);
-                }
-                if let Some(n) = tc
-                    .get("function")
-                    .and_then(|f| f.get("name"))
-                    .and_then(Value::as_str)
-                {
-                    call["function"]["name"] = json!(format!(
-                        "{}{}",
-                        call["function"]["name"].as_str().unwrap_or(""),
-                        n
-                    ));
-                }
-                if let Some(a) = tc
-                    .get("function")
-                    .and_then(|f| f.get("arguments"))
-                    .and_then(Value::as_str)
-                {
-                    call["function"]["arguments"] = json!(format!(
-                        "{}{}",
-                        call["function"]["arguments"].as_str().unwrap_or(""),
-                        a
-                    ));
-                }
-            }
-        }
-    }
-
-    let mut message = json!({"role":"assistant","content": content});
-    if !reasoning.is_empty() {
-        message["reasoning_content"] = json!(reasoning);
-    }
-    let tcs: Vec<Value> = tool_calls
-        .into_iter()
-        .filter(|v| {
-            !v["id"].as_str().unwrap_or("").is_empty()
-                || !v["function"]["name"].as_str().unwrap_or("").is_empty()
-        })
-        .collect();
-    if !tcs.is_empty() {
-        message["tool_calls"] = json!(tcs);
-    }
-
-    let mut resp = json!({
-        "id": if id.is_empty() { "chatcmpl-zen" } else { &id },
-        "object": "chat.completion",
-        "created": SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()),
-        "model": model,
-        "choices": [{"index":0,"message":message,"finish_reason": finish.unwrap_or_else(|| "stop".to_string())}],
-    });
-    if let Some(u) = usage {
-        resp["usage"] = u;
-    }
-    resp
-}
-
-/// Send a chat request through Zen and return the resulting response.
-pub(crate) async fn handle_chat(
-    req: &ChatCompletionRequest,
-    zen_base_url: &str,
-    zen_key: &str,
-) -> Response {
-    let (body, headers) = transform(req, zen_key);
-    let client = reqwest::Client::new();
-    let url = format!("{}/chat/completions", zen_base_url.trim_end_matches('/'));
-
-    let mut rb = client.post(&url);
-    for (k, v) in &headers {
-        rb = rb.header(k, v);
-    }
-    let want_stream = req.stream.unwrap_or(false);
-
-    let up = match rb.json(&body).send().await {
-        Ok(r) => r,
-        Err(e) => {
-            let msg = format!("Zen upstream failed: {e}");
-            return (
-                axum::http::StatusCode::BAD_GATEWAY,
-                Json(json!({"error":{"message": msg,"type":"upstream_error","param":null,"code":"bad_gateway"}})),
-            )
-                .into_response();
-        }
-    };
-    if !up.status().is_success() {
-        let status = up.status();
-        let text = up.text().await.unwrap_or_default();
-        return (
-            axum::http::StatusCode::from_u16(status.as_u16())
-                .unwrap_or(axum::http::StatusCode::BAD_GATEWAY),
-            Json(
-                json!({"error":{"message": text},"type":"upstream_error","param":null,"code":null}),
-            ),
-        )
-            .into_response();
-    }
-
-    if want_stream {
-        // pass through SSE
-        let body = up.bytes_stream();
-        let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, std::convert::Infallible>>(100);
-        tokio::spawn(async move {
-            let mut stream = std::pin::pin!(body);
-            while let Some(chunk) = stream.next().await {
-                if let Ok(bytes) = chunk {
-                    let text = String::from_utf8_lossy(&bytes);
-                    for line in text.lines() {
-                        if line.starts_with("data: ") || line.starts_with("data:") {
-                            let _ = tx
-                                .send(Ok(Event::default()
-                                    .data(line.trim_start_matches("data:").trim_start())))
-                                .await;
-                        } else if !line.trim().is_empty() {
-                            // forward non-data lines as-is? skip
-                        }
-                    }
-                }
-            }
-        });
-        Sse::new(ReceiverStream::new(rx))
-            .keep_alive(KeepAlive::default())
-            .into_response()
-    } else {
-        let text = up.text().await.unwrap_or_default();
-        let agg = aggregate_sse(&text);
-        Json(agg).into_response()
-    }
-}
-
 /// Zen provider backend.
 pub(crate) struct Backend;
 
@@ -656,25 +220,24 @@ impl super::common::Provider for Backend {
         fixed_id: Some("zen"),
         fixed_name: Some("OpenCode Zen"),
         keyless: true,
-        default_base_url: None,
+        default_base_url: Some(routes::BASE_URL),
         legacy: super::common::LegacyPolicy {
-            key: Some("public"),
-            same_base: true,
+            key: None,
+            same_base: false,
         },
     };
     fn router(settings: &SettingsStore) -> axum::Router<crate::server::AppState> {
         routes::router(settings)
     }
     async fn discover(
-        state: &crate::server::AppState,
+        _state: &crate::server::AppState,
         _provider: &super::registry::Provider,
     ) -> Result<Vec<crate::openai::Model>, String> {
-        let enabled = free_models_enabled(&state.settings).await?;
         let permissions = crate::server::settings::Permissions {
             providers: vec![],
             models: vec![],
         };
-        let value = routes::fetch_models(routes::MODELS_URL, enabled, &permissions)
+        let value = routes::fetch_models(routes::MODELS_URL, &permissions)
             .await
             .map_err(|_| "Unable to discover Zen models".to_string())?;
         let models = value
@@ -701,70 +264,5 @@ impl super::common::QuotaProvider for Backend {
 impl super::common::DashboardProvider for Backend {
     fn dashboard_router(state: crate::server::AppState) -> Router {
         dashboard_router(state)
-    }
-}
-
-/// Start the local Zen shim if no instance is already responding.
-pub(super) async fn start() -> Option<tokio::process::Child> {
-    shim::ensure_zen_shim("http://127.0.0.1:8090/v1").await
-}
-
-/// Free-model setting behavior.
-#[cfg(test)]
-#[allow(clippy::unwrap_used)]
-mod free_model_tests {
-    use super::*;
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    };
-
-    /// Enabling requires a healthy shim; disabling remains possible offline.
-    #[tokio::test]
-    async fn free_models_require_a_healthy_shim_only_when_enabling() {
-        let ready = Arc::new(AtomicBool::new(false));
-        let state = ready.clone();
-        let app = Router::new().route(
-            "/v1/health",
-            axum::routing::get(move || {
-                let ready = state.clone();
-                async move {
-                    if ready.load(Ordering::SeqCst) {
-                        StatusCode::OK
-                    } else {
-                        StatusCode::SERVICE_UNAVAILABLE
-                    }
-                }
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}/v1", listener.local_addr().unwrap());
-        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let database = crate::database::Database::open(":memory:").await.unwrap();
-        let store = SettingsStore::new(database, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-            .await
-            .unwrap();
-        toasty::create!(ProviderRecord {
-            id: "zen".to_string(),
-            name: "OpenCode Zen".to_string(),
-            kind: "zen".to_string(),
-            base_url: url,
-            deleted: false
-        })
-        .exec(&mut (*store.database.db).clone())
-        .await
-        .unwrap();
-
-        let update =
-            |enabled| update_free_models(State(store.clone()), Json(FreeModelsInput { enabled }));
-        assert_eq!(update(true).await.status(), StatusCode::CONFLICT);
-        assert!(!free_models_enabled(&store).await.unwrap());
-        ready.store(true, Ordering::SeqCst);
-        assert_eq!(update(true).await.status(), StatusCode::OK);
-        assert!(free_models_enabled(&store).await.unwrap());
-        ready.store(false, Ordering::SeqCst);
-        assert_eq!(update(false).await.status(), StatusCode::OK);
-        assert!(!free_models_enabled(&store).await.unwrap());
-        server.abort();
     }
 }

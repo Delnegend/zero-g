@@ -683,9 +683,9 @@ mod incompatible_legacy_tests {
     use super::*;
     use crate::database::Database;
 
-    /// Distinct Zen upstreams must remain separate.
+    /// Legacy Zen instances share the same official upstream regardless of old shim URLs.
     #[tokio::test]
-    async fn different_zen_upstreams_are_not_merged() {
+    async fn different_zen_upstreams_are_merged() {
         let store = SettingsStore::new(
             Database::open(":memory:").await.unwrap(),
             "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
@@ -708,19 +708,7 @@ mod incompatible_legacy_tests {
             .await
             .unwrap();
         }
-        assert!(
-            migrate_legacy(&store)
-                .await
-                .unwrap_err()
-                .contains("different base URLs")
-        );
-        assert_eq!(registry::list(&store.database).await.unwrap().len(), 2);
-        assert!(
-            store
-                .setting_get("credential_pool_migrated_v1")
-                .await
-                .unwrap()
-                .is_none()
-        );
+        migrate_legacy(&store).await.unwrap();
+        assert_eq!(registry::list(&store.database).await.unwrap().len(), 1);
     }
 }

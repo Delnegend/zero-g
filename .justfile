@@ -61,7 +61,7 @@ check-dependencies:
 # Single gate CI verification
 check:
     just check-dependencies
-    bun fmt --check --no-script frontend assets/zen_shim.ts
+    bun fmt --check --no-script frontend
     just lint
     just frontend-build
     just api-check
@@ -73,7 +73,7 @@ check:
 # Format all code
 fmt:
     cargo fmt
-    bun fmt --no-script frontend assets/zen_shim.ts
+    bun fmt --no-script frontend
 
 # Run tests
 test: frontend-build
@@ -82,11 +82,6 @@ test: frontend-build
 # Build release binary
 build: frontend-build
     cargo build --release
-
-# Compile the Zen TLS shim to a standalone binary (pinned Bun: the gate
-# fingerprint depends on the exact Bun/BoringSSL build)
-shim:
-    bun build --compile ./assets/zen_shim.ts --outfile ./zen-shim
 
 
 # Language-agnostic version contract for Delnegend/actions/resolve-release.

@@ -2,7 +2,7 @@
 
 ## Overview
 
-`zero-g` exposes one OpenAI-compatible API for multiple providers. Requests name a provider and model, such as `codex/gpt-5.3-codex`. Antigravity and Codex requests are translated to their upstream protocols; OpenCode Go, paid Zen and custom OpenAI-compatible providers are forwarded. Optional free Zen chat uses the shim. Provider credentials, virtual keys, settings and request logs are stored in the local database.
+`zero-g` exposes one OpenAI-compatible API for multiple providers. Requests name a provider and model, such as `codex/gpt-5.3-codex`. Antigravity and Codex requests are translated to their upstream protocols; OpenCode Go, Zen and custom OpenAI-compatible providers are forwarded. Zen uses the official API for all models. Provider credentials, virtual keys, settings and request logs are stored in the local database.
 
 ```mermaid
 flowchart TD
@@ -14,8 +14,7 @@ flowchart TD
     Router -->|Load provider credentials| DB
     Router --> AGY[Antigravity translation]
     Router --> Codex[Codex translation]
-    Router --> Zen[Zen paid API]
-    Router -->|Optional free chat| Shim[Zen shim]
+    Router --> Zen[Zen API]
     Router --> Go[OpenCode Go]
     Router --> Custom[OpenAI-compatible upstream]
     AGY --> Google[Google Cloud Code Assist]
@@ -32,7 +31,7 @@ flowchart TD
 - **Auth Managers (`backend/provider/antigravity/auth.rs`, `backend/provider/codex/auth.rs`):** Load encrypted OAuth credentials and refresh access tokens near a known expiration. Codex also reads account information from its token.
 - **Login Flows (`backend/provider/*/dashboard_login.rs`):** Each OAuth provider owns its dashboard sign-in and pending state. `backend/provider/login.rs` contains shared origin and credential checks and refresh locks.
 - **Provider interface (`backend/provider/common/`):** The `Provider` trait exposes model discovery and inference routers; separate traits describe optional quota and dashboard routes. Shared upstream errors and OpenAI-compatible proxy checks live alongside them. `ProviderKind` in `backend/provider/mod.rs` registers implementations and dispatches without boxed futures.
-- **Provider routes (`backend/provider/*/`):** Each provider owns its protocol handling, model discovery and account-specific operations. Zen's shim management lives in `backend/provider/zen/shim.rs`.
+- **Provider routes (`backend/provider/*/`):** Each provider owns its protocol handling, model discovery and account-specific operations.
 - **Provider kinds (`backend/provider/mod.rs`):** Provider descriptors own labels and credential capabilities; the dashboard loads them from `/api/provider-kinds`.
 - **Credential pools (`backend/provider/credentials.rs`):** Store separately encrypted API keys and OAuth sessions per provider. Selection draws enabled, connected credentials in weighted order; upstream 401, 403 and 429 responses permit trying another credential before a response is sent. Legacy migration preserves credentials and refuses merges that would widen a virtual key's access.
 - **Model catalog (`backend/provider/catalog.rs`, `backend/server/model_catalog.rs`, `backend/server/model_settings.rs`):** Discovers models per provider, persists the last results and synchronized pricing/parameter datasheets, and refreshes them on configurable schedules. Discovery and both model-list endpoints share the `Model` type in `backend/openai.rs`, retaining extra provider metadata alongside common fields. A failed provider or datasheet sync retains the last successful data.

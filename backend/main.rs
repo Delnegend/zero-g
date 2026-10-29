@@ -148,12 +148,8 @@ async fn shutdown_signal() {
     }
 }
 
-/// Serves the router until shutdown, then stops the provider process.
-async fn bind_and_serve(
-    addr: SocketAddr,
-    app: axum::Router,
-    mut provider_process: Option<tokio::process::Child>,
-) -> Result<(), ServerError> {
+/// Serves the router until shutdown.
+async fn bind_and_serve(addr: SocketAddr, app: axum::Router) -> Result<(), ServerError> {
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|source| ServerError::Bind { addr, source })?;
@@ -163,14 +159,10 @@ async fn bind_and_serve(
         .await
         .map_err(ServerError::Serve)?;
 
-    if let Some(child) = provider_process.as_mut() {
-        let _ = child.kill().await;
-    }
-
     Ok(())
 }
 
-/// Configures the listener, background tasks, and provider process.
+/// Configures the listener and background tasks.
 async fn run_server(settings: SettingsStore, logs: LogStore) -> Result<(), ServerError> {
     let bind: String = std::env::var("ZERO_G_BIND")
         .ok()
@@ -181,6 +173,5 @@ async fn run_server(settings: SettingsStore, logs: LogStore) -> Result<(), Serve
     tokio::spawn(crate::server::model_settings::run_background(state.clone()));
     log_endpoints(addr);
     let app = create_router(state);
-    let provider_process = crate::provider::start().await;
-    bind_and_serve(addr, app, provider_process).await
+    bind_and_serve(addr, app).await
 }

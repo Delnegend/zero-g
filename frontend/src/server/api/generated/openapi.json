@@ -435,55 +435,6 @@
         }
       }
     },
-    "/api/providers/zen/free-models": {
-      "get": {
-        "tags": [],
-        "summary": "Return the free-model setting and shim status.",
-        "operationId": "getZenFreeModels",
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FreeModelsStatus"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [],
-        "summary": "Update the free-model setting after checking shim availability.",
-        "operationId": "updateZenFreeModels",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/FreeModelsInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FreeModelsStatus"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Shim unavailable"
-          }
-        }
-      }
-    },
     "/api/providers/{id}": {
       "put": {
         "tags": [],
@@ -1768,33 +1719,6 @@
               "$ref": "#/components/schemas/Credential"
             },
             "description": "Credential metadata without secrets."
-          }
-        }
-      },
-      "FreeModelsInput": {
-        "type": "object",
-        "description": "Requested free-model setting.",
-        "required": ["enabled"],
-        "properties": {
-          "enabled": {
-            "type": "boolean",
-            "description": "Whether to enable free-model routing."
-          }
-        },
-        "additionalProperties": false
-      },
-      "FreeModelsStatus": {
-        "type": "object",
-        "description": "Free-model setting and current shim health.",
-        "required": ["enabled", "shim_ready"],
-        "properties": {
-          "enabled": {
-            "type": "boolean",
-            "description": "Whether free-model routing is enabled."
-          },
-          "shim_ready": {
-            "type": "boolean",
-            "description": "Whether the configured shim is responding."
           }
         }
       },

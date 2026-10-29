@@ -224,11 +224,6 @@ pub(crate) fn dashboard_router(state: &AppState) -> Router {
         })
 }
 
-/// Starts the Zen shim when its configuration requires it.
-pub(crate) async fn start() -> Option<tokio::process::Child> {
-    zen::start().await
-}
-
 /// Provider registration and routing checks.
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]

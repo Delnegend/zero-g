@@ -392,27 +392,6 @@ export const CredentialsResponse = zod
 export type CredentialsResponse = zod.input<typeof CredentialsResponse>;
 export type CredentialsResponseOutput = zod.output<typeof CredentialsResponse>;
 
-export const FreeModelsInput = zod
-  .object({
-    enabled: zod.boolean().describe("Whether to enable free-model routing."),
-  })
-  .describe("Requested free-model setting.");
-
-export type FreeModelsInput = zod.input<typeof FreeModelsInput>;
-export type FreeModelsInputOutput = zod.output<typeof FreeModelsInput>;
-
-export const FreeModelsStatus = zod
-  .object({
-    enabled: zod.boolean().describe("Whether free-model routing is enabled."),
-    shim_ready: zod
-      .boolean()
-      .describe("Whether the configured shim is responding."),
-  })
-  .describe("Free-model setting and current shim health.");
-
-export type FreeModelsStatus = zod.input<typeof FreeModelsStatus>;
-export type FreeModelsStatusOutput = zod.output<typeof FreeModelsStatus>;
-
 export const InferenceDiscoveryError = zod
   .object({
     message: zod.string().describe("Discovery failure message."),
@@ -1188,17 +1167,6 @@ export const CreateProviderBody = zod
 
 export type CreateProviderBody = zod.input<typeof CreateProviderBody>;
 export type CreateProviderBodyOutput = zod.output<typeof CreateProviderBody>;
-
-export const UpdateZenFreeModelsBody = zod
-  .object({
-    enabled: zod.boolean().describe("Whether to enable free-model routing."),
-  })
-  .describe("Requested free-model setting.");
-
-export type UpdateZenFreeModelsBody = zod.input<typeof UpdateZenFreeModelsBody>;
-export type UpdateZenFreeModelsBodyOutput = zod.output<
-  typeof UpdateZenFreeModelsBody
->;
 
 export const UpdateProviderBody = zod
   .object({

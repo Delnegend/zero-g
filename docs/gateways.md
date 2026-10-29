@@ -28,9 +28,9 @@ model_list:
 ```
 
 LiteLLM can call `zero-g`'s `/v1/chat/completions` for chat traffic and
-`/v1/responses` for Responses requests. Paid Zen models support both APIs;
-optional free Zen models support Chat Completions only. Supply the created key
-securely via the gateway environment.
+`/v1/responses` for Responses requests. Zen forwards requests to the official
+API for all models; availability depends on the upstream. Supply the created
+key securely via the gateway environment.
 
 ## Bifrost
 
@@ -65,9 +65,8 @@ Codex and Antigravity translated Chat Completions streams emit `data: [DONE]`
 on success and report an error without a success marker if they end without a
 terminal response. Antigravity emits a final usage chunk when requested with
 `stream_options.include_usage` and usage is available; Codex does not emit
-streaming usage. Go, paid Zen and custom OpenAI-compatible providers forward
-upstream streams; free Zen chat re-emits upstream events. Their termination and
-usage reporting depend on the upstream.
+streaming usage. Go, Zen and custom OpenAI-compatible providers forward
+upstream streams. Their termination and usage reporting depend on the upstream.
 
 ## Notes
 

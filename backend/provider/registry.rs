@@ -102,6 +102,9 @@ fn validate(id: &str, name: &str, kind: &str, base_url: &str) -> Result<(), &'st
         return Err("Provider name must not be empty");
     }
     let kind = crate::provider::ProviderKind::from_str(kind).ok_or("Unsupported provider kind")?;
+    if kind.as_str() == "zen" && !base_url.is_empty() {
+        return Err("Zen uses a fixed upstream URL");
+    }
     if base_url.is_empty() {
         if kind.api_key() && kind.default_base_url().is_none() {
             return Err("Provider base URL is required for this kind");
@@ -792,6 +795,45 @@ mod tests {
         assert_eq!(
             request(&router, "PUT", "/api/providers/agy", "{}").await.0,
             StatusCode::OK
+        );
+    }
+
+    #[tokio::test]
+    async fn zen_rejects_configured_upstream_urls() {
+        let store = SettingsStore::new(
+            Database::open(":memory:").await.unwrap(),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )
+        .await
+        .unwrap();
+        let router = router(store);
+        assert_eq!(
+            request(
+                &router,
+                "POST",
+                "/api/providers",
+                r#"{"kind":"zen","base_url":"https://example.com/v1"}"#
+            )
+            .await
+            .0,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            request(&router, "POST", "/api/providers", r#"{"kind":"zen"}"#)
+                .await
+                .0,
+            StatusCode::CREATED
+        );
+        assert_eq!(
+            request(
+                &router,
+                "PUT",
+                "/api/providers/zen",
+                r#"{"base_url":"https://example.com/v1"}"#
+            )
+            .await
+            .0,
+            StatusCode::BAD_REQUEST
         );
     }
 

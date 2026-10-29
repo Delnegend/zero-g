@@ -1,6 +1,5 @@
 /target
 /credentials-*.json
-/zen-shim
 .env
 !.env.example
 *.log

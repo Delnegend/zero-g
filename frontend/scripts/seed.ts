@@ -36,8 +36,8 @@ const providers = [
     name: "zen",
     label: "OpenCode Zen",
     kind: "zen",
-    baseUrl: "http://127.0.0.1:8090/v1",
-    model: "big-pickle",
+    baseUrl: "",
+    model: "gpt-5.6",
     path: "/v1/chat/completions",
   },
 ] as const;
