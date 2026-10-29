@@ -14,6 +14,7 @@ import {
   CreatedKey,
   Credential,
   CredentialsResponse,
+  FreeModelsStatus,
   KeyList,
   ModelCatalog,
   ModelData,
@@ -34,6 +35,7 @@ import type {
   CreateKey,
   CreateProvider,
   CredentialInput,
+  FreeModelsInput,
   GetObservabilityParams,
   UpdateProvider,
   UpdateSettings,
@@ -368,6 +370,67 @@ export const createProvider = async (
     },
     body: JSON.stringify(createProviderBody),
     schema: Provider,
+  });
+};
+
+export const getGetZenFreeModelsUrl = () => {
+  return `/api/providers/zen/free-models`;
+};
+
+/**
+ * @summary Return the free-model setting and shim status.
+ */
+export const getZenFreeModels = async (
+  options?: Parameters<typeof request>[1],
+): Promise<FreeModelsStatus> => {
+  return request<FreeModelsStatus>(getGetZenFreeModelsUrl(), {
+    ...options,
+    method: "GET",
+    schema: FreeModelsStatus,
+  });
+};
+
+export const getUpdateZenFreeModelsUrl = () => {
+  return `/api/providers/zen/free-models`;
+};
+
+/**
+ * @summary Update the free-model setting after checking shim availability.
+ */
+export const updateZenFreeModels = async (
+  freeModelsInput: FreeModelsInput,
+  options?: Parameters<typeof request>[1],
+): Promise<FreeModelsStatus> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<
+      string | readonly string[] | undefined
+    >(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return request<FreeModelsStatus>(getUpdateZenFreeModelsUrl(), {
+    ...options,
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      ...getHeaders(options?.headers),
+    },
+    body: JSON.stringify(freeModelsInput),
+    schema: FreeModelsStatus,
   });
 };
 

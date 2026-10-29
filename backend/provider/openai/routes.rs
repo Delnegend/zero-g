@@ -316,7 +316,7 @@ mod tests {
                     .unwrap();
             }
         }
-        for kind in ["openai", "zen"] {
+        for kind in ["openai"] {
             for failure in [
                 StatusCode::UNAUTHORIZED,
                 StatusCode::FORBIDDEN,
@@ -360,34 +360,21 @@ mod tests {
                     };
                     let server =
                         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-                    if kind == "zen" {
-                        let req = serde_json::from_value(
-                            json!({"model":"beam-free","messages":[],"stream":true}),
-                        )
-                        .unwrap();
-                        let response =
-                            crate::provider::zen::routes::send(&store, &provider, &req).await;
-                        assert_eq!(
-                            response.status(),
-                            if all_fail { failure } else { StatusCode::OK }
-                        );
-                    } else {
-                        let response = send(
-                            &store,
-                            &provider,
-                            "models",
-                            None,
-                            Method::GET,
-                            &HeaderMap::new(),
-                            None,
-                        )
-                        .await
-                        .unwrap();
-                        assert_eq!(
-                            response.status(),
-                            if all_fail { failure } else { StatusCode::OK }
-                        );
-                    }
+                    let response = send(
+                        &store,
+                        &provider,
+                        "models",
+                        None,
+                        Method::GET,
+                        &HeaderMap::new(),
+                        None,
+                    )
+                    .await
+                    .unwrap();
+                    assert_eq!(
+                        response.status(),
+                        if all_fail { failure } else { StatusCode::OK }
+                    );
                     let first = rx.recv().await.unwrap();
                     let second = rx.recv().await.unwrap();
                     assert_ne!(first, second);
@@ -398,7 +385,7 @@ mod tests {
                 }
             }
         }
-        for (id, kind) in [("anonymous-open", "openai"), ("anonymous-zen", "zen")] {
+        for (id, kind) in [("anonymous-open", "openai")] {
             toasty::create!(ProviderRecord {
                 id: id.to_string(),
                 name: id.to_string(),
@@ -445,34 +432,21 @@ mod tests {
                 base_url: format!("http://{}/v1", listener.local_addr().unwrap()),
             };
             let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-            if kind == "zen" {
-                let req = serde_json::from_value(
-                    json!({"model":"beam-free","messages":[],"stream":true}),
+            assert_eq!(
+                send(
+                    &store,
+                    &provider,
+                    "models",
+                    None,
+                    Method::GET,
+                    &HeaderMap::new(),
+                    None
                 )
-                .unwrap();
-                assert_eq!(
-                    crate::provider::zen::routes::send(&store, &provider, &req)
-                        .await
-                        .status(),
-                    StatusCode::OK
-                );
-            } else {
-                assert_eq!(
-                    send(
-                        &store,
-                        &provider,
-                        "models",
-                        None,
-                        Method::GET,
-                        &HeaderMap::new(),
-                        None
-                    )
-                    .await
-                    .unwrap()
-                    .status(),
-                    StatusCode::OK
-                );
-            }
+                .await
+                .unwrap()
+                .status(),
+                StatusCode::OK
+            );
             assert!(!rx.recv().await.unwrap());
             assert!(rx.try_recv().is_err());
             server.abort();

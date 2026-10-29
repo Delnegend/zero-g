@@ -111,6 +111,19 @@ export function getProviders(signal?: AbortSignal) {
   return api.listProviders({ signal });
 }
 
+export function zenFreeModelsOptions() {
+  return queryOptions({
+    queryKey: ["zen-free-models"],
+    queryFn: ({ signal }) => api.getZenFreeModels({ signal }),
+    refetchInterval: 10000,
+    retry: false,
+  });
+}
+
+export function updateZenFreeModels(enabled: boolean) {
+  return api.updateZenFreeModels({ enabled });
+}
+
 export function providersOptions() {
   return queryOptions({
     queryKey: ["providers"],

@@ -26,6 +26,11 @@ import {
 } from "./components/ui/select";
 import { message } from "./server/api/client";
 import {
+  modelCatalogQueryOptions,
+  modelDatasheetsQueryOptions,
+  refreshModelCatalog,
+} from "./server/api/models";
+import {
   credentialsOptions,
   credentialUsageKey,
   credentialUsageOptions,
@@ -39,6 +44,8 @@ import {
   saveProvider,
   startCodexSignIn,
   startGoogleSignIn,
+  updateZenFreeModels,
+  zenFreeModelsOptions,
   type CredentialUpdate,
   type DeviceFlow,
   type GoogleFlow,
@@ -245,15 +252,17 @@ function ProviderForm({
                   <form.Field name="baseUrl">
                     {(field) => (
                       <Label className="block text-sm font-medium">
-                        Upstream base URL
+                        {kind === "zen" ? "Zen shim URL" : "Upstream base URL"}
                         <Input
                           className={inputClass}
                           required={kind !== "go"}
                           type="url"
                           placeholder={
-                            kind === "go"
-                              ? "https://opencode.ai/inference/go/openai/v1"
-                              : "https://api.example.com/v1"
+                            kind === "zen"
+                              ? "http://127.0.0.1:8090/v1"
+                              : kind === "go"
+                                ? "https://opencode.ai/inference/go/openai/v1"
+                                : "https://api.example.com/v1"
                           }
                           value={field.state.value}
                           onBlur={field.handleBlur}
@@ -264,6 +273,12 @@ function ProviderForm({
                       </Label>
                     )}
                   </form.Field>
+                  {kind === "zen" && (
+                    <p className="text-sm text-muted-foreground">
+                      Free models use this shim URL; paid requests go to the
+                      official Zen API.
+                    </p>
+                  )}
                 </>
               )
             }
@@ -673,6 +688,81 @@ function Credentials({
   );
 }
 
+function ZenFreeModels() {
+  const queryClient = useQueryClient();
+  const [catalogError, setCatalogError] = useState("");
+  const options = zenFreeModelsOptions();
+  const status = useQuery(options);
+  const update = useMutation({
+    mutationFn: updateZenFreeModels,
+    onSuccess: async (data) => {
+      queryClient.setQueryData(options.queryKey, data);
+      setCatalogError("");
+      try {
+        const catalog = await refreshModelCatalog();
+        await queryClient.cancelQueries({
+          queryKey: modelCatalogQueryOptions().queryKey,
+        });
+        queryClient.setQueryData(modelCatalogQueryOptions().queryKey, catalog);
+        await queryClient.invalidateQueries({
+          queryKey: modelDatasheetsQueryOptions().queryKey,
+        });
+      } catch (err) {
+        setCatalogError(message(err));
+      }
+    },
+    onSettled: () =>
+      queryClient.invalidateQueries({ queryKey: options.queryKey }),
+  });
+
+  return (
+    <div className="mt-4 grid gap-2">
+      <Label className="flex items-center gap-2">
+        <Checkbox
+          checked={status.data?.enabled ?? false}
+          disabled={
+            !status.data ||
+            update.isPending ||
+            (!status.data.shim_ready && !status.data.enabled)
+          }
+          onCheckedChange={(checked) => update.mutate(checked === true)}
+        />
+        Include free models
+      </Label>
+      {status.data && !status.data.shim_ready && (
+        <p className="text-sm text-muted-foreground">
+          The local free-model shim is offline. Start it to enable free models.
+          {status.data.enabled && " You can still disable this setting."}
+        </p>
+      )}
+      {status.isError && (
+        <Alert variant="destructive">
+          <AlertDescription>
+            Could not check free-model status: {message(status.error)}. Check
+            the dashboard connection and try again.
+          </AlertDescription>
+        </Alert>
+      )}
+      {update.isError && (
+        <Alert variant="destructive">
+          <AlertDescription>
+            Could not update free models: {message(update.error)}. Check the
+            shim and try again.
+          </AlertDescription>
+        </Alert>
+      )}
+      {catalogError && (
+        <Alert variant="destructive">
+          <AlertDescription>
+            The setting was saved, but the model catalog could not be refreshed:{" "}
+            {catalogError}. Refresh it from Models → Catalog.
+          </AlertDescription>
+        </Alert>
+      )}
+    </div>
+  );
+}
+
 function ProviderCard({
   provider,
   kind,
@@ -841,9 +931,11 @@ function ProviderCard({
       />
       {kind?.api_key && (
         <p className="mt-2 break-all text-sm text-muted-foreground">
-          Upstream: {provider.base_url}
+          {provider.kind === "zen" ? "Zen shim" : "Upstream"}:{" "}
+          {provider.base_url}
         </p>
       )}
+      {provider.kind === "zen" && <ZenFreeModels />}
       {provider.kind === "agy" && (
         <p className="mt-3 text-sm text-muted-foreground">
           Configure your Google OAuth client in Settings before signing in.

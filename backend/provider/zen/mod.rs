@@ -14,14 +14,14 @@ use tokio_stream::wrappers::ReceiverStream;
 use crate::openai::{ChatCompletionRequest, MessageContent};
 use crate::provider::quota::QuotaSnapshot;
 use crate::server::settings::SettingsStore;
-use crate::storage::{ProviderCredential, ProviderRecord, Secret};
+use crate::storage::{ProviderCredential, ProviderRecord, Secret, Setting};
 use axum::{
     Router,
     extract::{Path, State},
     http::StatusCode,
     routing::put,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// `OpenCode` Console credentials used to retrieve a workspace balance.
@@ -123,8 +123,8 @@ pub(crate) async fn connection(
 /// Zen Console connection API.
 #[derive(utoipa::OpenApi)]
 #[openapi(
-    paths(save_console, delete_console),
-    components(schemas(ConsoleConnection))
+    paths(save_console, delete_console, get_free_models, update_free_models),
+    components(schemas(ConsoleConnection, FreeModelsStatus, FreeModelsInput))
 )]
 pub(crate) struct Api;
 
@@ -146,10 +146,103 @@ async fn delete_console(
 ) -> Response {
     connection(&store, &provider, &credential, None).await
 }
+/// Persisted opt-in for free Zen models.
+const FREE_MODELS_SETTING: &str = "zen.include_free_models";
+/// Local shim used when no provider-specific URL is configured.
+const DEFAULT_SHIM: &str = "http://127.0.0.1:8090/v1";
+
+/// Free-model setting and current shim health.
+#[derive(Serialize, utoipa::ToSchema)]
+struct FreeModelsStatus {
+    /// Whether free-model routing is enabled.
+    enabled: bool,
+    /// Whether the configured shim is responding.
+    shim_ready: bool,
+}
+
+/// Requested free-model setting.
+#[derive(Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+struct FreeModelsInput {
+    /// Whether to enable free-model routing.
+    enabled: bool,
+}
+
+/// Read the persisted free-model setting.
+pub(crate) async fn free_models_enabled(store: &SettingsStore) -> Result<bool, String> {
+    Ok(store.setting_get(FREE_MODELS_SETTING).await?.as_deref() == Some("true"))
+}
+
+/// Resolve the configured shim URL or its local default.
+const fn shim_url(base_url: &str) -> &str {
+    if base_url.is_empty() {
+        DEFAULT_SHIM
+    } else {
+        base_url
+    }
+}
+
+/// Read the setting and probe the configured shim.
+async fn free_models_status(store: &SettingsStore) -> Result<FreeModelsStatus, String> {
+    let providers = crate::provider::registry::list(&store.database).await?;
+    let base = providers
+        .iter()
+        .find(|p| p.kind == "zen")
+        .map_or(DEFAULT_SHIM, |p| shim_url(&p.base_url));
+    Ok(FreeModelsStatus {
+        enabled: free_models_enabled(store).await?,
+        shim_ready: shim::is_alive(&reqwest::Client::new(), base).await,
+    })
+}
+
+/// Return the free-model setting and shim status.
+#[utoipa::path(get, path = "/api/providers/zen/free-models", operation_id = "getZenFreeModels", responses((status = 200, body = FreeModelsStatus)))]
+async fn get_free_models(State(store): State<SettingsStore>) -> Response {
+    free_models_status(&store).await.map_or_else(
+        |error| {
+            tracing::error!("Failed to read Zen free-model status: {error}");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        },
+        |status| Json(status).into_response(),
+    )
+}
+
+/// Update the free-model setting after checking shim availability.
+#[utoipa::path(put, path = "/api/providers/zen/free-models", operation_id = "updateZenFreeModels", request_body = FreeModelsInput, responses((status = 200, body = FreeModelsStatus), (status = 409, description = "Shim unavailable")))]
+async fn update_free_models(
+    State(store): State<SettingsStore>,
+    Json(input): Json<FreeModelsInput>,
+) -> Response {
+    let Ok(mut status) = free_models_status(&store).await else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    if input.enabled && !status.shim_ready {
+        return (StatusCode::CONFLICT, "Zen shim is not ready").into_response();
+    }
+    if let Err(error) = Setting::upsert_by_name(FREE_MODELS_SETTING)
+        .value(input.enabled.to_string())
+        .exec(&mut (*store.database.db).clone())
+        .await
+    {
+        tracing::error!("Failed to save Zen free-model setting: {error}");
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    status.enabled = input.enabled;
+    Json(status).into_response()
+}
+
+/// Identify free model IDs advertised by the `OpenCode` model catalog.
+pub(crate) fn is_free_model(model: &str) -> bool {
+    model == "big-pickle" || model.ends_with("-free")
+}
 
 /// Build dashboard routes for managing Console connections.
 pub(crate) fn dashboard_router(app: crate::server::AppState) -> Router {
     Router::new()
+        .route(
+            "/api/providers/zen/free-models",
+            axum::routing::get(get_free_models).put(update_free_models),
+        )
         .route(
             "/api/providers/{id}/credentials/{credential_id}/console",
             put(save_console).delete(delete_console),
@@ -220,18 +313,6 @@ pub(crate) async fn zen_balance(
         .map_err(|_| "Invalid OpenCode Console balance response")?;
     parse_balance(&value)
 }
-
-/// Zen models exposed by the local provider.
-const ZEN_MODELS: &[&str] = &[
-    "beam-free",
-    "big-pickle",
-    "deepseek-v4.1-flash-free",
-    "flint-40b-free",
-    "glm-5.3-flash-free",
-    "mimo-v2.6-flash-free",
-    "nemotron-3.5-lightning-free",
-    "nemotron-3.5-super-vl-free",
-];
 
 /// Generate an OpenCode-shaped session identifier for request attestation.
 fn session_id() -> String {
@@ -563,14 +644,6 @@ pub(crate) async fn handle_chat(
     }
 }
 
-/// Build the OpenAI-compatible list of supported Zen models.
-pub(crate) fn models_json() -> Value {
-    json!({
-        "object": "list",
-        "data": ZEN_MODELS.iter().map(|id| json!({"id": id, "object": "model", "created": 0, "owned_by": "opencode-zen"})).collect::<Vec<_>>()
-    })
-}
-
 /// Zen provider backend.
 pub(crate) struct Backend;
 
@@ -592,20 +665,26 @@ impl super::common::Provider for Backend {
     fn router(settings: &SettingsStore) -> axum::Router<crate::server::AppState> {
         routes::router(settings)
     }
-    fn discover(
-        _state: &crate::server::AppState,
+    async fn discover(
+        state: &crate::server::AppState,
         _provider: &super::registry::Provider,
-    ) -> impl Future<Output = Result<Vec<crate::openai::Model>, String>> {
-        std::future::ready(Ok(ZEN_MODELS
+    ) -> Result<Vec<crate::openai::Model>, String> {
+        let enabled = free_models_enabled(&state.settings).await?;
+        let permissions = crate::server::settings::Permissions {
+            providers: vec![],
+            models: vec![],
+        };
+        let value = routes::fetch_models(routes::MODELS_URL, enabled, &permissions)
+            .await
+            .map_err(|_| "Unable to discover Zen models".to_string())?;
+        let models = value
+            .get("data")
+            .and_then(Value::as_array)
+            .ok_or("Invalid Zen model list")?;
+        Ok(models
             .iter()
-            .map(|id| crate::openai::Model {
-                id: (*id).to_owned(),
-                object: Some("model".to_owned()),
-                created: Some(0),
-                owned_by: Some("opencode-zen".to_owned()),
-                ..Default::default()
-            })
-            .collect()))
+            .filter_map(|model| serde_json::from_value(model.clone()).ok())
+            .collect())
     }
 }
 
@@ -628,4 +707,64 @@ impl super::common::DashboardProvider for Backend {
 /// Start the local Zen shim if no instance is already responding.
 pub(super) async fn start() -> Option<tokio::process::Child> {
     shim::ensure_zen_shim("http://127.0.0.1:8090/v1").await
+}
+
+/// Free-model setting behavior.
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod free_model_tests {
+    use super::*;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    /// Enabling requires a healthy shim; disabling remains possible offline.
+    #[tokio::test]
+    async fn free_models_require_a_healthy_shim_only_when_enabling() {
+        let ready = Arc::new(AtomicBool::new(false));
+        let state = ready.clone();
+        let app = Router::new().route(
+            "/v1/health",
+            axum::routing::get(move || {
+                let ready = state.clone();
+                async move {
+                    if ready.load(Ordering::SeqCst) {
+                        StatusCode::OK
+                    } else {
+                        StatusCode::SERVICE_UNAVAILABLE
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/v1", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let database = crate::database::Database::open(":memory:").await.unwrap();
+        let store = SettingsStore::new(database, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+            .await
+            .unwrap();
+        toasty::create!(ProviderRecord {
+            id: "zen".to_string(),
+            name: "OpenCode Zen".to_string(),
+            kind: "zen".to_string(),
+            base_url: url,
+            deleted: false
+        })
+        .exec(&mut (*store.database.db).clone())
+        .await
+        .unwrap();
+
+        let update =
+            |enabled| update_free_models(State(store.clone()), Json(FreeModelsInput { enabled }));
+        assert_eq!(update(true).await.status(), StatusCode::CONFLICT);
+        assert!(!free_models_enabled(&store).await.unwrap());
+        ready.store(true, Ordering::SeqCst);
+        assert_eq!(update(true).await.status(), StatusCode::OK);
+        assert!(free_models_enabled(&store).await.unwrap());
+        ready.store(false, Ordering::SeqCst);
+        assert_eq!(update(false).await.status(), StatusCode::OK);
+        assert!(!free_models_enabled(&store).await.unwrap());
+        server.abort();
+    }
 }

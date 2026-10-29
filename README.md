@@ -66,7 +66,7 @@ flowchart LR
     Client[OpenAI Client] -->|Unified API| ZeroG[zero-g Gateway]
     ZeroG -->|OAuth| CCA[Google Antigravity]
     ZeroG -->|OAuth| Codex[OpenAI Codex]
-    ZeroG -->|TLS Proxy| Zen[OpenCode Zen]
+    ZeroG -->|Paid API or free shim| Zen[OpenCode Zen]
     ZeroG -->|OpenAI API| Go[OpenCode Go]
     ZeroG -->|OpenAI API| Custom[OpenAI-compatible upstream]
 ```

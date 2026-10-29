@@ -2,7 +2,7 @@
 
 ## Overview
 
-`zero-g` exposes one OpenAI-compatible API for multiple providers. Requests name a provider and model, such as `codex/gpt-5.3-codex`. Antigravity and Codex requests are translated to their upstream protocols; OpenCode Go and custom OpenAI-compatible providers are forwarded, and Zen supports Chat Completions through its shim. Provider credentials, virtual keys, settings and request logs are stored in the local database.
+`zero-g` exposes one OpenAI-compatible API for multiple providers. Requests name a provider and model, such as `codex/gpt-5.3-codex`. Antigravity and Codex requests are translated to their upstream protocols; OpenCode Go, paid Zen and custom OpenAI-compatible providers are forwarded. Optional free Zen chat uses the shim. Provider credentials, virtual keys, settings and request logs are stored in the local database.
 
 ```mermaid
 flowchart TD
@@ -14,7 +14,8 @@ flowchart TD
     Router -->|Load provider credentials| DB
     Router --> AGY[Antigravity translation]
     Router --> Codex[Codex translation]
-    Router --> Zen[Zen shim]
+    Router --> Zen[Zen paid API]
+    Router -->|Optional free chat| Shim[Zen shim]
     Router --> Go[OpenCode Go]
     Router --> Custom[OpenAI-compatible upstream]
     AGY --> Google[Google Cloud Code Assist]

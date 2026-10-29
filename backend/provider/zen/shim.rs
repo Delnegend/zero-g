@@ -25,7 +25,7 @@ fn shim_port(base_url: &str) -> Option<u16> {
 }
 
 /// Check whether the shim health endpoint responds successfully.
-async fn is_alive(client: &reqwest::Client, base_url: &str) -> bool {
+pub(super) async fn is_alive(client: &reqwest::Client, base_url: &str) -> bool {
     let url = format!("{}/health", base_url.trim_end_matches('/'));
     match tokio::time::timeout(PROBE_TIMEOUT, client.get(&url).send()).await {
         Ok(Ok(resp)) => resp.status().is_success(),

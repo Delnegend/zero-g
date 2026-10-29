@@ -38,7 +38,7 @@ The supplied Compose configuration builds a non-root distroless image, persists 
 
 Compose defaults `ZERO_G_BIND` to `0.0.0.0:8080` inside the container so the host port can reach it; the published port remains restricted to host loopback. If `.env` specifies `ZERO_G_BIND`, that value overrides the Compose default and must be reachable from the container network.
 
-Run `docker compose up -d`, sign in at `http://127.0.0.1:8080/`, create and copy a virtual key, and add a Zen provider with URL `http://zen-shim:8090/v1` under **Providers**. Use a protected TLS reverse proxy if remote access is needed.
+Run `docker compose up -d`, sign in at `http://127.0.0.1:8080/`, create and copy a virtual key, and add a Zen provider with shim URL `http://zen-shim:8090/v1` under **Providers**. Enable **Include free models** if needed after the shim is healthy. Paid Zen requests go directly to the official API. Use a protected TLS reverse proxy if remote access is needed.
 
 Use the dashboard **Providers** page for sign-in in containers, including remote Google callback URL paste and Codex device authorization. Do not run multiple instances against the database while provisioning.
 

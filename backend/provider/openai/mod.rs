@@ -104,6 +104,21 @@ pub(crate) async fn send(
     headers: &HeaderMap,
     body: Option<Bytes>,
 ) -> Result<reqwest::Response, &'static str> {
+    send_with_headers(base, key, path, query, method, headers, body, false).await
+}
+
+/// Forward additional end-to-end headers without exposing the caller's virtual key.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn send_with_headers(
+    base: &str,
+    key: &str,
+    path: &str,
+    query: Option<&str>,
+    method: Method,
+    headers: &HeaderMap,
+    body: Option<Bytes>,
+    all_headers: bool,
+) -> Result<reqwest::Response, &'static str> {
     let mut url = format!("{}/{}", base.trim_end_matches('/'), path);
     if let Some(query) = query {
         url.push('?');
@@ -113,8 +128,28 @@ pub(crate) async fn send(
         .as_ref()
         .map_err(|_| "Failed to initialize OpenAI-compatible provider")?;
     let mut request = client.request(method, url);
-    for name in [header::ACCEPT, header::CONTENT_TYPE] {
-        if let Some(value) = headers.get(&name) {
+    for (name, value) in headers {
+        let allowed = name == header::ACCEPT
+            || name == header::CONTENT_TYPE
+            || (all_headers
+                && !matches!(
+                    name.as_str(),
+                    "authorization"
+                        | "cookie"
+                        | "x-api-key"
+                        | "proxy-connection"
+                        | "host"
+                        | "content-length"
+                        | "connection"
+                        | "transfer-encoding"
+                        | "keep-alive"
+                        | "proxy-authorization"
+                        | "proxy-authenticate"
+                        | "te"
+                        | "trailer"
+                        | "upgrade"
+                ));
+        if allowed {
             request = request.header(name, value);
         }
     }
