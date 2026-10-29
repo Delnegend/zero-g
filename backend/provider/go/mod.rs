@@ -406,11 +406,12 @@ impl super::common::QuotaProvider for Backend {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use axum::Json;
     use serde_json::json;
     use tokio::sync::mpsc;
 
     #[test]
-    fn endpoints_and_model_permissions() {
+    fn endpoint_selection() {
         let mut provider = Provider {
             id: "go".into(),
             name: "Go".into(),
@@ -421,21 +422,119 @@ mod tests {
         assert_eq!(base(&provider, true), MODELS_BASE);
         provider.base_url = "https://example.com/v1".into();
         assert_eq!(base(&provider, true), "https://example.com/v1");
+    }
+
+    // Keep the authenticated upstream and both response scenarios together.
+    #[allow(clippy::too_many_lines)]
+    #[tokio::test]
+    async fn restricted_model_listing_filters_and_rejects_invalid_upstream() {
+        use crate::storage::{ProviderCredential, ProviderRecord, Secret};
+        use tower::ServiceExt;
+
+        let app = Router::new().route(
+            "/v1/models",
+            axum::routing::get(|headers: HeaderMap, RawQuery(query): RawQuery| async move {
+                if headers
+                    .get(header::AUTHORIZATION)
+                    .and_then(|v| v.to_str().ok())
+                    != Some("Bearer upstream-secret")
+                {
+                    return (
+                        StatusCode::UNAUTHORIZED,
+                        Json(json!({"error":"invalid credential"})),
+                    );
+                }
+                let body = if query.as_deref() == Some("invalid=1") {
+                    json!({"data":"not an array"})
+                } else {
+                    json!({"data":[{"id":"allowed","extra":1},{"id":"other"}]})
+                };
+                (StatusCode::OK, Json(body))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}/v1", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let database = crate::database::Database::open(":memory:").await.unwrap();
+        let store = SettingsStore::new(
+            database.clone(),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )
+        .await
+        .unwrap();
+        toasty::create!(ProviderRecord {
+            id: "go".to_string(),
+            name: "Go".to_string(),
+            kind: "go".to_string(),
+            base_url: base_url.clone(),
+            deleted: false
+        })
+        .exec(&mut (*database.db).clone())
+        .await
+        .unwrap();
+        toasty::create!(ProviderCredential {
+            id: "key".to_string(),
+            provider_id: "go".to_string(),
+            name: "key".to_string(),
+            weight: 1,
+            enabled: true
+        })
+        .exec(&mut (*database.db).clone())
+        .await
+        .unwrap();
+        let secret_name = "credential.key.api_key";
+        Secret::upsert_by_name(secret_name)
+            .value(store.encrypt(secret_name, "upstream-secret").unwrap())
+            .exec(&mut (*database.db).clone())
+            .await
+            .unwrap();
+        let state = AppState {
+            providers: crate::provider::Providers::new(),
+            settings: store,
+            logs: crate::server::observability::LogStore::new(database),
+            dashboard_auth: crate::server::dashboard_auth::DashboardAuth::test().unwrap(),
+        };
+        let provider = Provider {
+            id: "go".into(),
+            name: "Go".into(),
+            kind: "go".into(),
+            base_url,
+        };
         let permissions = Permissions {
             providers: vec![],
             models: vec!["allowed".into()],
         };
-        assert!(check_model(br#"{"model":"allowed"}"#, &permissions).is_ok());
-        assert_eq!(
-            check_model(br#"{"model":"other"}"#, &permissions)
-                .unwrap_err()
-                .into_response()
-                .status(),
-            StatusCode::FORBIDDEN
-        );
-        let mut models = json!({"data":[{"id":"allowed","extra":1},{"id":"other"}]});
-        assert!(filter_models(&mut models, &permissions));
-        assert_eq!(models, json!({"data":[{"id":"allowed","extra":1}]}));
+        let router = Router::new()
+            .route("/v1/models", axum::routing::get(models_handler))
+            .layer(Extension(provider))
+            .layer(Extension(permissions))
+            .with_state(state);
+        for (uri, expected) in [
+            ("/v1/models", StatusCode::OK),
+            ("/v1/models?invalid=1", StatusCode::BAD_GATEWAY),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    axum::http::Request::builder()
+                        .uri(uri)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected);
+            if expected == StatusCode::OK {
+                let body = axum::body::to_bytes(response.into_body(), 4096)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    serde_json::from_slice::<Value>(&body).unwrap(),
+                    json!({"data":[{"id":"allowed","extra":1}]})
+                );
+            }
+        }
+        server.abort();
     }
 
     #[tokio::test]

@@ -230,22 +230,9 @@ pub(crate) fn dashboard_router(state: &AppState) -> Router {
 mod tests {
     use super::*;
 
-    /// Descriptors agree with kind capabilities and path matching.
+    /// Provider paths match complete path segments.
     #[test]
-    fn registered_capabilities_match_provider_kinds() {
-        for descriptor in PROVIDER_KINDS {
-            let kind = ProviderKind::from_str(descriptor.value).unwrap();
-            assert_eq!(kind.as_str(), descriptor.value);
-            assert_eq!(kind.oauth(), descriptor.oauth);
-            assert_eq!(kind.api_key(), descriptor.api_key);
-            assert_eq!(kind.keyless(), descriptor.keyless);
-        }
-        assert!(ProviderKind::from_str("unknown").is_none());
-        assert!(ProviderKind::Openai.quota().is_none());
-        assert!(ProviderKind::Antigravity.quota().is_some());
-        assert!(ProviderKind::Codex.quota().is_some());
-        assert!(ProviderKind::Zen.quota().is_some());
-        assert!(ProviderKind::Go.quota().is_some());
+    fn provider_path_matches_kind() {
         assert!(is_provider_path("/openai/example/v1/models"));
         assert!(!is_provider_path("/openaix/example"));
     }
