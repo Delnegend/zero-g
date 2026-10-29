@@ -1,13 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  createRootRoute,
-  createRoute,
-  createRouter,
   HeadContent,
   Link,
   Outlet,
-  RouterProvider,
   useRouterState,
 } from "@tanstack/react-router";
 import {
@@ -21,8 +17,6 @@ import {
   Sun,
 } from "lucide-react";
 import { Button } from "./components/ui/button";
-import { Management } from "./Management";
-import { ModelCatalogPage, ModelSettingsPage } from "./Models";
 import { ObservabilitySkeleton } from "./components/Loading";
 import { RefreshButton } from "./components/RefreshButton";
 import { Card } from "./components/ui/card";
@@ -73,7 +67,11 @@ function formatDate(value: number): string {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
 }
 
-function ObservabilityPage({ logsOnly = false }: { logsOnly?: boolean }) {
+export function ObservabilityPage({
+  logsOnly = false,
+}: {
+  logsOnly?: boolean;
+}) {
   const [range, setRange] = useState<DashboardRange>({
     kind: "preset",
     value: "24h",
@@ -422,7 +420,7 @@ function DashboardSidebar() {
   );
 }
 
-function App() {
+export default function App() {
   const [dark, setDark] = useState(() => {
     const saved = localStorage.getItem("zero-g-theme");
     return (
@@ -455,61 +453,4 @@ function App() {
       </SidebarInset>
     </SidebarProvider>
   );
-}
-
-const rootRoute = createRootRoute({ component: App });
-const routeTree = rootRoute.addChildren([
-  createRoute({
-    getParentRoute: () => rootRoute,
-    path: "/",
-    head: () => ({ meta: [{ title: "Dashboard · Zero-G" }] }),
-    component: () => <ObservabilityPage />,
-  }),
-  createRoute({
-    getParentRoute: () => rootRoute,
-    path: "/llm-logs",
-    head: () => ({ meta: [{ title: "LLM Logs · Zero-G" }] }),
-    component: () => <ObservabilityPage logsOnly />,
-  }),
-  createRoute({
-    getParentRoute: () => rootRoute,
-    path: "/settings",
-    head: () => ({ meta: [{ title: "Settings · Zero-G" }] }),
-    component: () => <Management page="settings" />,
-  }),
-  createRoute({
-    getParentRoute: () => rootRoute,
-    path: "/keys",
-    head: () => ({ meta: [{ title: "Virtual keys · Zero-G" }] }),
-    component: () => <Management page="keys" />,
-  }),
-  createRoute({
-    getParentRoute: () => rootRoute,
-    path: "/models/providers",
-    head: () => ({ meta: [{ title: "Providers · Zero-G" }] }),
-    component: () => <Management page="providers" />,
-  }),
-  createRoute({
-    getParentRoute: () => rootRoute,
-    path: "/models/catalog",
-    head: () => ({ meta: [{ title: "Catalog · Zero-G" }] }),
-    component: ModelCatalogPage,
-  }),
-  createRoute({
-    getParentRoute: () => rootRoute,
-    path: "/models/settings",
-    head: () => ({ meta: [{ title: "Model settings · Zero-G" }] }),
-    component: ModelSettingsPage,
-  }),
-]);
-const router = createRouter({ routeTree });
-
-declare module "@tanstack/react-router" {
-  interface Register {
-    router: typeof router;
-  }
-}
-
-export default function AppRouter() {
-  return <RouterProvider router={router} />;
 }

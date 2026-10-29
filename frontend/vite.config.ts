@@ -1,4 +1,5 @@
 import tailwindcss from "@tailwindcss/vite";
+import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import http from "node:http";
 import { readFileSync } from "node:fs";
@@ -90,7 +91,13 @@ function redocBundle(): Plugin {
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [dashboardAuth(), redocBundle(), react(), tailwindcss()],
+  plugins: [
+    dashboardAuth(),
+    redocBundle(),
+    tanstackRouter({ target: "react" }),
+    react({ compiler: true }),
+    tailwindcss(),
+  ],
   server: {
     host: "127.0.0.1",
     port: 5173,
