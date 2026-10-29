@@ -22,10 +22,13 @@ Open `http://127.0.0.1:5173`. Vite forwards `/api`, `/auth/callback` and `/redoc
 Vite checks dashboard access with the Rust backend before serving the page or frontend assets. In Basic mode, open the page in a browser that supports the HTTP Basic sign-in prompt. If the backend is unavailable, Vite returns 502 instead of serving the dashboard.
 Use the exact `127.0.0.1` address above: `localhost` is a different origin and is rejected with `Invalid request origin`.
 
-Run `just fmt` to format Rust, frontend, and shim code, and `just lint` to lint the frontend.
+Run `just fmt` to format Rust and frontend code, and `just lint` to lint the frontend.
+Vite runs the experimental Oxc React Compiler for development and production builds, automatically memoizing eligible components.
 Dashboard pages use the shared skeleton components in `frontend/src/components/Loading.tsx` for initial data loads. The dashboard keeps the previous results visible and shows **Updating** while a refresh or new time range loads, preventing layout shifts.
 Dashboard and catalog refresh controls share `frontend/src/components/RefreshButton.tsx`, including their disabled and updating states.
-Dashboard page titles are defined in their TanStack Router route metadata in `frontend/src/App.tsx`.
+The root tooltip provider opens shadcn tooltips without delay. Model descriptions show a tooltip only when clipped to three lines; long tooltip text scrolls within the popup.
+Dashboard routes and their page titles live in `frontend/src/routes/`, mirroring their URLs. The TanStack Router Vite plugin generates `frontend/src/routeTree.gen.ts` during development and builds; commit the generated file when changing routes and do not edit it manually.
+Provider management keeps its page in `frontend/src/ProvidersPage.tsx` and its form, credential list and provider card components in `frontend/src/components/providers/`. The add-provider dialog keeps its initial kind choices until it closes, so a refresh after saving cannot replace the selected label.
 The requests chart uses TanStack Charts' motion renderer and theme-aware tooltip tokens; motion respects the browser's reduced-motion preference.
 The request log table uses TanStack Table v9 with explicit filtering, sorting and pagination features.
 
