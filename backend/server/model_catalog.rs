@@ -42,7 +42,7 @@ struct CatalogProvider {
 
 /// Persisted snapshot of provider discovery results.
 #[derive(Default, Serialize, Deserialize, utoipa::ToSchema)]
-struct ModelCatalog {
+pub(super) struct ModelCatalog {
     /// Providers reconciled with the registry on load.
     providers: Vec<CatalogProvider>,
 }
@@ -108,7 +108,7 @@ async fn save(store: &SettingsStore, catalog: &ModelCatalog) -> Result<(), Strin
 }
 
 /// Discover providers concurrently and retain last successful models on failure.
-async fn refresh_catalog(state: &AppState) -> Result<ModelCatalog, String> {
+pub(super) async fn refresh_catalog(state: &AppState) -> Result<ModelCatalog, String> {
     let current = registry::list(&state.settings.database).await?;
     let mut catalog = load(&state.settings).await?;
     let results = join_all(current.iter().map(|provider| async move {
@@ -136,13 +136,6 @@ async fn refresh_catalog(state: &AppState) -> Result<ModelCatalog, String> {
     save(&state.settings, &catalog).await?;
     // Registry may change while network calls are running.
     load(&state.settings).await
-}
-
-/// Refresh the catalog, logging failures for background callers.
-pub(crate) async fn refresh(state: &AppState) {
-    if refresh_catalog(state).await.is_err() {
-        tracing::error!("Failed to refresh model catalog");
-    }
 }
 
 /// Return the current reconciled catalog.

@@ -520,7 +520,10 @@ pub(crate) async fn run_background(state: AppState) {
                     if due(last, settings.discovery_interval_minutes.saturating_mul(60)) =>
                 {
                     last = Some(Instant::now());
-                    crate::server::model_catalog::refresh(&state).await;
+                    if let Err(error) = crate::server::model_catalog::refresh_catalog(&state).await
+                    {
+                        tracing::error!("Failed to refresh model catalog: {error}");
+                    }
                 }
                 Ok(_) => {}
                 Err(_) => tracing::warn!("Unable to load model settings for model discovery"),
