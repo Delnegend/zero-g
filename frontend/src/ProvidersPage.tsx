@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 import { Alert, AlertDescription } from "./components/ui/alert";
 import { Button } from "./components/ui/button";
 import { Card } from "./components/ui/card";
@@ -711,11 +711,7 @@ function ProviderCard({
   const [notice, setNotice] = useState("");
   const [loginCredential, setLoginCredential] =
     useState<ProviderCredential | null>(null);
-  const [copyState, setCopyState] = useState<
-    "idle" | "copying" | "success" | "fading"
-  >("idle");
   const path = credentialsPath(provider.id, loginCredential?.id);
-  const clientUrl = `${window.location.origin}/${provider.kind}/${encodeURIComponent(provider.id)}/v1`;
   const refresh = useCallback(() => {
     void queryClient
       .invalidateQueries({
@@ -749,15 +745,6 @@ function ProviderCard({
       }
     },
   });
-
-  useEffect(() => {
-    if (copyState !== "success" && copyState !== "fading") return;
-    const timer = window.setTimeout(
-      () => setCopyState(copyState === "success" ? "fading" : "idle"),
-      copyState === "success" ? 300 : 150,
-    );
-    return () => window.clearTimeout(timer);
-  }, [copyState]);
 
   useEffect(() => {
     const flow = google ?? device;
@@ -846,24 +833,40 @@ function ProviderCard({
     }
   }
 
-  async function copyUrl() {
-    setCopyState("copying");
-    try {
-      await navigator.clipboard.writeText(clientUrl);
-      setCopyState("success");
-      setError("");
-    } catch {
-      setCopyState("idle");
-      setError("Could not copy the URL; select it below to copy manually.");
-    }
-  }
-
   return (
     <Card className="mt-6 p-5">
-      <h2 className="text-lg font-semibold">{provider.name}</h2>
-      <p className="mt-1 text-sm text-muted-foreground">
-        {kind?.label ?? provider.kind} · {provider.id}
-      </p>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h2 className="break-words text-lg font-semibold">{provider.name}</h2>
+          <p className="mt-1 break-all text-sm text-muted-foreground">
+            {kind?.label ?? provider.kind} · {provider.id}
+          </p>
+        </div>
+        <div className="flex shrink-0 gap-2">
+          {kind && (kind.api_key || kind.fixed_name === null) && (
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label={`Edit ${provider.name}`}
+              disabled={busy || deleting}
+              onClick={onEdit}
+            >
+              <Pencil />
+            </Button>
+          )}
+          <Button
+            variant="destructive"
+            size="icon"
+            aria-label={
+              deleting ? `Deleting ${provider.name}` : `Delete ${provider.name}`
+            }
+            disabled={busy || deleting}
+            onClick={onDelete}
+          >
+            <Trash2 />
+          </Button>
+        </div>
+      </div>
       <Credentials
         provider={provider}
         kind={kind}
@@ -875,45 +878,6 @@ function ProviderCard({
           Upstream: {provider.base_url}
         </p>
       )}
-      <p className="mt-3 text-sm">Client base URL:</p>
-      <code className="mt-1 block break-all select-all">{clientUrl}</code>
-      <div className="mt-4 flex flex-wrap gap-2">
-        <Button
-          variant="outline"
-          className="relative overflow-hidden disabled:opacity-100"
-          disabled={copyState !== "idle"}
-          onClick={() => void copyUrl()}
-        >
-          Copy URL
-          <span
-            aria-hidden="true"
-            className={`pointer-events-none absolute inset-0 flex items-center justify-center bg-green-100 text-green-700 transition-opacity duration-150 dark:bg-green-900 dark:text-green-200 motion-reduce:transition-none ${copyState === "success" ? "opacity-100" : "opacity-0"}`}
-          >
-            <Check />
-          </span>
-          <span role="status" className="sr-only">
-            {copyState === "success" || copyState === "fading"
-              ? "Client URL copied"
-              : ""}
-          </span>
-        </Button>
-        {kind && (kind.api_key || kind.fixed_name === null) && (
-          <Button
-            variant="outline"
-            disabled={busy || deleting}
-            onClick={onEdit}
-          >
-            Edit
-          </Button>
-        )}
-        <Button
-          variant="outline"
-          disabled={busy || deleting}
-          onClick={onDelete}
-        >
-          {deleting ? "Deleting…" : "Delete"}
-        </Button>
-      </div>
       {provider.kind === "agy" && (
         <p className="mt-3 text-sm text-muted-foreground">
           Configure your Google OAuth client in Settings before signing in.
