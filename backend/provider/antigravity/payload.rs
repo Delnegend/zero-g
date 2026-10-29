@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use rand::RngCore;
 use serde_json::{Value, json};
 
 use crate::openai::{ChatCompletionRequest, ChatMessage, ContentPart, MessageContent, Tool};
@@ -26,10 +25,12 @@ impl AntigravityClient {
         req: &ChatCompletionRequest,
         project_id: &str,
         wire_model: &str,
+        session_id: &str,
+        info: Option<&super::AntigravityModelInfo>,
     ) -> Value {
-        let meta = Self::new_request_meta(wire_model);
-        let (system_prompts, contents) = Self::collect_messages(&req.messages);
-        let generation_config = Self::build_generation_config(req, meta.is_claude);
+        let meta = Self::new_request_meta(wire_model, session_id);
+        let (system_prompts, contents) = Self::collect_messages(&req.messages, wire_model);
+        let generation_config = Self::build_generation_config(req, info);
         let labels = Self::build_labels(&meta.traj_id, meta.is_claude);
 
         let mut inner_request = json!({
@@ -55,12 +56,30 @@ impl AntigravityClient {
             }]);
         }
 
-        if meta.is_claude || req.tools.as_ref().is_some_and(|t| !t.is_empty()) {
-            inner_request["toolConfig"] = json!({
-                "functionCallingConfig": {
-                    "mode": "VALIDATED"
-                }
-            });
+        if meta.is_claude
+            || req.tool_choice.is_some()
+            || req.tools.as_ref().is_some_and(|t| !t.is_empty())
+        {
+            let choice = req.tool_choice.as_ref();
+            let mode = match choice.and_then(Value::as_str) {
+                Some("none") => "NONE",
+                Some("required") => "ANY",
+                Some("auto") => "AUTO",
+                _ if choice.is_some_and(Value::is_object) => "ANY",
+                _ => "VALIDATED",
+            };
+            let mut config = json!({ "mode": mode });
+            if let Some(name) = choice
+                .and_then(|value| {
+                    value
+                        .pointer("/function/name")
+                        .or_else(|| value.get("name"))
+                })
+                .and_then(Value::as_str)
+            {
+                config["allowedFunctionNames"] = json!([name]);
+            }
+            inner_request["toolConfig"] = json!({ "functionCallingConfig": config });
         }
 
         json!({
@@ -73,7 +92,7 @@ impl AntigravityClient {
     }
 
     /// Generates request identifiers and detects Claude models.
-    fn new_request_meta(wire_model: &str) -> RequestMeta {
+    fn new_request_meta(wire_model: &str, session_id: &str) -> RequestMeta {
         use std::time::{SystemTime, UNIX_EPOCH};
 
         let now_ms = SystemTime::now()
@@ -83,19 +102,16 @@ impl AntigravityClient {
         let traj_id = uuid::Uuid::new_v4().to_string();
         let request_id = format!("agent/{agent_id}/{now_ms}/{traj_id}/1");
 
-        let mut rng = rand::rng();
-        let session_id = format!("-{}", rng.next_u64() % 9_000_000_000_000_000_000);
-
         RequestMeta {
             is_claude: wire_model.contains("claude"),
-            session_id,
+            session_id: session_id.to_owned(),
             traj_id,
             request_id,
         }
     }
 
     /// Separates system prompts from converted conversation contents.
-    fn collect_messages(messages: &[ChatMessage]) -> (Vec<String>, Vec<Value>) {
+    fn collect_messages(messages: &[ChatMessage], wire_model: &str) -> (Vec<String>, Vec<Value>) {
         let mut system_prompts = Vec::new();
         let mut contents = Vec::new();
         let mut tool_call_names: HashMap<String, String> = HashMap::new();
@@ -109,7 +125,12 @@ impl AntigravityClient {
                     Self::handle_user_message(msg, &mut contents);
                 }
                 "assistant" => {
-                    Self::handle_assistant_message(msg, &mut contents, &mut tool_call_names);
+                    Self::handle_assistant_message(
+                        msg,
+                        &mut contents,
+                        &mut tool_call_names,
+                        wire_model,
+                    );
                 }
                 "tool" => {
                     Self::handle_tool_message(msg, &mut contents, &tool_call_names);
@@ -183,8 +204,9 @@ impl AntigravityClient {
         msg: &ChatMessage,
         contents: &mut Vec<Value>,
         tool_call_names: &mut HashMap<String, String>,
+        wire_model: &str,
     ) {
-        let parts = Self::assistant_parts(msg, tool_call_names);
+        let parts = Self::assistant_parts(msg, tool_call_names, wire_model);
         if !parts.is_empty() {
             contents.push(json!({
                 "role": "model",
@@ -197,27 +219,66 @@ impl AntigravityClient {
     fn assistant_parts(
         msg: &ChatMessage,
         tool_call_names: &mut HashMap<String, String>,
+        wire_model: &str,
     ) -> Vec<Value> {
         let mut parts = Vec::new();
-        if let Some(content) = &msg.content {
+        if let Some(provider_parts) = &msg.provider_parts {
+            for item in provider_parts {
+                let Some(text) = item.get("text").and_then(Value::as_str) else {
+                    continue;
+                };
+                let reasoning = match item.get("type").and_then(Value::as_str) {
+                    Some("reasoning") => true,
+                    Some("text") => false,
+                    _ => continue,
+                };
+                let signature = item
+                    .get("thought_signature")
+                    .and_then(Value::as_str)
+                    .and_then(|signature| super::replay_signature(wire_model, signature));
+                let mut part = json!({ "text": text });
+                if let Some(object) = part.as_object_mut() {
+                    if reasoning {
+                        object.insert("thought".to_string(), json!(true));
+                    }
+                    if let Some(signature) = signature {
+                        object.insert("thoughtSignature".to_string(), json!(signature));
+                    }
+                }
+                parts.push(part);
+            }
+        }
+        if parts.is_empty()
+            && let Some(content) = &msg.content
+        {
             let text = content.as_text();
             if !text.trim().is_empty() {
                 parts.push(json!({ "text": text }));
             }
         }
         if let Some(tool_calls) = &msg.tool_calls {
-            for tool_call in tool_calls {
+            for (index, tool_call) in tool_calls.iter().enumerate() {
                 tool_call_names.insert(tool_call.id.clone(), tool_call.function.name.clone());
                 let args: Value = serde_json::from_str(&tool_call.function.arguments)
                     .unwrap_or_else(|_| json!({}));
-                parts.push(json!({
+                let mut part = json!({
                     "functionCall": {
                         "name": tool_call.function.name,
                         "args": args,
                         "id": tool_call.id
-                    },
-                    "thoughtSignature": "skip_thought_signature_validator"
-                }));
+                    }
+                });
+                let signature = tool_call
+                    .thought_signature
+                    .as_deref()
+                    .and_then(|signature| super::replay_signature(wire_model, signature))
+                    .or_else(|| {
+                        (index == 0).then(|| "skip_thought_signature_validator".to_string())
+                    });
+                if let (Some(object), Some(signature)) = (part.as_object_mut(), signature) {
+                    object.insert("thoughtSignature".to_string(), json!(signature));
+                }
+                parts.push(part);
             }
         }
         parts
@@ -288,7 +349,10 @@ impl AntigravityClient {
     /// Builds generation settings, applying model-specific output token limits.
     // The generation config is constructed as a JSON object; indexing inserts fields.
     #[allow(clippy::indexing_slicing)]
-    fn build_generation_config(req: &ChatCompletionRequest, is_claude: bool) -> Value {
+    fn build_generation_config(
+        req: &ChatCompletionRequest,
+        info: Option<&super::AntigravityModelInfo>,
+    ) -> Value {
         let mut generation_config = json!({});
         if let Some(temp) = req.temperature {
             generation_config["temperature"] = json!(temp);
@@ -296,16 +360,40 @@ impl AntigravityClient {
         if let Some(top_p) = req.top_p {
             generation_config["topP"] = json!(top_p);
         }
-        let max_output = req
-            .max_completion_tokens
-            .or(req.max_tokens)
-            .unwrap_or(if is_claude { 64000 } else { 65535 });
-        let max_output = if is_claude && max_output > 64000 {
-            64000
-        } else {
-            max_output
-        };
-        generation_config["maxOutputTokens"] = json!(max_output);
+        let requested = req.max_completion_tokens.or(req.max_tokens);
+        let limit = info.and_then(|model| model.max_output_tokens);
+        if let Some(max_output) = match (requested, limit) {
+            (Some(requested), Some(limit)) => Some(requested.min(limit)),
+            (Some(requested), None) => Some(requested),
+            (None, limit) => limit,
+        } {
+            generation_config["maxOutputTokens"] = json!(max_output);
+        }
+        if let Some(info) = info {
+            let mut thinking = json!({});
+            if let Some(level) = info
+                .extra
+                .get("thinkingLevel")
+                .and_then(Value::as_u64)
+                .and_then(|level| match level {
+                    1 => Some("LOW"),
+                    2 => Some("MEDIUM"),
+                    3 => Some("HIGH"),
+                    _ => None,
+                })
+            {
+                thinking["thinkingLevel"] = json!(level);
+            } else if let Some(budget) = info.extra.get("thinkingBudget").and_then(Value::as_i64) {
+                thinking["thinkingBudget"] = json!(budget);
+            }
+            if thinking
+                .as_object()
+                .is_some_and(|object| !object.is_empty())
+            {
+                thinking["includeThoughts"] = json!(true);
+                generation_config["thinkingConfig"] = thinking;
+            }
+        }
         generation_config
     }
 
@@ -381,6 +469,7 @@ mod tests {
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,
+                    provider_parts: None,
                 },
                 ChatMessage {
                     role: "user".to_string(),
@@ -388,6 +477,7 @@ mod tests {
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,
+                    provider_parts: None,
                 },
             ],
             temperature: Some(0.7),
@@ -406,6 +496,8 @@ mod tests {
             &req,
             "test-proj-123",
             "claude-sonnet-5-5-medium",
+            "test-session",
+            None,
         );
 
         assert_eq!(payload["project"], "test-proj-123");

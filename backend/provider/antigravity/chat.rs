@@ -35,12 +35,18 @@ pub(crate) struct ChatStreamSerializer {
 impl crate::provider::antigravity::sse::SseSerializer for ChatStreamSerializer {
     fn handle(&mut self, event: AntigravityEvent) -> Vec<Event> {
         match event {
-            AntigravityEvent::Text(text) => self.text_event(Some(text), None),
-            AntigravityEvent::Reasoning(text) => self.text_event(None, Some(text)),
+            AntigravityEvent::Text(text) => self.text_event(text, false, None),
+            AntigravityEvent::Reasoning(text) => self.text_event(text, true, None),
+            AntigravityEvent::SignedPart {
+                text,
+                reasoning,
+                signature,
+            } => self.text_event(text, reasoning, Some(&signature)),
             AntigravityEvent::ToolCall {
                 id,
                 name,
                 arguments,
+                thought_signature,
             } => {
                 self.has_tools = true;
                 let chunk = ChatCompletionChunk {
@@ -67,7 +73,11 @@ impl crate::provider::antigravity::sse::SseSerializer for ChatStreamSerializer {
                                     name: Some(name),
                                     arguments: Some(arguments),
                                 }),
+                                thought_signature: thought_signature.map(|signature| {
+                                    super::scoped_signature(&self.req_model, &signature)
+                                }),
                             }]),
+                            provider_parts: None,
                         },
                         finish_reason: None,
                     }],
@@ -106,25 +116,6 @@ impl crate::provider::antigravity::sse::SseSerializer for ChatStreamSerializer {
     fn finish(&mut self) -> Vec<Event> {
         let mut events = Vec::new();
 
-        if !self.finish_sent {
-            let reason = if self.has_tools { "tool_calls" } else { "stop" };
-            let chunk = ChatCompletionChunk {
-                id: self.stream_id.clone(),
-                object: "chat.completion.chunk".to_string(),
-                created: self.created,
-                model: self.req_model.clone(),
-                choices: vec![ChunkChoice {
-                    index: 0,
-                    delta: ChunkDelta::default(),
-                    finish_reason: Some(reason.to_string()),
-                }],
-                usage: None,
-            };
-            if let Ok(data) = serde_json::to_string(&chunk) {
-                events.push(Event::default().data(data));
-            }
-        }
-
         if self.include_usage && self.saw_usage {
             let chunk = json!({
                 "id": self.stream_id,
@@ -147,11 +138,18 @@ impl crate::provider::antigravity::sse::SseSerializer for ChatStreamSerializer {
 
 impl ChatStreamSerializer {
     /// Emits a text or reasoning delta, including the role if needed.
-    fn text_event(
-        &mut self,
-        content: Option<String>,
-        reasoning_content: Option<String>,
-    ) -> Vec<Event> {
+    fn text_event(&mut self, text: String, reasoning: bool, signature: Option<&str>) -> Vec<Event> {
+        let provider_parts = Some(vec![super::provider_part(
+            &self.req_model,
+            &text,
+            reasoning,
+            signature,
+        )]);
+        let (content, reasoning_content) = if reasoning {
+            (None, Some(text))
+        } else {
+            (Some(text), None)
+        };
         let chunk = ChatCompletionChunk {
             id: self.stream_id.clone(),
             object: "chat.completion.chunk".to_string(),
@@ -169,6 +167,7 @@ impl ChatStreamSerializer {
                     content,
                     reasoning_content,
                     tool_calls: None,
+                    provider_parts,
                 },
                 finish_reason: None,
             }],

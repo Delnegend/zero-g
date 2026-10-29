@@ -16,6 +16,7 @@ use crate::provider::antigravity::models::{ResolveError, normalize_models};
 use crate::provider::antigravity::responses::ResponsesStreamSerializer;
 use crate::provider::antigravity::{AntigravityClient, AuthManager};
 use crate::provider::common::errors::UpstreamError;
+use crate::provider::common::session::RequestSession;
 use crate::provider::registry::Provider;
 use crate::responses::{
     ResponseContentPart, ResponseCreateRequest, ResponseObject, ResponseOutputItem, ResponseUsage,
@@ -49,6 +50,39 @@ fn model_forbidden() -> Response {
         )),
     )
         .into_response()
+}
+
+/// Validates the supported `OpenAI` tool selection shapes.
+fn validate_tool_choice(
+    choice: Option<&Value>,
+    tools: Option<&[crate::openai::Tool]>,
+) -> Option<Response> {
+    let choice = choice?;
+    let available = tools.unwrap_or_default();
+    let valid = match choice.as_str() {
+        Some("auto" | "none") => true,
+        Some("required") => !available.is_empty(),
+        Some(_) => false,
+        None => {
+            let name = choice
+                .pointer("/function/name")
+                .or_else(|| choice.get("name"))
+                .and_then(Value::as_str);
+            choice.get("type").and_then(Value::as_str) == Some("function")
+                && name.is_some_and(|name| available.iter().any(|tool| tool.function.name == name))
+        }
+    };
+    (!valid).then(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(crate::server::error_body(
+                "Invalid tool_choice or unavailable function",
+                "invalid_request_error",
+                Some("invalid_tool_choice"),
+            )),
+        )
+            .into_response()
+    })
 }
 
 /// Failure while selecting credentials or contacting the upstream service.
@@ -141,9 +175,21 @@ async fn pooled_stream(
     state: &AppState,
     provider: &Provider,
     req: &ChatCompletionRequest,
+    session_id: &str,
 ) -> Result<reqwest::Response, PoolError> {
     with_pool(state, provider, |creds| async move {
-        let payload = AntigravityClient::build_request_payload(req, &creds.project_id, &req.model);
+        let models = state.providers.client.fetch_models(&creds).await?;
+        let info = models
+            .iter()
+            .find(|(id, _)| id == &req.model)
+            .map(|(_, info)| info);
+        let payload = AntigravityClient::build_request_payload(
+            req,
+            &creds.project_id,
+            &req.model,
+            session_id,
+            info,
+        );
         state
             .providers
             .client
@@ -328,8 +374,12 @@ async fn chat_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
+    Extension(session): Extension<RequestSession>,
     Json(mut req): Json<ChatCompletionRequest>,
 ) -> Response {
+    if let Some(error) = validate_tool_choice(req.tool_choice.as_ref(), req.tools.as_deref()) {
+        return error;
+    }
     let effort = req.reasoning_effort.as_deref().or_else(|| {
         req.reasoning
             .as_ref()
@@ -345,12 +395,13 @@ async fn chat_handler(
     let is_streaming = req.stream.unwrap_or(false);
 
     if is_streaming {
-        handle_chat_streaming(&state, &provider, req).await
+        handle_chat_streaming(&state, &provider, req, &session.id).await
     } else {
         match with_pool(&state, &provider, |creds| {
             let req = &req;
             let client = &state.providers.client;
-            async move { client.complete_non_streaming(&creds, req).await }
+            let session_id = &session.id;
+            async move { client.complete_non_streaming(&creds, req, session_id).await }
         })
         .await
         {
@@ -365,8 +416,9 @@ async fn handle_chat_streaming(
     state: &AppState,
     provider: &Provider,
     req: ChatCompletionRequest,
+    session_id: &str,
 ) -> Response {
-    let upstream_resp = match pooled_stream(state, provider, &req).await {
+    let upstream_resp = match pooled_stream(state, provider, &req, session_id).await {
         Ok(response) => response,
         Err(error) => return pool_error_response(error),
     };
@@ -402,8 +454,12 @@ async fn responses_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
+    Extension(session): Extension<RequestSession>,
     Json(mut req): Json<ResponseCreateRequest>,
 ) -> Response {
+    if let Some(error) = validate_tool_choice(req.tool_choice.as_ref(), req.tools.as_deref()) {
+        return error;
+    }
     let effort = req.reasoning_effort.as_deref().or_else(|| {
         req.reasoning
             .as_ref()
@@ -422,12 +478,17 @@ async fn responses_handler(
     let chat_req = req.into_chat_request();
 
     if is_streaming {
-        handle_responses_streaming(&state, &provider, chat_req, original_model).await
+        handle_responses_streaming(&state, &provider, chat_req, original_model, &session.id).await
     } else {
         match with_pool(&state, &provider, |creds| {
             let chat_req = &chat_req;
             let client = &state.providers.client;
-            async move { client.complete_non_streaming(&creds, chat_req).await }
+            let session_id = &session.id;
+            async move {
+                client
+                    .complete_non_streaming(&creds, chat_req, session_id)
+                    .await
+            }
         })
         .await
         {
@@ -436,15 +497,17 @@ async fn responses_handler(
                 let mut output_text = String::new();
 
                 for choice in &resp.choices {
-                    if let Some(content) = &choice.message.content {
+                    if choice.message.content.is_some() || choice.message.provider_parts.is_some() {
+                        let content = choice.message.content.as_deref().unwrap_or_default();
                         output_text.push_str(content);
                         output_items.push(ResponseOutputItem::Message {
                             id: format!("msg_{}", uuid::Uuid::new_v4().simple()),
                             status: "completed".to_string(),
                             role: choice.message.role.clone(),
                             content: vec![ResponseContentPart::OutputText {
-                                text: content.clone(),
+                                text: content.to_owned(),
                             }],
+                            provider_parts: choice.message.provider_parts.clone(),
                         });
                     }
                     if let Some(tool_calls) = &choice.message.tool_calls {
@@ -455,6 +518,7 @@ async fn responses_handler(
                                 name: tc.function.name.clone(),
                                 call_id: tc.id.clone(),
                                 arguments: tc.function.arguments.clone(),
+                                thought_signature: tc.thought_signature.clone(),
                             });
                         }
                     }
@@ -467,7 +531,15 @@ async fn responses_handler(
                     object: "response".to_string(),
                     created_at: resp.created,
                     model: original_model,
-                    status: "completed".to_string(),
+                    status: if resp.choices.iter().any(|choice| {
+                        choice.finish_reason.as_deref() != Some("stop")
+                            && choice.finish_reason.as_deref() != Some("tool_calls")
+                    }) {
+                        "incomplete"
+                    } else {
+                        "completed"
+                    }
+                    .to_string(),
                     output: output_items,
                     output_text,
                     usage,
@@ -486,8 +558,9 @@ async fn handle_responses_streaming(
     provider: &Provider,
     chat_req: ChatCompletionRequest,
     original_model: String,
+    session_id: &str,
 ) -> Response {
-    let upstream_resp = match pooled_stream(state, provider, &chat_req).await {
+    let upstream_resp = match pooled_stream(state, provider, &chat_req, session_id).await {
         Ok(response) => response,
         Err(error) => return pool_error_response(error),
     };
@@ -507,8 +580,10 @@ async fn handle_responses_streaming(
         message_index: None,
         next_output_index: 0,
         full_text: String::new(),
+        provider_parts: Vec::new(),
         usage: ResponseUsage::default(),
         output_items: Vec::new(),
+        incomplete: false,
     };
 
     crate::provider::antigravity::sse::spawn_sse(serializer, upstream_resp)
@@ -757,5 +832,301 @@ mod tests {
         assert_eq!(entry.supported_reasoning_efforts, Some(vec!["high".into()]));
         assert_eq!(entry.default_reasoning_effort.as_deref(), Some("high"));
         assert_eq!(entry.display_name.as_deref(), Some("Model (High)"));
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn chat_route_preserves_signatures_and_applies_discovered_profile() {
+        use crate::storage::{ProviderCredential, ProviderRecord, Secret};
+        use axum::body::Body;
+        use axum::http::Request;
+        use serde_json::json;
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        use tower::ServiceExt;
+
+        let discovery_count = Arc::new(AtomicUsize::new(0));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Value>();
+        let count = discovery_count.clone();
+        let fake = Router::new().fallback(axum::routing::post(move |uri: axum::http::Uri, Json(body): Json<Value>| {
+            let tx = tx.clone();
+            let count = count.clone();
+            async move {
+                if uri.path().ends_with("fetchAvailableModels") {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    assert_eq!(body["project"], "project");
+                    Json(json!({"models": {
+                        "model-low": {"supportsThinking": true, "thinkingLevel": 1, "maxOutputTokens": 100},
+                        "model-high": {"supportsThinking": true, "thinkingLevel": 3, "maxOutputTokens": 200}
+                    }})).into_response()
+                } else {
+                    let truncated = body.pointer("/request/contents/0/parts/0/text").and_then(Value::as_str) == Some("truncate");
+                    tx.send(body).unwrap();
+                    if truncated {
+                        return ([(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+                            "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"partial\"}]}}]}}\n\n").into_response();
+                    }
+                    ([(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+                        concat!("data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[",
+                        "{\"text\":\"reason\",\"thought\":true,\"thoughtSignature\":\"reason-sig\"},",
+                        "{\"text\":\"answer\",\"thoughtSignature\":\"text-sig\"},",
+                        "{\"functionCall\":{\"id\":\"call_1\",\"name\":\"lookup\",\"args\":{\"q\":\"x\"}},",
+                        "\"thoughtSignature\":\"opaque\"}]},\"finishReason\":\"STOP\"}]}}\n\n")).into_response()
+                }
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, fake).await.unwrap() });
+        let database = crate::database::Database::open(":memory:").await.unwrap();
+        let store = SettingsStore::new(
+            database.clone(),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )
+        .await
+        .unwrap();
+        toasty::create!(ProviderRecord {
+            id: "agy".to_string(),
+            name: "agy".to_string(),
+            kind: "agy".to_string(),
+            base_url: String::new(),
+            deleted: false
+        })
+        .exec(&mut (*store.database.db).clone())
+        .await
+        .unwrap();
+        toasty::create!(ProviderCredential {
+            id: "credential".to_string(),
+            provider_id: "agy".to_string(),
+            name: "credential".to_string(),
+            weight: 1,
+            enabled: true
+        })
+        .exec(&mut (*store.database.db).clone())
+        .await
+        .unwrap();
+        let name = "credential.credential.credential";
+        let credential = json!({"access_token":"fake-token","project_id":"project"}).to_string();
+        Secret::upsert_by_name(name)
+            .value(store.encrypt(name, &credential).unwrap())
+            .exec(&mut (*store.database.db).clone())
+            .await
+            .unwrap();
+        let mut client = AntigravityClient::new();
+        client.test_endpoint = Some(format!("http://{address}"));
+        let mut providers = crate::provider::Providers::new();
+        providers.client = Arc::new(client);
+        let state = AppState {
+            providers,
+            settings: store,
+            logs: crate::server::observability::LogStore::new(database),
+            dashboard_auth: crate::server::dashboard_auth::DashboardAuth::test().unwrap(),
+        };
+        let app = Router::new()
+            .route("/v1/chat/completions", post(chat_handler))
+            .route("/v1/responses", post(responses_handler))
+            .layer(Extension(Permissions {
+                providers: vec![],
+                models: vec![],
+            }))
+            .layer(Extension(Provider {
+                id: "agy".into(),
+                name: "agy".into(),
+                kind: "agy".into(),
+                base_url: String::new(),
+            }))
+            .layer(Extension(RequestSession {
+                id: "scoped-session".into(),
+            }))
+            .with_state(state);
+        let request = |body: Value| {
+            Request::builder()
+                .method("POST")
+                .uri("/v1/chat/completions")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        };
+        let first = app
+            .clone()
+            .oneshot(request(json!({
+                "model":"model", "reasoning_effort":"high", "max_tokens":300,
+                "messages":[{"role":"user","content":"hello"}],
+                "tools":[{"type":"function","function":{"name":"lookup"}}],
+                "tool_choice":{"type":"function","function":{"name":"lookup"}}
+            })))
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        let response: Value = serde_json::from_slice(
+            &axum::body::to_bytes(first.into_body(), 1024 * 1024)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let call = response["choices"][0]["message"]["tool_calls"][0].clone();
+        let provider_parts = response["choices"][0]["message"]["provider_parts"].clone();
+        assert_eq!(
+            response["choices"][0]["message"]["reasoning_content"],
+            "reason"
+        );
+        assert_eq!(response["choices"][0]["message"]["content"], "answer");
+        assert!(
+            provider_parts[0]["thought_signature"]
+                .as_str()
+                .unwrap()
+                .contains("reason-sig")
+        );
+        assert!(
+            provider_parts[1]["thought_signature"]
+                .as_str()
+                .unwrap()
+                .contains("text-sig")
+        );
+        assert!(
+            call["thought_signature"]
+                .as_str()
+                .unwrap()
+                .contains("opaque")
+        );
+        let payload = rx.recv().await.unwrap();
+        assert_eq!(payload["model"], "model-high");
+        assert_eq!(payload["request"]["sessionId"], "scoped-session");
+        assert_eq!(
+            payload["request"]["generationConfig"]["maxOutputTokens"],
+            200
+        );
+        assert_eq!(
+            payload["request"]["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "HIGH"
+        );
+        assert_eq!(
+            payload["request"]["toolConfig"]["functionCallingConfig"]["allowedFunctionNames"],
+            json!(["lookup"])
+        );
+        let streamed = app
+            .clone()
+            .oneshot(request(json!({
+                "model":"model-high", "stream":true, "messages":[{"role":"user","content":"hello"}]
+            })))
+            .await
+            .unwrap();
+        assert_eq!(streamed.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(streamed.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let output = String::from_utf8(bytes.to_vec()).unwrap();
+        let stream_parts: Vec<Value> = output
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .filter_map(|data| serde_json::from_str::<Value>(data).ok())
+            .filter_map(|chunk| {
+                chunk
+                    .pointer("/choices/0/delta/provider_parts")
+                    .and_then(Value::as_array)
+                    .cloned()
+            })
+            .flatten()
+            .collect();
+        assert_eq!(Value::Array(stream_parts), provider_parts);
+        let _ = rx.recv().await.unwrap();
+        let second = app
+            .clone()
+            .oneshot(request(json!({
+                "model":"model", "reasoning_effort":"high",
+                "messages":[{"role":"assistant","content":"answer","provider_parts":provider_parts,
+                    "tool_calls":[{"id":"unsigned","type":"function","function":{"name":"lookup","arguments":"{}"}},call]}],
+                "tools":[{"type":"function","function":{"name":"lookup"}}], "tool_choice":"none"
+            })))
+            .await
+            .unwrap();
+        assert_eq!(second.status(), StatusCode::OK);
+        let payload = rx.recv().await.unwrap();
+        let parts = &payload["request"]["contents"][0]["parts"];
+        assert_eq!(parts[0]["text"], "reason");
+        assert_eq!(parts[0]["thoughtSignature"], "reason-sig");
+        assert_eq!(parts[1]["text"], "answer");
+        assert_eq!(parts[1]["thoughtSignature"], "text-sig");
+        assert_eq!(parts[2]["functionCall"]["id"], "unsigned");
+        assert_eq!(
+            parts[2]["thoughtSignature"],
+            "skip_thought_signature_validator"
+        );
+        assert_eq!(parts[3]["functionCall"]["id"], "call_1");
+        assert_eq!(parts[3]["thoughtSignature"], "opaque");
+        assert_eq!(
+            payload["request"]["toolConfig"]["functionCallingConfig"]["mode"],
+            "NONE"
+        );
+        let response_request = |body: Value| {
+            Request::builder()
+                .method("POST")
+                .uri("/v1/responses")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        };
+        let response = app
+            .clone()
+            .oneshot(response_request(json!({
+                "model":"model-high", "input":"hello"
+            })))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let value: Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let message = value["output"][0].clone();
+        assert_eq!(message["provider_parts"], provider_parts);
+        let _ = rx.recv().await.unwrap();
+        let replay = app
+            .clone()
+            .oneshot(response_request(json!({
+                "model":"model-high", "input":[message]
+            })))
+            .await
+            .unwrap();
+        assert_eq!(replay.status(), StatusCode::OK);
+        let payload = rx.recv().await.unwrap();
+        assert_eq!(
+            payload["request"]["contents"][0]["parts"][0]["thoughtSignature"],
+            "reason-sig"
+        );
+        assert_eq!(
+            payload["request"]["contents"][0]["parts"][1]["thoughtSignature"],
+            "text-sig"
+        );
+        for streaming in [false, true] {
+            let response = app
+                .clone()
+                .oneshot(request(json!({
+                    "model":"model-high", "stream":streaming,
+                    "messages":[{"role":"user","content":"truncate"}]
+                })))
+                .await
+                .unwrap();
+            let status = response.status();
+            let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .unwrap();
+            let output = String::from_utf8(bytes.to_vec()).unwrap();
+            if streaming {
+                assert_eq!(status, StatusCode::OK);
+                assert!(output.contains("upstream_error"));
+                assert!(!output.contains("[DONE]"));
+            } else {
+                assert_eq!(status, StatusCode::BAD_GATEWAY);
+                assert!(output.contains("upstream_error"));
+            }
+            let _ = rx.recv().await.unwrap();
+        }
+        assert_eq!(discovery_count.load(Ordering::SeqCst), 1);
+        server.abort();
     }
 }

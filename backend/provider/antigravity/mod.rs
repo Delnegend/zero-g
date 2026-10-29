@@ -28,10 +28,72 @@ pub(crate) use models::AntigravityModelInfo;
 use stream::map_finish_reason;
 pub(crate) use stream::{AntigravityEvent, spawn_event_stream};
 
+/// Encodes a signature with its provider and wire-model scope.
+fn scoped_signature(model: &str, signature: &str) -> String {
+    serde_json::json!(["antigravity", model, signature]).to_string()
+}
+
+/// Encodes an ordered text or reasoning part for client replay.
+fn provider_part(
+    model: &str,
+    text: &str,
+    reasoning: bool,
+    signature: Option<&str>,
+) -> serde_json::Value {
+    let mut part = serde_json::json!({
+        "type": if reasoning { "reasoning" } else { "text" },
+        "text": text
+    });
+    if let (Some(object), Some(signature)) = (part.as_object_mut(), signature) {
+        object.insert(
+            "thought_signature".to_string(),
+            scoped_signature(model, signature).into(),
+        );
+    }
+    part
+}
+
+/// Accepts only a signature issued for the same provider and wire model.
+fn replay_signature(model: &str, signature: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(signature).ok()?;
+    let items = value.as_array()?;
+    if items.len() == 3
+        && items.first()?.as_str()? == "antigravity"
+        && items.get(1)?.as_str()? == model
+    {
+        Some(items.get(2)?.as_str()?.to_owned())
+    } else {
+        None
+    }
+}
+
 /// HTTP client for the Antigravity upstream API.
 pub(crate) struct AntigravityClient {
     /// Shared connection pool used for upstream requests.
     client: reqwest::Client,
+    /// Most recent credential-bound discovery result, held for a short interval.
+    model_cache: tokio::sync::Mutex<Option<ModelCache>>,
+    /// Isolated endpoint override used only by behavioral tests.
+    #[cfg(test)]
+    test_endpoint: Option<String>,
+}
+
+/// A bounded discovery cache scoped to the exact upstream credentials.
+struct ModelCache {
+    /// SHA-256 digest of the access token used for discovery.
+    token: [u8; 32],
+    /// Project associated with the credentials.
+    project: String,
+    /// Instant at which discovery succeeded.
+    fetched: std::time::Instant,
+    /// Enabled discovered models.
+    models: Vec<(String, AntigravityModelInfo)>,
+}
+
+/// Computes the cache identity without retaining a bearer token.
+fn token_digest(token: &str) -> [u8; 32] {
+    use sha2::Digest;
+    sha2::Sha256::digest(token.as_bytes()).into()
 }
 
 impl AntigravityClient {
@@ -39,7 +101,25 @@ impl AntigravityClient {
     pub(crate) fn new() -> Self {
         Self {
             client: reqwest::Client::new(),
+            model_cache: tokio::sync::Mutex::new(None),
+            #[cfg(test)]
+            test_endpoint: None,
         }
+    }
+
+    /// Returns the local test endpoint when configured.
+    #[cfg(test)]
+    fn endpoints(&self) -> [&str; 2] {
+        if let Some(endpoint) = self.test_endpoint.as_deref() {
+            return [endpoint, endpoint];
+        }
+        [auth::CLOUD_CODE_ASSIST_ENDPOINT, models::SANDBOX_ENDPOINT]
+    }
+
+    /// Returns the fixed production endpoints.
+    #[cfg(not(test))]
+    const fn endpoints() -> [&'static str; 2] {
+        [auth::CLOUD_CODE_ASSIST_ENDPOINT, models::SANDBOX_ENDPOINT]
     }
 }
 

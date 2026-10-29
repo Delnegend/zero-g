@@ -4,9 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::provider::antigravity::AntigravityClient;
-use crate::provider::antigravity::auth::{
-    ANTIGRAVITY_USER_AGENT, CLOUD_CODE_ASSIST_ENDPOINT, Credentials,
-};
+use crate::provider::antigravity::auth::{ANTIGRAVITY_USER_AGENT, Credentials};
 use crate::provider::common::errors::UpstreamError;
 
 /// Sandbox Cloud Code Assist endpoint used as a fallback.
@@ -226,7 +224,22 @@ impl AntigravityClient {
         &self,
         creds: &Credentials,
     ) -> Result<Vec<(String, AntigravityModelInfo)>, UpstreamError> {
-        let endpoints = [CLOUD_CODE_ASSIST_ENDPOINT, SANDBOX_ENDPOINT];
+        let token = super::token_digest(&creds.access_token);
+        {
+            let mut cache = self.model_cache.lock().await;
+            if let Some(entry) = cache.as_ref()
+                && entry.token == token
+                && entry.project == creds.project_id
+                && entry.fetched.elapsed() < std::time::Duration::from_secs(300)
+            {
+                return Ok(entry.models.clone());
+            }
+            *cache = None;
+        }
+        #[cfg(test)]
+        let endpoints = self.endpoints();
+        #[cfg(not(test))]
+        let endpoints = Self::endpoints();
         let mut last_err = UpstreamError::from("No upstream endpoint available".to_string());
 
         for endpoint in &endpoints {
@@ -237,7 +250,7 @@ impl AntigravityClient {
                 .header("Authorization", format!("Bearer {}", creds.access_token))
                 .header("Content-Type", "application/json")
                 .header("User-Agent", ANTIGRAVITY_USER_AGENT)
-                .json(&json!({}))
+                .json(&json!({"project": creds.project_id}))
                 .send()
                 .await;
 
@@ -257,6 +270,12 @@ impl AntigravityClient {
                         models.push((id, info));
                     }
                     models.sort_by(|a, b| a.0.cmp(&b.0));
+                    *self.model_cache.lock().await = Some(super::ModelCache {
+                        token,
+                        project: creds.project_id.clone(),
+                        fetched: std::time::Instant::now(),
+                        models: models.clone(),
+                    });
                     return Ok(models);
                 }
                 Ok(r) => {

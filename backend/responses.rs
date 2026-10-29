@@ -76,6 +76,9 @@ pub(crate) enum ResponseTaggedItem {
         /// Tool calls associated with the message.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tool_calls: Option<Vec<ToolCall>>,
+        /// Provider-specific signed text and reasoning parts for replay.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider_parts: Option<Vec<Value>>,
     },
     /// Function call emitted by an assistant.
     #[serde(rename = "function_call")]
@@ -90,6 +93,9 @@ pub(crate) enum ResponseTaggedItem {
         name: String,
         /// Function arguments as a JSON value or string.
         arguments: Value,
+        /// Provider-supplied thought signature for replay.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thought_signature: Option<String>,
     },
     /// Result of an earlier function call.
     #[serde(rename = "function_call_output")]
@@ -99,6 +105,18 @@ pub(crate) enum ResponseTaggedItem {
         call_id: Option<String>,
         /// Function result as a JSON value or string.
         output: Value,
+    },
+    /// Opaque reasoning item returned by a Responses provider.
+    #[serde(rename = "reasoning")]
+    Reasoning {
+        /// Reasoning item identifier.
+        id: String,
+        /// Reasoning summary content.
+        #[serde(default)]
+        summary: Vec<Value>,
+        /// Encrypted reasoning state, when supplied.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        encrypted_content: Option<String>,
     },
 }
 
@@ -167,7 +185,10 @@ impl ResponseCreateRequest {
         match self.input {
             ResponseInput::Text(prompt) => push_user_text(&mut messages, prompt),
             ResponseInput::Items(items) => {
-                messages.extend(items.into_iter().map(ChatMessage::from));
+                messages.extend(items.into_iter().filter_map(|item| match item {
+                    ResponseInputItem::Tagged(ResponseTaggedItem::Reasoning { .. }) => None,
+                    other => Some(ChatMessage::from(other)),
+                }));
             }
         }
 
@@ -199,6 +220,7 @@ fn push_system_message(messages: &mut Vec<ChatMessage>, instructions: Option<Str
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            provider_parts: None,
         });
     }
 }
@@ -212,6 +234,7 @@ fn push_user_text(messages: &mut Vec<ChatMessage>, prompt: String) {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            provider_parts: None,
         });
     }
 }
@@ -241,11 +264,13 @@ impl From<ResponseTaggedItem> for ChatMessage {
                 content,
                 name,
                 tool_calls,
+                provider_parts,
             } => Self {
                 role,
                 content,
                 name,
                 tool_calls,
+                provider_parts,
                 tool_call_id: None,
             },
             ResponseTaggedItem::FunctionCall {
@@ -253,6 +278,7 @@ impl From<ResponseTaggedItem> for ChatMessage {
                 id,
                 name,
                 arguments,
+                thought_signature,
             } => {
                 let call_id = call_id.or(id).unwrap_or_default();
                 Self {
@@ -262,12 +288,14 @@ impl From<ResponseTaggedItem> for ChatMessage {
                     tool_calls: Some(vec![ToolCall {
                         id: call_id,
                         r#type: "function".to_string(),
+                        thought_signature,
                         function: FunctionCall {
                             name,
                             arguments: value_to_string(arguments),
                         },
                     }]),
                     tool_call_id: None,
+                    provider_parts: None,
                 }
             }
             ResponseTaggedItem::FunctionCallOutput { call_id, output } => Self {
@@ -276,6 +304,15 @@ impl From<ResponseTaggedItem> for ChatMessage {
                 name: None,
                 tool_calls: None,
                 tool_call_id: call_id,
+                provider_parts: None,
+            },
+            ResponseTaggedItem::Reasoning { .. } => Self {
+                role: "assistant".to_string(),
+                content: None,
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+                provider_parts: None,
             },
         }
     }
@@ -318,6 +355,9 @@ pub(crate) enum ResponseOutputItem {
         role: String,
         /// Generated content parts.
         content: Vec<ResponseContentPart>,
+        /// Provider-specific signed text and reasoning parts for replay.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider_parts: Option<Vec<Value>>,
     },
     /// Generated function invocation.
     #[serde(rename = "function_call")]
@@ -332,6 +372,9 @@ pub(crate) enum ResponseOutputItem {
         call_id: String,
         /// JSON-encoded function arguments.
         arguments: String,
+        /// Provider-supplied thought signature for replay.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thought_signature: Option<String>,
     },
 }
 

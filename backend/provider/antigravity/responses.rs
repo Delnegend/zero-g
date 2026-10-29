@@ -23,10 +23,14 @@ pub(crate) struct ResponsesStreamSerializer {
     pub(crate) next_output_index: usize,
     /// Accumulated assistant text.
     pub(crate) full_text: String,
+    /// Ordered provider parts for client signature replay.
+    pub(crate) provider_parts: Vec<serde_json::Value>,
     /// Most recently received token usage.
     pub(crate) usage: ResponseUsage,
     /// Completed output items paired with their output indices.
     pub(crate) output_items: Vec<(usize, ResponseOutputItem)>,
+    /// Whether the upstream terminated without a complete answer.
+    pub(crate) incomplete: bool,
 }
 
 impl crate::provider::antigravity::sse::SseSerializer for ResponsesStreamSerializer {
@@ -48,64 +52,51 @@ impl crate::provider::antigravity::sse::SseSerializer for ResponsesStreamSeriali
         ]
     }
 
+    fn error(&mut self) -> Event {
+        Event::default().event("response.failed").data(
+            json!({
+                "type": "response.failed",
+                "response": {
+                    "id": self.resp_id,
+                    "object": "response",
+                    "created_at": self.created,
+                    "model": self.original_model,
+                    "status": "failed",
+                    "error": { "code": "bad_gateway", "message": "Upstream request failed" }
+                }
+            })
+            .to_string(),
+        )
+    }
+
     fn handle(&mut self, event: AntigravityEvent) -> Vec<Event> {
         let mut events = Vec::new();
+        if !self.message_in_progress
+            && matches!(
+                &event,
+                AntigravityEvent::Reasoning(_)
+                    | AntigravityEvent::SignedPart {
+                        reasoning: true,
+                        ..
+                    }
+            )
+        {
+            events.extend(self.handle(AntigravityEvent::Text(String::new())));
+            self.provider_parts.pop();
+        }
+        let event = self.normalize_event(event, &mut events);
         match event {
-            AntigravityEvent::Text(text) => {
-                if !self.message_in_progress {
-                    self.message_in_progress = true;
-                    let index = self.next_output_index;
-                    self.next_output_index = self.next_output_index.saturating_add(1);
-                    self.message_index = Some(index);
-
-                    let added_event = json!({
-                        "type": "response.output_item.added",
-                        "output_index": index,
-                        "item": {
-                            "id": self.msg_id,
-                            "type": "message",
-                            "status": "in_progress",
-                            "role": "assistant",
-                            "content": []
-                        }
-                    });
-                    events.push(
-                        Event::default()
-                            .event("response.output_item.added")
-                            .data(added_event.to_string()),
-                    );
-
-                    let part_event = json!({
-                        "type": "response.content_part.added",
-                        "output_index": index,
-                        "content_index": 0,
-                        "part": {
-                            "type": "output_text",
-                            "text": ""
-                        }
-                    });
-                    events.push(
-                        Event::default()
-                            .event("response.content_part.added")
-                            .data(part_event.to_string()),
-                    );
-                }
-
-                let index = self.message_index.unwrap_or(0);
-                self.full_text.push_str(&text);
-                let delta_event = json!({
-                    "type": "response.output_text.delta",
-                    "output_index": index,
-                    "content_index": 0,
-                    "delta": text,
-                    "item_id": self.msg_id
-                });
-                events.push(
-                    Event::default()
-                        .event("response.output_text.delta")
-                        .data(delta_event.to_string()),
-                );
+            AntigravityEvent::SignedPart {
+                text, reasoning, ..
+            } => {
+                let event = if reasoning {
+                    AntigravityEvent::Reasoning(text)
+                } else {
+                    AntigravityEvent::Text(text)
+                };
+                events.extend(self.handle(event));
             }
+            AntigravityEvent::Text(text) => self.text_events(&text, &mut events),
             AntigravityEvent::Reasoning(text) => {
                 let reasoning_event = json!({
                     "type": "response.reasoning_text.delta",
@@ -123,10 +114,11 @@ impl crate::provider::antigravity::sse::SseSerializer for ResponsesStreamSeriali
                 id,
                 name,
                 arguments,
+                thought_signature,
             } => {
-                self.tool_call_events(id, name, arguments, &mut events);
+                self.tool_call_events(id, name, arguments, thought_signature, &mut events);
             }
-            AntigravityEvent::Finish { .. } => {}
+            AntigravityEvent::Finish { reason } => self.incomplete = reason != "STOP",
             AntigravityEvent::Usage(value) => {
                 self.usage = ResponseUsage::from(value);
             }
@@ -172,6 +164,7 @@ impl crate::provider::antigravity::sse::SseSerializer for ResponsesStreamSeriali
                 content: vec![ResponseContentPart::OutputText {
                     text: self.full_text.clone(),
                 }],
+                provider_parts: Some(self.provider_parts.clone()),
             };
             let done_item_event = json!({
                 "type": "response.output_item.done",
@@ -200,19 +193,29 @@ impl crate::provider::antigravity::sse::SseSerializer for ResponsesStreamSeriali
             object: "response".to_string(),
             created_at: self.created,
             model: self.original_model.clone(),
-            status: "completed".to_string(),
+            status: if self.incomplete {
+                "incomplete"
+            } else {
+                "completed"
+            }
+            .to_string(),
             output: final_items,
             output_text: self.full_text.clone(),
             usage: Some(self.usage.clone()),
         };
 
+        let event_type = if self.incomplete {
+            "response.incomplete"
+        } else {
+            "response.completed"
+        };
         let completed_event = json!({
-            "type": "response.completed",
+            "type": event_type,
             "response": final_response
         });
         events.push(
             Event::default()
-                .event("response.completed")
+                .event(event_type)
                 .data(completed_event.to_string()),
         );
         events
@@ -220,18 +223,109 @@ impl crate::provider::antigravity::sse::SseSerializer for ResponsesStreamSeriali
 }
 
 impl ResponsesStreamSerializer {
+    /// Emits the message opening and text delta for a generated fragment.
+    fn text_events(&mut self, text: &str, events: &mut Vec<Event>) {
+        if !self.message_in_progress {
+            self.message_in_progress = true;
+            let index = self.next_output_index;
+            self.next_output_index = self.next_output_index.saturating_add(1);
+            self.message_index = Some(index);
+            let added_event = json!({
+                "type": "response.output_item.added", "output_index": index,
+                "item": {"id": self.msg_id, "type": "message", "status": "in_progress",
+                    "role": "assistant", "content": []}
+            });
+            events.push(
+                Event::default()
+                    .event("response.output_item.added")
+                    .data(added_event.to_string()),
+            );
+            let part_event = json!({
+                "type": "response.content_part.added", "output_index": index,
+                "content_index": 0, "part": {"type": "output_text", "text": ""}
+            });
+            events.push(
+                Event::default()
+                    .event("response.content_part.added")
+                    .data(part_event.to_string()),
+            );
+        }
+        let index = self.message_index.unwrap_or(0);
+        self.full_text.push_str(text);
+        let delta = json!({
+            "type": "response.output_text.delta", "output_index": index,
+            "content_index": 0, "delta": text, "item_id": self.msg_id
+        });
+        events.push(
+            Event::default()
+                .event("response.output_text.delta")
+                .data(delta.to_string()),
+        );
+    }
+
+    /// Records a replayable provider part and normalizes signed content.
+    fn normalize_event(
+        &mut self,
+        event: AntigravityEvent,
+        events: &mut Vec<Event>,
+    ) -> AntigravityEvent {
+        let (event, part) = match event {
+            AntigravityEvent::SignedPart {
+                text,
+                reasoning,
+                signature,
+            } => {
+                let part =
+                    super::provider_part(&self.original_model, &text, reasoning, Some(&signature));
+                let event = if reasoning {
+                    AntigravityEvent::Reasoning(text)
+                } else {
+                    AntigravityEvent::Text(text)
+                };
+                (event, Some(part))
+            }
+            other => {
+                let part = match &other {
+                    AntigravityEvent::Text(text) => Some(super::provider_part(
+                        &self.original_model,
+                        text,
+                        false,
+                        None,
+                    )),
+                    AntigravityEvent::Reasoning(text) => {
+                        Some(super::provider_part(&self.original_model, text, true, None))
+                    }
+                    _ => None,
+                };
+                (other, part)
+            }
+        };
+        if let Some(part) = part {
+            self.provider_parts.push(part.clone());
+            events.push(
+                Event::default().event("response.provider_part.delta").data(
+                    json!({"type": "response.provider_part.delta", "part": part}).to_string(),
+                ),
+            );
+        }
+        event
+    }
+
     /// Appends stream events for a function call and records its output item.
     fn tool_call_events(
         &mut self,
         id: String,
         name: String,
         arguments: String,
+        thought_signature: Option<String>,
         events: &mut Vec<Event>,
     ) {
         self.message_in_progress = false;
         let index = self.next_output_index;
         self.next_output_index = self.next_output_index.saturating_add(1);
         let fc_item_id = format!("fc_{}", uuid::Uuid::new_v4().simple());
+        let thought_signature = thought_signature
+            .map(|signature| super::scoped_signature(&self.original_model, &signature));
 
         let added_event = json!({
             "type": "response.output_item.added",
@@ -271,7 +365,8 @@ impl ResponsesStreamSerializer {
                 "status": "completed",
                 "name": name,
                 "call_id": id,
-                "arguments": arguments
+                "arguments": arguments,
+                "thought_signature": thought_signature
             }
         });
         events.push(
@@ -288,6 +383,7 @@ impl ResponsesStreamSerializer {
                 name,
                 call_id: id,
                 arguments,
+                thought_signature,
             },
         ));
     }

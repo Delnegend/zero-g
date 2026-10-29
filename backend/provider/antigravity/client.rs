@@ -7,10 +7,8 @@ use crate::openai::{
     ChatCompletionRequest, ChatCompletionResponse, Choice, FunctionCall, ToolCall, Usage,
 };
 use crate::provider::antigravity::AntigravityClient;
-use crate::provider::antigravity::auth::{
-    ANTIGRAVITY_USER_AGENT, CLOUD_CODE_ASSIST_ENDPOINT, Credentials,
-};
-use crate::provider::antigravity::models::{CLAUDE_THINKING_BETA_HEADER, SANDBOX_ENDPOINT};
+use crate::provider::antigravity::auth::{ANTIGRAVITY_USER_AGENT, Credentials};
+use crate::provider::antigravity::models::CLAUDE_THINKING_BETA_HEADER;
 use crate::provider::antigravity::{AntigravityEvent, map_finish_reason, spawn_event_stream};
 use crate::provider::common::errors::UpstreamError;
 
@@ -22,7 +20,10 @@ impl AntigravityClient {
         payload: &Value,
         is_claude: bool,
     ) -> Result<Response, UpstreamError> {
-        let endpoints = [CLOUD_CODE_ASSIST_ENDPOINT, SANDBOX_ENDPOINT];
+        #[cfg(test)]
+        let endpoints = self.endpoints();
+        #[cfg(not(test))]
+        let endpoints = Self::endpoints();
         let mut last_err = UpstreamError::from("No upstream endpoint available".to_string());
 
         for endpoint in &endpoints {
@@ -45,6 +46,17 @@ impl AntigravityClient {
                 }
                 Ok(resp) => {
                     let status = resp.status();
+                    if status == reqwest::StatusCode::UNAUTHORIZED
+                        || status == reqwest::StatusCode::FORBIDDEN
+                    {
+                        let mut cache = self.model_cache.lock().await;
+                        if cache.as_ref().is_some_and(|entry| {
+                            entry.token == super::token_digest(&creds.access_token)
+                                && entry.project == creds.project_id
+                        }) {
+                            *cache = None;
+                        }
+                    }
                     let body = resp.text().await.unwrap_or_default();
                     last_err = UpstreamError {
                         status: Some(status),
@@ -69,10 +81,17 @@ impl AntigravityClient {
         &self,
         creds: &Credentials,
         req: &ChatCompletionRequest,
+        session_id: &str,
     ) -> Result<ChatCompletionResponse, UpstreamError> {
         let wire_model = req.model.clone();
         let is_claude = wire_model.contains("claude");
-        let payload = Self::build_request_payload(req, &creds.project_id, &wire_model);
+        let models = self.fetch_models(creds).await?;
+        let info = models
+            .iter()
+            .find(|(id, _)| id == &wire_model)
+            .map(|(_, info)| info);
+        let payload =
+            Self::build_request_payload(req, &creds.project_id, &wire_model, session_id, info);
 
         let response = self.stream_request(creds, &payload, is_claude).await?;
         let mut events = spawn_event_stream(response.bytes_stream());
@@ -82,6 +101,16 @@ impl AntigravityClient {
             match event {
                 Ok(event) => collected.apply(event),
                 Err(error) => return Err(error.into()),
+            }
+        }
+        if collected.finish_reason.is_none() {
+            return Err("Upstream stream ended without a finish reason"
+                .to_string()
+                .into());
+        }
+        for call in &mut collected.tool_calls {
+            if let Some(signature) = &mut call.thought_signature {
+                *signature = super::scoped_signature(&req.model, signature);
             }
         }
 
@@ -96,6 +125,8 @@ struct CollectedResponse {
     text: String,
     /// Generated reasoning text.
     reasoning: String,
+    /// Ordered generated text and reasoning parts with optional upstream signatures.
+    parts: Vec<(String, bool, Option<String>)>,
     /// Generated function calls.
     tool_calls: Vec<ToolCall>,
     /// Upstream finish reason, if received.
@@ -108,16 +139,36 @@ impl CollectedResponse {
     /// Incorporate one upstream event into the accumulated response.
     fn apply(&mut self, event: AntigravityEvent) {
         match event {
-            AntigravityEvent::Text(text) => self.text.push_str(&text),
-            AntigravityEvent::Reasoning(text) => self.reasoning.push_str(&text),
+            AntigravityEvent::Text(text) => {
+                self.text.push_str(&text);
+                self.parts.push((text, false, None));
+            }
+            AntigravityEvent::Reasoning(text) => {
+                self.reasoning.push_str(&text);
+                self.parts.push((text, true, None));
+            }
+            AntigravityEvent::SignedPart {
+                text,
+                reasoning,
+                signature,
+            } => {
+                if reasoning {
+                    self.reasoning.push_str(&text);
+                } else {
+                    self.text.push_str(&text);
+                }
+                self.parts.push((text, reasoning, Some(signature)));
+            }
             AntigravityEvent::ToolCall {
                 id,
                 name,
                 arguments,
+                thought_signature,
             } => self.tool_calls.push(ToolCall {
                 id,
                 r#type: "function".to_string(),
                 function: FunctionCall { name, arguments },
+                thought_signature,
             }),
             AntigravityEvent::Finish { reason } => self.finish_reason = Some(reason),
             AntigravityEvent::Usage(usage) => self.usage = usage,
@@ -152,6 +203,14 @@ impl CollectedResponse {
             Some(self.tool_calls)
         };
 
+        let provider_parts = (!self.parts.is_empty()).then(|| {
+            self.parts
+                .iter()
+                .map(|(text, reasoning, signature)| {
+                    super::provider_part(&model, text, *reasoning, signature.as_deref())
+                })
+                .collect()
+        });
         ChatCompletionResponse {
             id: format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()),
             object: "chat.completion".to_string(),
@@ -164,6 +223,7 @@ impl CollectedResponse {
                     content,
                     reasoning_content,
                     tool_calls,
+                    provider_parts,
                 },
                 finish_reason,
             }],
@@ -185,6 +245,7 @@ mod tests {
             id: "call_1".to_string(),
             name: "get_weather".to_string(),
             arguments: "{\"city\":\"Paris\"}".to_string(),
+            thought_signature: None,
         });
         collected.apply(AntigravityEvent::Finish {
             reason: "STOP".to_string(),

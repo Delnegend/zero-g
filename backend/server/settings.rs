@@ -561,6 +561,9 @@ pub(crate) async fn virtual_key_auth(
             if permissions.providers.is_empty()
                 || permissions.providers.iter().any(|p| p == &id) =>
         {
+            let session =
+                crate::provider::common::session::RequestSession::new(req.headers(), token, &id);
+            req.extensions_mut().insert(session);
             req.extensions_mut().insert(provider);
             req.extensions_mut().insert(permissions);
             next.run(req).await
@@ -941,6 +944,204 @@ mod tests {
             StatusCode::UNAUTHORIZED
         );
         drop(store);
+        std::fs::remove_file(path).unwrap();
+    }
+    /// State shared by the isolated affinity cache and its leak checks.
+    type AffinityCacheState = (
+        std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<String>>>,
+        Vec<String>,
+    );
+
+    /// Isolated upstream reports cache transitions without disclosing the key.
+    async fn affinity_cache(
+        State((seen, tokens)): State<AffinityCacheState>,
+        headers: axum::http::HeaderMap,
+    ) -> &'static str {
+        let Some(id) = headers.get("x-affinity").and_then(|v| v.to_str().ok()) else {
+            return "missing";
+        };
+        if id.contains("session-123") || tokens.iter().any(|token| id.contains(token)) {
+            return "leaked";
+        }
+        if seen.lock().await.insert(id.to_owned()) {
+            "miss"
+        } else {
+            "hit"
+        }
+    }
+
+    /// Sends middleware-provided affinity to the isolated upstream.
+    async fn affinity_proxy(
+        Extension(session): Extension<crate::provider::common::session::RequestSession>,
+        Extension(upstream): Extension<String>,
+    ) -> String {
+        reqwest::Client::new()
+            .get(upstream)
+            .header("x-affinity", session.id)
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap()
+    }
+
+    /// Authenticated cache affinity is isolated by key and provider.
+    #[allow(clippy::too_many_lines, clippy::literal_string_with_formatting_args)]
+    #[tokio::test]
+    async fn authenticated_session_cache_is_isolated() {
+        let path = path();
+        let database = Database::open(path.to_str().unwrap()).await.unwrap();
+        let store = SettingsStore::new(database, &key(9)).await.unwrap();
+        for id in ["account-a", "account-b"] {
+            toasty::create!(ProviderRecord {
+                id: id.to_string(),
+                name: id.to_string(),
+                kind: "codex".to_string(),
+                base_url: String::new(),
+                deleted: false
+            })
+            .exec(&mut (*store.database.db).clone())
+            .await
+            .unwrap();
+        }
+        let mut tokens = Vec::new();
+        for name in ["first", "second"] {
+            let response = create_key(
+                State(store.clone()),
+                Json(CreateKey {
+                    name: name.into(),
+                    providers: vec![],
+                    models: vec![],
+                }),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::CREATED);
+            tokens.push(
+                json_body(response).await["key"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            );
+        }
+        let cache = Router::new().route("/", get(affinity_cache)).with_state((
+            std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
+            tokens.clone(),
+        ));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream = format!("http://{}/", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, cache).await.unwrap() });
+        let app = Router::new()
+            .route("/{id}/v1/responses", get(affinity_proxy))
+            .layer(Extension(upstream))
+            .layer(axum::middleware::from_fn_with_state(
+                (store.clone(), "codex"),
+                virtual_key_auth,
+            ));
+        let send = |provider: &str, token: &str, headers: &[(&str, &str)]| {
+            let mut builder = Request::builder()
+                .uri(format!("/{provider}/v1/responses"))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"));
+            for (name, value) in headers {
+                builder = builder.header(*name, *value);
+            }
+            app.clone().oneshot(builder.body(Body::empty()).unwrap())
+        };
+        let outcome = |response: Response| async move {
+            assert_eq!(response.status(), StatusCode::OK);
+            String::from_utf8(to_bytes(response.into_body(), 1024).await.unwrap().to_vec()).unwrap()
+        };
+        let first = tokens.first().unwrap();
+        let second = tokens.get(1).unwrap();
+        let session = [("session_id", "session-123")];
+        assert_eq!(
+            outcome(send("account-a", first, &session).await.unwrap()).await,
+            "miss"
+        );
+        assert_eq!(
+            outcome(send("account-a", first, &session).await.unwrap()).await,
+            "hit"
+        );
+        assert_eq!(
+            outcome(send("account-a", second, &session).await.unwrap()).await,
+            "miss"
+        );
+        assert_eq!(
+            outcome(send("account-b", first, &session).await.unwrap()).await,
+            "miss"
+        );
+        for headers in [
+            vec![],
+            vec![("session_id", "")],
+            vec![("session_id", "invalid session")],
+            vec![("session_id", "duplicate"), ("session_id", "duplicate")],
+            vec![
+                ("session_id", "invalid session"),
+                ("x-session-id", "session-123"),
+            ],
+        ] {
+            for _ in 0..2 {
+                assert_eq!(
+                    outcome(send("account-a", first, &headers).await.unwrap()).await,
+                    "miss"
+                );
+            }
+        }
+        let maximum = "a".repeat(128);
+        let oversized = "a".repeat(129);
+        for (value, expected) in [(&maximum, "hit"), (&oversized, "miss")] {
+            let headers = [("session_id", value.as_str())];
+            assert_eq!(
+                outcome(send("account-a", first, &headers).await.unwrap()).await,
+                "miss"
+            );
+            assert_eq!(
+                outcome(send("account-a", first, &headers).await.unwrap()).await,
+                expected
+            );
+        }
+        for alias in [
+            "session-id",
+            "x-session-id",
+            "x-opencode-session",
+            "conversation-id",
+        ] {
+            let headers = [(alias, "session-123")];
+            assert_eq!(
+                outcome(send("account-a", first, &headers).await.unwrap()).await,
+                "hit"
+            );
+        }
+        let preferred = [
+            ("x-bf-eh-session_id", "preferred"),
+            ("session_id", "session-123"),
+        ];
+        assert_eq!(
+            outcome(send("account-a", first, &preferred).await.unwrap()).await,
+            "miss"
+        );
+        assert_eq!(
+            outcome(send("account-a", first, &preferred).await.unwrap()).await,
+            "hit"
+        );
+        let conversation = [("conversation_id", "conversation")];
+        assert_eq!(
+            outcome(send("account-a", first, &conversation).await.unwrap()).await,
+            "miss"
+        );
+        assert_eq!(
+            outcome(send("account-a", first, &conversation).await.unwrap()).await,
+            "hit"
+        );
+        assert_eq!(
+            send("account-a", "invalid-key", &session)
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        server.abort();
+        drop((app, store));
         std::fs::remove_file(path).unwrap();
     }
 }

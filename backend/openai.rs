@@ -48,6 +48,8 @@ pub(crate) struct ChatMessage {
     pub tool_calls: Option<Vec<ToolCall>>,
     /// Call identifier associated with a tool result.
     pub tool_call_id: Option<String>,
+    /// Provider-specific ordered assistant parts used for signature replay.
+    pub provider_parts: Option<Vec<Value>>,
 }
 
 /// Message content as plain text or typed parts.
@@ -147,6 +149,7 @@ pub(crate) struct FunctionDefinition {
 }
 
 /// Assistant request to invoke a tool.
+#[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ToolCall {
     /// Tool call identifier.
@@ -155,6 +158,8 @@ pub(crate) struct ToolCall {
     pub r#type: String,
     /// Function name and serialized arguments.
     pub function: FunctionCall,
+    /// Opaque provider thought signature for replaying this tool call.
+    pub thought_signature: Option<String>,
 }
 
 /// Function invocation emitted by the model.
@@ -208,6 +213,8 @@ pub(crate) struct AssistantMessage {
     pub reasoning_content: Option<String>,
     /// Requested tool invocations.
     pub tool_calls: Option<Vec<ToolCall>>,
+    /// Provider-specific ordered assistant parts used for signature replay.
+    pub provider_parts: Option<Vec<Value>>,
 }
 
 /// One streaming chat completion chunk.
@@ -252,6 +259,8 @@ pub(crate) struct ChunkDelta {
     pub reasoning_content: Option<String>,
     /// Incremental tool calls.
     pub tool_calls: Option<Vec<ChunkToolCall>>,
+    /// Provider-specific incremental assistant parts for signature replay.
+    pub provider_parts: Option<Vec<Value>>,
 }
 
 /// Incremental tool call in a streaming response.
@@ -266,6 +275,8 @@ pub(crate) struct ChunkToolCall {
     pub r#type: Option<String>,
     /// Incremental function invocation.
     pub function: Option<ChunkFunctionCall>,
+    /// Opaque provider thought signature for replaying this tool call.
+    pub thought_signature: Option<String>,
 }
 
 /// Incremental function name and arguments.

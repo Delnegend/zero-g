@@ -12,6 +12,7 @@ use crate::provider::codex::CodexAuthManager;
 use crate::provider::codex::auth::CodexCredentials;
 use crate::provider::codex::models::fetch_codex_models;
 use crate::provider::common::errors::{UpstreamError, retryable_status};
+use crate::provider::common::session::RequestSession;
 use crate::provider::registry::Provider;
 use crate::responses::ResponseCreateRequest;
 use crate::server::AppState;
@@ -185,6 +186,7 @@ async fn chat_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
+    Extension(session): Extension<RequestSession>,
     Json(mut req): Json<ChatCompletionRequest>,
 ) -> Response {
     req.model = strip_codex_prefix(&req.model);
@@ -193,12 +195,13 @@ async fn chat_handler(
     }
     let client = &state.providers.codex_client;
     let req = &req;
+    let session = &session.id;
     match with_pool(&state, &provider, |creds| async move {
         if req.stream.unwrap_or(false) {
-            client.stream_chat(&creds, req).await
+            client.stream_chat(&creds, req, session).await
         } else {
             client
-                .complete_chat_non_streaming(&creds, req)
+                .complete_chat_non_streaming(&creds, req, session)
                 .await
                 .map(|r| Json(r).into_response())
         }
@@ -215,6 +218,7 @@ async fn responses_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
+    Extension(session): Extension<RequestSession>,
     Json(mut req): Json<ResponseCreateRequest>,
 ) -> Response {
     req.model = strip_codex_prefix(&req.model);
@@ -223,12 +227,13 @@ async fn responses_handler(
     }
     let client = &state.providers.codex_client;
     let req = &req;
+    let session = &session.id;
     match with_pool(&state, &provider, |creds| async move {
         if req.stream.unwrap_or(false) {
-            client.stream_responses(&creds, req).await
+            client.stream_responses(&creds, req, session).await
         } else {
             client
-                .complete_responses_non_streaming(&creds, req)
+                .complete_responses_non_streaming(&creds, req, session)
                 .await
                 .map(|r| Json(r).into_response())
         }

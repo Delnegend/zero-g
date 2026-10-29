@@ -242,6 +242,18 @@ fn safe_url(value: &str) -> Result<reqwest::Url, String> {
 }
 
 impl DashboardAuth {
+    /// Builds isolated Basic authentication for provider integration tests.
+    #[cfg(test)]
+    pub(crate) fn test() -> Result<Self, String> {
+        Ok(Self(
+            Arc::new(Mode::Basic {
+                username: "test".into(),
+                password: "test".into(),
+            }),
+            Arc::new(reqwest::Url::parse("http://127.0.0.1:8080").map_err(|e| e.to_string())?),
+        ))
+    }
+
     /// Loads configuration and discovers the OIDC provider before serving traffic.
     /// Invalid configuration or failed discovery is a startup error.
     pub(crate) async fn from_env() -> Result<Self, String> {

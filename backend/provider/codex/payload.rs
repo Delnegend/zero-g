@@ -51,10 +51,7 @@ pub(super) fn build_codex_payload_from_chat(req: &ChatCompletionRequest) -> Valu
                 }
             }
             "tool" => {
-                let call_id = msg
-                    .tool_call_id
-                    .clone()
-                    .unwrap_or_else(|| "call_unknown".to_string());
+                let call_id = msg.tool_call_id.clone().unwrap_or_default();
                 let output = msg
                     .content
                     .as_ref()
@@ -69,6 +66,7 @@ pub(super) fn build_codex_payload_from_chat(req: &ChatCompletionRequest) -> Valu
             _ => {}
         }
     }
+    repair_call_ids(&mut input_items);
 
     let mut payload = json!({
         "model": req.model,
@@ -136,7 +134,8 @@ pub(super) fn build_codex_payload_from_responses(req: &ResponseCreateRequest) ->
                             role,
                             content,
                             name: _,
-                            tool_calls: _,
+                            tool_calls,
+                            provider_parts: _,
                         } => {
                             if is_system_role(role) {
                                 append_instructions(&mut instructions, content.as_ref());
@@ -147,6 +146,11 @@ pub(super) fn build_codex_payload_from_responses(req: &ResponseCreateRequest) ->
                                     "role": role,
                                     "content": parts,
                                 }));
+                                if let Some(calls) = tool_calls {
+                                    for call in calls {
+                                        input_items.push(json!({"type":"function_call","call_id":call.id,"name":call.function.name,"arguments":call.function.arguments}));
+                                    }
+                                }
                             }
                         }
                         ResponseTaggedItem::FunctionCall {
@@ -154,11 +158,9 @@ pub(super) fn build_codex_payload_from_responses(req: &ResponseCreateRequest) ->
                             id,
                             name,
                             arguments,
+                            thought_signature: _,
                         } => {
-                            let cid = call_id
-                                .clone()
-                                .or_else(|| id.clone())
-                                .unwrap_or_else(|| "call_unknown".to_string());
+                            let cid = call_id.clone().or_else(|| id.clone()).unwrap_or_default();
                             let args = arguments
                                 .as_str()
                                 .map_or_else(|| arguments.to_string(), str::to_owned);
@@ -170,9 +172,7 @@ pub(super) fn build_codex_payload_from_responses(req: &ResponseCreateRequest) ->
                             }));
                         }
                         ResponseTaggedItem::FunctionCallOutput { call_id, output } => {
-                            let cid = call_id
-                                .clone()
-                                .unwrap_or_else(|| "call_unknown".to_string());
+                            let cid = call_id.clone().unwrap_or_default();
                             let out_str = output
                                 .as_str()
                                 .map_or_else(|| output.to_string(), str::to_owned);
@@ -182,24 +182,43 @@ pub(super) fn build_codex_payload_from_responses(req: &ResponseCreateRequest) ->
                                 "output": out_str,
                             }));
                         }
+                        ResponseTaggedItem::Reasoning {
+                            id,
+                            summary,
+                            encrypted_content,
+                        } => {
+                            let mut item = json!({"type":"reasoning","id":id,"summary":summary});
+                            if let Some(content) = encrypted_content {
+                                item["encrypted_content"] = json!(content);
+                            }
+                            input_items.push(item);
+                        }
                     },
                     ResponseInputItem::Message(msg) => {
                         if is_system_role(&msg.role) {
                             append_instructions(&mut instructions, msg.content.as_ref());
+                        } else if msg.role == "tool" {
+                            input_items.push(json!({"type":"function_call_output","call_id":msg.tool_call_id.as_deref().unwrap_or_default(),"output":msg.content.as_ref().map(MessageContent::as_text).unwrap_or_default()}));
                         } else {
-                            let parts =
-                                convert_content_to_input_parts(msg.content.as_ref(), &msg.role);
-                            input_items.push(json!({
-                                "type": "message",
-                                "role": msg.role,
-                                "content": parts,
-                            }));
+                            if msg.content.is_some() {
+                                let parts =
+                                    convert_content_to_input_parts(msg.content.as_ref(), &msg.role);
+                                input_items.push(
+                                    json!({"type":"message","role":msg.role,"content":parts}),
+                                );
+                            }
+                            if let Some(calls) = &msg.tool_calls {
+                                for call in calls {
+                                    input_items.push(json!({"type":"function_call","call_id":call.id,"name":call.function.name,"arguments":call.function.arguments}));
+                                }
+                            }
                         }
                     }
                 }
             }
         }
     }
+    repair_call_ids(&mut input_items);
 
     let mut payload = json!({
         "model": req.model,
@@ -236,6 +255,43 @@ pub(super) fn build_codex_payload_from_responses(req: &ResponseCreateRequest) ->
     payload["reasoning"] =
         extract_reasoning_payload(req.reasoning_effort.as_deref(), req.reasoning.as_ref());
     payload
+}
+
+/// Repairs call IDs consistently and drops results with no matching call.
+#[allow(clippy::indexing_slicing)]
+fn repair_call_ids(items: &mut Vec<Value>) {
+    let mut pending: Vec<(String, String)> = Vec::new();
+    let mut used = std::collections::HashSet::new();
+    items.retain_mut(|item| {
+        let kind = item.get("type").and_then(Value::as_str).unwrap_or_default();
+        let original = item
+            .get("call_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        if kind == "function_call" {
+            let mut id: String = original
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+                .take(64)
+                .collect();
+            if id.is_empty() || used.contains(&id) {
+                id = format!("call_{}", uuid::Uuid::new_v4().simple());
+            }
+            used.insert(id.clone());
+            pending.push((original, id.clone()));
+            item["call_id"] = json!(id);
+        } else if kind == "function_call_output" {
+            let index = pending
+                .iter()
+                .position(|(source, _)| source == &original)
+                .or_else(|| (original.is_empty() && pending.len() == 1).then_some(0));
+            let Some(index) = index else { return false };
+            let (_, id) = pending.remove(index);
+            item["call_id"] = json!(id);
+        }
+        true
+    });
 }
 /// Returns whether a role contributes to the instruction string.
 fn is_system_role(role: &str) -> bool {
@@ -360,6 +416,7 @@ mod tests {
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,
+                    provider_parts: None,
                 },
                 ChatMessage {
                     role: "user".to_string(),
@@ -367,6 +424,7 @@ mod tests {
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,
+                    provider_parts: None,
                 },
             ],
             temperature: Some(0.7), // must be ignored/omitted in payload
@@ -407,12 +465,14 @@ mod tests {
                 tool_calls: Some(vec![crate::openai::ToolCall {
                     id: "call_1".to_string(),
                     r#type: "function".to_string(),
+                    thought_signature: None,
                     function: crate::openai::FunctionCall {
                         name: "read".to_string(),
                         arguments: r#"{"path":"backend/main.rs"}"#.to_string(),
                     },
                 }]),
                 tool_call_id: None,
+                provider_parts: None,
             }],
             temperature: None,
             top_p: None,
@@ -445,6 +505,7 @@ mod tests {
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,
+                    provider_parts: None,
                 },
                 ChatMessage {
                     role: "developer".to_string(),
@@ -452,6 +513,7 @@ mod tests {
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,
+                    provider_parts: None,
                 },
                 ChatMessage {
                     role: "user".to_string(),
@@ -459,6 +521,7 @@ mod tests {
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,
+                    provider_parts: None,
                 },
             ],
             temperature: None,

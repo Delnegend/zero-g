@@ -18,15 +18,15 @@ use crate::provider::codex::payload::{
     build_codex_payload_from_chat, build_codex_payload_from_responses,
 };
 use crate::provider::common::errors::UpstreamError;
-use crate::responses::{
-    ResponseContentPart, ResponseCreateRequest, ResponseObject, ResponseOutputItem, ResponseUsage,
-};
+use crate::responses::ResponseCreateRequest;
 
 /// HTTP client for translating requests to the Codex Responses endpoint.
 #[derive(Clone)]
 pub(crate) struct CodexClient {
     /// Shared connection pool used for upstream requests.
     http: reqwest::Client,
+    /// Responses API base URL.
+    base_url: String,
 }
 
 impl CodexClient {
@@ -38,6 +38,7 @@ impl CodexClient {
                 .tcp_nodelay(true)
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
+            base_url: CODEX_BASE_URL.to_string(),
         }
     }
 
@@ -45,9 +46,10 @@ impl CodexClient {
     async fn send_request(
         &self,
         creds: &CodexCredentials,
-        payload: &Value,
+        mut payload: Value,
+        session_id: &str,
     ) -> Result<reqwest::Response, UpstreamError> {
-        let url = format!("{CODEX_BASE_URL}/codex/responses");
+        let url = format!("{}/codex/responses", self.base_url);
         let model_slug = payload
             .get("model")
             .and_then(|m| m.as_str())
@@ -71,14 +73,19 @@ impl CodexClient {
             builder = builder.header("x-openai-internal-codex-residency", residency);
         }
 
-        let session_id = uuid::Uuid::new_v4().to_string();
+        if let Some(object) = payload.as_object_mut() {
+            object.insert(
+                "prompt_cache_key".to_string(),
+                Value::String(session_id.to_owned()),
+            );
+        }
         builder = builder
-            .header("session_id", &session_id)
-            .header("conversation_id", &session_id)
-            .header("x-client-request-id", &session_id);
+            .header("session_id", session_id)
+            .header("conversation_id", session_id)
+            .header("x-client-request-id", session_id);
 
         let resp = builder
-            .json(payload)
+            .json(&payload)
             .send()
             .await
             .map_err(|e| format!("Failed to send Codex request: {e}"))?;
@@ -100,9 +107,10 @@ impl CodexClient {
         &self,
         creds: &CodexCredentials,
         req: &ChatCompletionRequest,
+        session_id: &str,
     ) -> Result<Response, UpstreamError> {
         let payload = build_codex_payload_from_chat(req);
-        let upstream = self.send_request(creds, &payload).await?;
+        let upstream = self.send_request(creds, payload, session_id).await?;
 
         let model = req.model.clone();
         let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(100);
@@ -121,15 +129,16 @@ impl CodexClient {
         &self,
         creds: &CodexCredentials,
         req: &ChatCompletionRequest,
+        session_id: &str,
     ) -> Result<ChatCompletionResponse, UpstreamError> {
         let payload = build_codex_payload_from_chat(req);
-        let upstream = self.send_request(creds, &payload).await?;
+        let upstream = self.send_request(creds, payload, session_id).await?;
 
         let model = req.model.clone();
         let mut text_acc = String::new();
         let mut reasoning_acc = String::new();
         let mut tool_calls_map: Vec<PendingToolCall> = Vec::new();
-        let mut finish_reason = "stop".to_string();
+        let mut finish_reason = None;
         let mut usage_acc = Usage::default();
 
         let mut byte_stream = upstream.bytes_stream();
@@ -145,24 +154,36 @@ impl CodexClient {
                     ev @ (CodexParsedEvent::ToolCallStart { .. }
                     | CodexParsedEvent::ToolCallDelta { .. }
                     | CodexParsedEvent::ToolCallDone { .. }) => {
-                        apply_tool_event(&mut tool_calls_map, ev);
+                        if !apply_tool_event(&mut tool_calls_map, ev) {
+                            return Err("Codex emitted an unmatched tool event".into());
+                        }
                     }
-                    CodexParsedEvent::Finish { reason } => finish_reason = reason,
+                    CodexParsedEvent::Finish { reason, status, .. } => {
+                        if !matches!(status.as_str(), "completed" | "incomplete") {
+                            return Err("Codex response failed".into());
+                        }
+                        finish_reason = Some(reason);
+                    }
                     CodexParsedEvent::Usage(u) => usage_acc = u,
                 }
             }
         }
+        let mut finish_reason =
+            finish_reason.ok_or("Codex stream ended without a terminal response")?;
 
         let tool_calls = if tool_calls_map.is_empty() {
             None
         } else {
-            finish_reason = "tool_calls".to_string();
+            if finish_reason == "stop" {
+                finish_reason = "tool_calls".to_string();
+            }
             Some(
                 tool_calls_map
                     .into_iter()
                     .map(|call| ToolCall {
                         id: call.call_id,
                         r#type: "function".to_string(),
+                        thought_signature: None,
                         function: FunctionCall {
                             name: call.name,
                             arguments: call.arguments,
@@ -185,6 +206,7 @@ impl CodexClient {
                 Some(reasoning_acc)
             },
             tool_calls,
+            provider_parts: None,
         };
 
         let now = SystemTime::now()
@@ -210,9 +232,10 @@ impl CodexClient {
         &self,
         creds: &CodexCredentials,
         req: &ResponseCreateRequest,
+        session_id: &str,
     ) -> Result<Response, UpstreamError> {
         let payload = build_codex_payload_from_responses(req);
-        let upstream = self.send_request(creds, &payload).await?;
+        let upstream = self.send_request(creds, payload, session_id).await?;
 
         let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(100);
 
@@ -230,15 +253,12 @@ impl CodexClient {
         &self,
         creds: &CodexCredentials,
         req: &ResponseCreateRequest,
-    ) -> Result<ResponseObject, UpstreamError> {
+        session_id: &str,
+    ) -> Result<Value, UpstreamError> {
         let payload = build_codex_payload_from_responses(req);
-        let upstream = self.send_request(creds, &payload).await?;
+        let upstream = self.send_request(creds, payload, session_id).await?;
 
-        let model = req.model.clone();
         let mut output_text = String::new();
-        let mut output_items = Vec::new();
-        let mut tool_calls_map: Vec<PendingToolCall> = Vec::new();
-        let mut usage_opt = None;
 
         let mut byte_stream = upstream.bytes_stream();
         let mut decoder = SseLineDecoder::default();
@@ -248,56 +268,115 @@ impl CodexClient {
             let events = decoder.push_chunk(&chunk);
             for ev in events {
                 match ev {
-                    CodexParsedEvent::TextDelta(t) => output_text.push_str(&t),
-                    ev @ (CodexParsedEvent::ToolCallStart { .. }
-                    | CodexParsedEvent::ToolCallDelta { .. }
-                    | CodexParsedEvent::ToolCallDone { .. }) => {
-                        apply_tool_event(&mut tool_calls_map, ev);
+                    CodexParsedEvent::TextDelta(text) => output_text.push_str(&text),
+                    CodexParsedEvent::Finish {
+                        status, response, ..
+                    } => {
+                        let mut response =
+                            response.ok_or("Codex terminal event omitted its response")?;
+                        if !matches!(status.as_str(), "completed" | "incomplete" | "failed")
+                            || !response.get("output").is_some_and(Value::is_array)
+                        {
+                            return Err("Codex terminal response is malformed".into());
+                        }
+                        if !repair_response_calls(
+                            &mut response,
+                            &mut std::collections::HashMap::new(),
+                        ) {
+                            return Err("Codex response contains a malformed function call".into());
+                        }
+                        if output_text.is_empty()
+                            && let Some(items) = response.get("output").and_then(Value::as_array)
+                        {
+                            for item in items {
+                                if let Some(parts) = item.get("content").and_then(Value::as_array) {
+                                    for part in parts {
+                                        if part.get("type").and_then(Value::as_str)
+                                            == Some("output_text")
+                                            && let Some(text) =
+                                                part.get("text").and_then(Value::as_str)
+                                        {
+                                            output_text.push_str(text);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(object) = response.as_object_mut() {
+                            object
+                                .entry("output_text")
+                                .or_insert_with(|| Value::String(output_text));
+                        }
+                        return Ok(response);
                     }
-                    CodexParsedEvent::Usage(u) => usage_opt = Some(ResponseUsage::from(u)),
-                    CodexParsedEvent::ReasoningDelta(_) | CodexParsedEvent::Finish { .. } => {}
+                    _ => {}
                 }
             }
         }
-
-        if !output_text.is_empty() {
-            output_items.push(ResponseOutputItem::Message {
-                id: format!("msg_{}", uuid::Uuid::new_v4().simple()),
-                status: "completed".to_string(),
-                role: "assistant".to_string(),
-                content: vec![ResponseContentPart::OutputText {
-                    text: output_text.clone(),
-                }],
-            });
-        }
-
-        for call in tool_calls_map {
-            let arguments = serde_json::from_str::<Value>(&call.arguments)
-                .unwrap_or(Value::String(call.arguments));
-            output_items.push(ResponseOutputItem::FunctionCall {
-                id: format!("fc_{}", uuid::Uuid::new_v4().simple()),
-                status: "completed".to_string(),
-                name: call.name,
-                call_id: call.call_id,
-                arguments: arguments.to_string(),
-            });
-        }
-
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
-
-        Ok(ResponseObject {
-            id: format!("resp_{}", uuid::Uuid::new_v4().simple()),
-            object: "response".to_string(),
-            created_at: now,
-            model,
-            status: "completed".to_string(),
-            output: output_items,
-            output_text,
-            usage: usage_opt,
-        })
+        Err("Codex stream ended without a terminal response".into())
     }
+}
+
+/// Repairs function call IDs in an event or terminal response consistently.
+fn repair_response_calls(
+    value: &mut Value,
+    ids: &mut std::collections::HashMap<String, String>,
+) -> bool {
+    if let Some(item) = value.get_mut("item")
+        && !repair_response_calls(item, ids)
+    {
+        return false;
+    }
+    if let Some(response) = value.get_mut("response")
+        && !repair_response_calls(response, ids)
+    {
+        return false;
+    }
+    if let Some(output) = value.get_mut("output").and_then(Value::as_array_mut) {
+        for item in output {
+            if !repair_response_calls(item, ids) {
+                return false;
+            }
+        }
+    }
+    if value.get("type").and_then(Value::as_str) != Some("function_call") {
+        return true;
+    }
+    let Some(name) = value.get("name").and_then(Value::as_str) else {
+        return false;
+    };
+    if name.is_empty() {
+        return false;
+    }
+    let raw = value
+        .get("call_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !raw.is_empty()
+        && raw.len() <= 64
+        && raw
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        return true;
+    }
+    let key = value
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .unwrap_or(raw)
+        .to_owned();
+    if key.is_empty() {
+        return false;
+    }
+    let repaired = ids
+        .entry(key)
+        .or_insert_with(|| format!("call_{}", uuid::Uuid::new_v4().simple()))
+        .clone();
+    if let Some(object) = value.as_object_mut() {
+        object.insert("call_id".to_string(), Value::String(repaired));
+    }
+    true
 }
 
 /// Forwards upstream Responses SSE events to the downstream channel.
@@ -307,13 +386,43 @@ async fn pump_responses_events(
 ) {
     let mut byte_stream = upstream.bytes_stream();
     let mut decoder = SseRawLineDecoder::default();
+    let mut terminal = false;
+    let mut repaired_ids = std::collections::HashMap::new();
 
     while let Some(item) = byte_stream.next().await {
         match item {
             Ok(bytes) => {
                 let raw_events = decoder.push_chunk(&bytes);
                 for (event_name, data) in raw_events {
-                    let mut sse_ev = Event::default().data(data);
+                    let Ok(mut value) = serde_json::from_str::<Value>(&data) else {
+                        if data == "[DONE]" {
+                            continue;
+                        }
+                        let _ = tx.send(Ok(Event::default().event("error").data("{\"type\":\"error\",\"error\":{\"message\":\"Malformed Codex event\"}}"))).await;
+                        return;
+                    };
+                    if !repair_response_calls(&mut value, &mut repaired_ids) {
+                        let _ = tx.send(Ok(Event::default().event("error").data("{\"type\":\"error\",\"error\":{\"message\":\"Malformed Codex function call\"}}"))).await;
+                        return;
+                    }
+                    let event_type = value
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                        .or_else(|| event_name.clone());
+                    if matches!(
+                        event_type.as_deref(),
+                        Some(
+                            "response.completed"
+                                | "response.done"
+                                | "response.incomplete"
+                                | "response.failed"
+                                | "error"
+                        )
+                    ) {
+                        terminal = true;
+                    }
+                    let mut sse_ev = Event::default().data(value.to_string());
                     if let Some(ev) = event_name {
                         sse_ev = sse_ev.event(ev);
                     }
@@ -327,6 +436,9 @@ async fn pump_responses_events(
                 break;
             }
         }
+    }
+    if !terminal {
+        let _ = tx.send(Ok(Event::default().event("error").data("{\"type\":\"error\",\"error\":{\"message\":\"Codex stream ended without a terminal response\"}}"))).await;
     }
 }
 
@@ -422,6 +534,7 @@ async fn pump_chat_chunks(
                                             index: chunk_tool_index(index),
                                             id: Some(call_id),
                                             r#type: Some("function".to_string()),
+                                            thought_signature: None,
                                             function: Some(ChunkFunctionCall {
                                                 name: Some(name),
                                                 arguments: Some(String::new()),
@@ -440,10 +553,13 @@ async fn pump_chat_chunks(
                             }
                         }
                         CodexParsedEvent::ToolCallDelta { key, delta } => {
-                            let index = tool_calls
+                            let Some(index) = tool_calls
                                 .iter()
                                 .position(|call| call.matches(key.as_deref()))
-                                .unwrap_or_else(|| tool_calls.len().saturating_sub(1));
+                            else {
+                                let _ = tx.send(Ok(Event::default().event("error").data("{\"error\":{\"message\":\"Codex emitted an unmatched tool event\"}}"))).await;
+                                return;
+                            };
                             if let Some(call) = tool_calls.get_mut(index) {
                                 call.arguments.push_str(&delta);
                                 call.streamed_len = call.streamed_len.saturating_add(delta.len());
@@ -460,6 +576,7 @@ async fn pump_chat_chunks(
                                             index: chunk_tool_index(index),
                                             id: None,
                                             r#type: None,
+                                            thought_signature: None,
                                             function: Some(ChunkFunctionCall {
                                                 name: None,
                                                 arguments: Some(delta),
@@ -478,17 +595,23 @@ async fn pump_chat_chunks(
                             }
                         }
                         CodexParsedEvent::ToolCallDone { key, arguments } => {
-                            let index = tool_calls
+                            let Some(index) = tool_calls
                                 .iter()
                                 .position(|call| call.matches(key.as_deref()))
-                                .or_else(|| tool_calls.len().checked_sub(1));
-                            let Some(index) = index else { continue };
+                            else {
+                                let _ = tx.send(Ok(Event::default().event("error").data("{\"error\":{\"message\":\"Codex emitted an unmatched tool event\"}}"))).await;
+                                return;
+                            };
                             let Some(call) = tool_calls.get_mut(index) else {
                                 continue;
                             };
-                            let emit = call.streamed_len == 0 && !arguments.is_empty();
+                            let Some(suffix) = arguments.strip_prefix(&call.arguments) else {
+                                let _ = tx.send(Ok(Event::default().event("error").data("{\"error\":{\"message\":\"Codex tool arguments changed after streaming\"}}"))).await;
+                                return;
+                            };
+                            let suffix = suffix.to_owned();
                             call.arguments.clone_from(&arguments);
-                            if !emit {
+                            if suffix.is_empty() {
                                 continue;
                             }
                             call.streamed_len = arguments.len();
@@ -504,9 +627,10 @@ async fn pump_chat_chunks(
                                             index: chunk_tool_index(index),
                                             id: None,
                                             r#type: None,
+                                            thought_signature: None,
                                             function: Some(ChunkFunctionCall {
                                                 name: None,
-                                                arguments: Some(arguments),
+                                                arguments: Some(suffix),
                                             }),
                                         }]),
                                         ..Default::default()
@@ -521,7 +645,20 @@ async fn pump_chat_chunks(
                                 return;
                             }
                         }
-                        CodexParsedEvent::Finish { reason } => {
+                        CodexParsedEvent::Finish {
+                            mut reason, status, ..
+                        } => {
+                            if !matches!(status.as_str(), "completed" | "incomplete") {
+                                let _ = tx
+                                    .send(Ok(Event::default().event("error").data(
+                                        "{\"error\":{\"message\":\"Codex response failed\"}}",
+                                    )))
+                                    .await;
+                                return;
+                            }
+                            if reason == "stop" && !tool_calls.is_empty() {
+                                reason = "tool_calls".to_string();
+                            }
                             has_emitted_finish = true;
                             let chunk = ChatCompletionChunk {
                                 id: chunk_id.clone(),
@@ -553,28 +690,12 @@ async fn pump_chat_chunks(
     }
 
     if !has_emitted_finish {
-        let chunk = ChatCompletionChunk {
-            id: chunk_id.clone(),
-            object: "chat.completion.chunk".to_string(),
-            created: now,
-            model: model.clone(),
-            choices: vec![ChunkChoice {
-                index: 0,
-                delta: ChunkDelta::default(),
-                finish_reason: Some(
-                    if tool_calls.is_empty() {
-                        "stop"
-                    } else {
-                        "tool_calls"
-                    }
-                    .to_string(),
-                ),
-            }],
-            usage: None,
-        };
-        if let Ok(data) = serde_json::to_string(&chunk) {
-            let _ = tx.send(Ok(Event::default().data(data))).await;
-        }
+        let _ = tx
+            .send(Ok(Event::default().event("error").data(
+                "{\"error\":{\"message\":\"Codex stream ended without a terminal response\"}}",
+            )))
+            .await;
+        return;
     }
 
     let _ = tx.send(Ok(Event::default().data("[DONE]"))).await;
@@ -614,6 +735,10 @@ enum CodexParsedEvent {
     Finish {
         /// Chat completion finish reason.
         reason: String,
+        /// Responses lifecycle status.
+        status: String,
+        /// Original terminal response object, if supplied.
+        response: Option<Value>,
     },
     /// Token usage reported by the upstream response.
     Usage(Usage),
@@ -657,8 +782,8 @@ fn function_call_key(val: &Value) -> Option<String> {
     val.get("item_id")
         .or_else(|| val.get("call_id"))
         .or_else(|| val.get("id"))
-        .or_else(|| val.pointer("/item/call_id"))
         .or_else(|| val.pointer("/item/id"))
+        .or_else(|| val.pointer("/item/call_id"))
         .and_then(Value::as_str)
         .map(str::to_string)
 }
@@ -677,7 +802,7 @@ fn extract_arguments(val: &Value) -> Option<String> {
 /// Folds a tool-call event into the calls seen so far. Deltas append; the
 /// upstream's `*.done` events carry the complete arguments and replace whatever
 /// was assembled (idempotent when both arrive for the same call).
-fn apply_tool_event(calls: &mut Vec<PendingToolCall>, ev: CodexParsedEvent) {
+fn apply_tool_event(calls: &mut Vec<PendingToolCall>, ev: CodexParsedEvent) -> bool {
     match ev {
         CodexParsedEvent::ToolCallStart {
             call_id,
@@ -693,24 +818,27 @@ fn apply_tool_event(calls: &mut Vec<PendingToolCall>, ev: CodexParsedEvent) {
         CodexParsedEvent::ToolCallDelta { key, delta } => {
             if let Some(call) = calls.iter_mut().find(|call| call.matches(key.as_deref())) {
                 call.arguments.push_str(&delta);
-            } else if let Some(last) = calls.last_mut() {
-                last.arguments.push_str(&delta);
+            } else {
+                return false;
             }
         }
         CodexParsedEvent::ToolCallDone { key, arguments } => {
             if let Some(call) = calls.iter_mut().find(|call| call.matches(key.as_deref())) {
                 call.arguments = arguments;
+            } else {
+                return false;
             }
         }
         _ => {}
     }
+    true
 }
 
 /// Incrementally decodes upstream SSE lines into recognized Codex events.
 #[derive(Default)]
 struct SseLineDecoder {
-    /// Bytes not yet consumed as complete lines.
-    buffer: Vec<u8>,
+    /// Decoder for complete SSE frames.
+    raw: SseRawLineDecoder,
     /// Current SSE event name, used when JSON has no type.
     current_event_name: Option<String>,
 }
@@ -718,32 +846,11 @@ struct SseLineDecoder {
 impl SseLineDecoder {
     /// Buffers a byte chunk and parses any complete SSE data lines.
     fn push_chunk(&mut self, chunk: &[u8]) -> Vec<CodexParsedEvent> {
-        self.buffer.extend_from_slice(chunk);
         let mut out = Vec::new();
-
-        while let Some(pos) = self.buffer.iter().position(|b| *b == b'\n') {
-            let line_bytes: Vec<u8> = self.buffer.drain(..=pos).collect();
-            let line = String::from_utf8_lossy(&line_bytes);
-            let line = line.trim_end();
-
-            if line.is_empty() {
-                self.current_event_name = None;
-                continue;
-            }
-
-            if let Some(ev) = line.strip_prefix("event:") {
-                self.current_event_name = Some(ev.trim().to_string());
-                continue;
-            }
-
-            if let Some(data) = line.strip_prefix("data:") {
-                let data = data.trim();
-                if data == "[DONE]" {
-                    continue;
-                }
-                if let Ok(json_val) = serde_json::from_str::<Value>(data) {
-                    self.parse_json_event(&json_val, &mut out);
-                }
+        for (name, data) in self.raw.push_chunk(chunk) {
+            self.current_event_name = name;
+            if let Ok(value) = serde_json::from_str::<Value>(&data) {
+                self.parse_json_event(&value, &mut out);
             }
         }
         out
@@ -777,18 +884,33 @@ impl SseLineDecoder {
                 if let Some(item) = val.get("item") {
                     let item_type = item.get("type").and_then(Value::as_str);
                     if item_type == Some("function_call") {
+                        let item_id = item
+                            .get("id")
+                            .or_else(|| item.get("call_id"))
+                            .and_then(Value::as_str)
+                            .map(str::to_string);
                         let call_id = item
                             .get("call_id")
-                            .or_else(|| item.get("id"))
                             .and_then(Value::as_str)
-                            .unwrap_or("call_unknown")
-                            .to_string();
-                        let item_id = item.get("id").and_then(Value::as_str).map(str::to_string);
-                        let name = item
+                            .filter(|id| {
+                                !id.is_empty()
+                                    && id.len() <= 64
+                                    && id.bytes().all(|b| {
+                                        b.is_ascii_alphanumeric() || b == b'_' || b == b'-'
+                                    })
+                            })
+                            .map_or_else(
+                                || format!("call_{}", uuid::Uuid::new_v4().simple()),
+                                str::to_owned,
+                            );
+                        let Some(name) = item
                             .get("name")
                             .and_then(Value::as_str)
-                            .unwrap_or("function")
-                            .to_string();
+                            .filter(|name| !name.is_empty())
+                        else {
+                            return;
+                        };
+                        let name = name.to_string();
                         out.push(CodexParsedEvent::ToolCallStart {
                             call_id,
                             item_id: item_id.clone(),
@@ -831,7 +953,13 @@ impl SseLineDecoder {
                     }
                 }
             }
-            Some("response.completed" | "response.done") => {
+            Some(
+                "response.completed"
+                | "response.done"
+                | "response.incomplete"
+                | "response.failed"
+                | "error",
+            ) => {
                 if let Some(usage_obj) = val.pointer("/response/usage") {
                     let prompt_tokens = usage_obj
                         .get("input_tokens")
@@ -855,8 +983,23 @@ impl SseLineDecoder {
                         total_tokens,
                     }));
                 }
+                let status = match event_type {
+                    Some("response.incomplete") => "incomplete",
+                    Some("response.failed" | "error") => "failed",
+                    _ => val
+                        .pointer("/response/status")
+                        .and_then(Value::as_str)
+                        .unwrap_or("completed"),
+                };
                 out.push(CodexParsedEvent::Finish {
-                    reason: "stop".to_string(),
+                    reason: if status == "incomplete" {
+                        "length"
+                    } else {
+                        "stop"
+                    }
+                    .to_string(),
+                    status: status.to_string(),
+                    response: val.get("response").cloned(),
                 });
             }
             _ => {}
@@ -871,6 +1014,8 @@ struct SseRawLineDecoder {
     buffer: Vec<u8>,
     /// Event name associated with the current SSE data lines.
     current_event: Option<String>,
+    /// Data lines in the current event.
+    data: Vec<String>,
 }
 
 impl SseRawLineDecoder {
@@ -885,17 +1030,23 @@ impl SseRawLineDecoder {
             let line = line.trim_end();
 
             if line.is_empty() {
-                self.current_event = None;
+                if self.data.is_empty() {
+                    self.current_event = None;
+                } else {
+                    out.push((self.current_event.take(), self.data.join("\n")));
+                    self.data.clear();
+                }
                 continue;
             }
 
-            if let Some(ev) = line.strip_prefix("event: ") {
-                self.current_event = Some(ev.trim().to_string());
+            if let Some(ev) = line.strip_prefix("event:") {
+                self.current_event = Some(ev.strip_prefix(' ').unwrap_or(ev).to_string());
                 continue;
             }
 
-            if let Some(data) = line.strip_prefix("data: ") {
-                out.push((self.current_event.clone(), data.to_string()));
+            if let Some(data) = line.strip_prefix("data:") {
+                self.data
+                    .push(data.strip_prefix(' ').unwrap_or(data).to_string());
             }
         }
         out
@@ -903,7 +1054,7 @@ impl SseRawLineDecoder {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 
@@ -1015,5 +1166,244 @@ mod tests {
         let calls = collect(&sse);
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].arguments, "{\"path\":\"Cargo.toml\"}");
+    }
+    /// Starts an isolated upstream and captures requests made by the real client.
+    async fn fake_client(
+        sse: &'static str,
+    ) -> (
+        CodexClient,
+        tokio::sync::mpsc::Receiver<(axum::http::HeaderMap, Value)>,
+    ) {
+        use axum::{Json, Router, routing::post};
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let app = Router::new().route(
+            "/codex/responses",
+            post(
+                move |headers: axum::http::HeaderMap, Json(body): Json<Value>| {
+                    let tx = tx.clone();
+                    async move {
+                        tx.send((headers, body)).await.unwrap();
+                        ([("content-type", "text/event-stream")], sse)
+                    }
+                },
+            ),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut client = CodexClient::new();
+        client.base_url = format!("http://{address}");
+        (client, rx)
+    }
+
+    /// Returns an inert test credential.
+    fn credentials() -> CodexCredentials {
+        CodexCredentials {
+            access_token: "test-token".to_string(),
+            refresh_token: None,
+            account_id: None,
+            email: None,
+            plan_type: None,
+            residency: None,
+            expires_at: None,
+        }
+    }
+
+    /// Constructs a minimal chat request.
+    fn chat_request() -> ChatCompletionRequest {
+        serde_json::from_value(
+            serde_json::json!({"model":"test","messages":[{"role":"user","content":"hello"}]}),
+        )
+        .unwrap()
+    }
+
+    /// Reads the consumer-visible SSE response.
+    async fn stream_body(response: Response) -> String {
+        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    /// Missing or truncated terminal events never produce successful completion.
+    #[tokio::test]
+    async fn truncated_streams_report_errors() {
+        let (client, _requests) = fake_client(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n",
+        )
+        .await;
+        let request = chat_request();
+        assert!(
+            client
+                .complete_chat_non_streaming(&credentials(), &request, "scoped")
+                .await
+                .is_err()
+        );
+        let body = stream_body(
+            client
+                .stream_chat(&credentials(), &request, "scoped")
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert!(body.contains("partial"));
+        assert!(body.contains("event: error"));
+        assert!(!body.contains("[DONE]"));
+        let responses: ResponseCreateRequest =
+            serde_json::from_value(serde_json::json!({"model":"test","input":"hello"})).unwrap();
+        assert!(
+            client
+                .complete_responses_non_streaming(&credentials(), &responses, "scoped")
+                .await
+                .is_err()
+        );
+        let body = stream_body(
+            client
+                .stream_responses(&credentials(), &responses, "scoped")
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert!(body.contains("event: error"));
+    }
+
+    /// Incomplete and failed terminal statuses remain visible to consumers.
+    #[tokio::test]
+    async fn terminal_statuses_are_preserved() {
+        for status in ["incomplete", "failed"] {
+            let sse = if status == "failed" {
+                "data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_1\",\"object\":\"response\",\"status\":\"failed\",\"output\":[],\"error\":{\"message\":\"failed\"}}}\n\n"
+            } else {
+                "data: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_1\",\"object\":\"response\",\"status\":\"incomplete\",\"output\":[],\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n\n"
+            };
+            let (client, _requests) = fake_client(sse).await;
+            let response_request: ResponseCreateRequest =
+                serde_json::from_value(serde_json::json!({"model":"test","input":"hello"}))
+                    .unwrap();
+            let response = client
+                .complete_responses_non_streaming(&credentials(), &response_request, "scoped")
+                .await
+                .unwrap();
+            assert_eq!(response["status"], status);
+            let chat = client
+                .complete_chat_non_streaming(&credentials(), &chat_request(), "scoped")
+                .await;
+            if status == "failed" {
+                assert!(chat.is_err());
+                let body = stream_body(
+                    client
+                        .stream_chat(&credentials(), &chat_request(), "scoped")
+                        .await
+                        .unwrap(),
+                )
+                .await;
+                assert!(body.contains("event: error"));
+                assert!(!body.contains("[DONE]"));
+            } else {
+                assert_eq!(
+                    chat.unwrap().choices[0].finish_reason.as_deref(),
+                    Some("length")
+                );
+            }
+        }
+    }
+
+    /// Both APIs send the middleware-derived identity as headers and cache key.
+    #[tokio::test]
+    async fn scoped_identity_reaches_both_upstream_apis() {
+        let (client, mut requests) = fake_client("data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}\n\n").await;
+        let req: ResponseCreateRequest =
+            serde_json::from_value(serde_json::json!({"model":"test","input":"hello"})).unwrap();
+        client
+            .complete_chat_non_streaming(&credentials(), &chat_request(), "scoped-id")
+            .await
+            .unwrap();
+        client
+            .complete_responses_non_streaming(&credentials(), &req, "scoped-id")
+            .await
+            .unwrap();
+        for _ in 0..2 {
+            let (headers, body) = requests.recv().await.unwrap();
+            assert_eq!(headers["session_id"], "scoped-id");
+            assert_eq!(headers["conversation_id"], "scoped-id");
+            assert_eq!(body["prompt_cache_key"], "scoped-id");
+        }
+    }
+
+    /// Tool arguments and matching results survive a complete upstream round trip.
+    #[tokio::test]
+    async fn tool_calls_round_trip_without_changing_arguments() {
+        let sse = concat!(
+            "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"read\"}}\n\n",
+            "data: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_1\",\"arguments\":\"{\\\"path\\\":\\\"/tmp/a\\\"}\"}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n",
+        );
+        let (client, mut requests) = fake_client(sse).await;
+        let result = client
+            .complete_chat_non_streaming(&credentials(), &chat_request(), "scoped")
+            .await
+            .unwrap();
+        let choice = result.choices.first().unwrap();
+        assert_eq!(choice.finish_reason.as_deref(), Some("tool_calls"));
+        let call = choice.message.tool_calls.as_ref().unwrap().first().unwrap();
+        assert_eq!(call.function.arguments, "{\"path\":\"/tmp/a\"}");
+        let replay: ChatCompletionRequest = serde_json::from_value(serde_json::json!({
+            "model":"test",
+            "messages":[
+                {"role":"assistant","tool_calls":[call]},
+                {"role":"tool","tool_call_id":call.id,"content":"file contents"}
+            ]
+        }))
+        .unwrap();
+        client
+            .complete_chat_non_streaming(&credentials(), &replay, "scoped")
+            .await
+            .unwrap();
+        requests.recv().await.unwrap();
+        let (_, payload) = requests.recv().await.unwrap();
+        assert_eq!(payload["input"][0]["call_id"], call.id);
+        assert_eq!(payload["input"][0]["arguments"], call.function.arguments);
+        assert_eq!(payload["input"][1]["call_id"], call.id);
+        assert_eq!(payload["input"][1]["output"], "file contents");
+        let stream = stream_body(
+            client
+                .stream_chat(&credentials(), &chat_request(), "scoped")
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert!(stream.contains("call_1"));
+        assert!(stream.contains("tool_calls"));
+        assert!(stream.contains("[DONE]"));
+    }
+
+    /// Responses history keeps opaque reasoning and pairs repaired tool IDs.
+    #[tokio::test]
+    async fn responses_history_replays_reasoning_and_repairs_call_ids() {
+        let (client, mut requests) = fake_client("data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}\n\n").await;
+        let request: ResponseCreateRequest = serde_json::from_value(serde_json::json!({
+            "model":"test",
+            "input":[
+                {"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"thinking"}],"encrypted_content":"opaque"},
+                {"type":"function_call","call_id":"bad id!","name":"read","arguments":"{\"path\":\"/tmp\"}"},
+                {"type":"function_call_output","call_id":"bad id!","output":"contents"}
+            ]
+        })).unwrap();
+        client
+            .complete_responses_non_streaming(&credentials(), &request, "scoped")
+            .await
+            .unwrap();
+        let (_, payload) = requests.recv().await.unwrap();
+        assert_eq!(payload["input"][0]["encrypted_content"], "opaque");
+        assert_eq!(payload["input"][0]["summary"][0]["text"], "thinking");
+        let id = payload["input"][1]["call_id"].as_str().unwrap();
+        assert_eq!(id, "badid");
+        assert!(
+            id.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+        );
+        assert_eq!(payload["input"][2]["call_id"], id);
+        assert_eq!(payload["input"][1]["arguments"], "{\"path\":\"/tmp\"}");
+        assert_eq!(payload["input"][2]["output"], "contents");
     }
 }

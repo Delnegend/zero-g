@@ -2,6 +2,8 @@
 pub(crate) mod errors;
 /// Helpers for OpenAI-compatible proxy responses and permissions.
 pub(crate) mod proxy;
+/// Scoped identities for upstream session affinity.
+pub(crate) mod session;
 
 use crate::provider::{quota, registry};
 use crate::server::{AppState, settings::SettingsStore};

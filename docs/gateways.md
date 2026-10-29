@@ -60,8 +60,9 @@ provider prefix in `base_url` because Bifrost appends its OpenAI paths:
 }
 ```
 
-`zero-g` terminates streams with `data: [DONE]`, so leave
-`does_not_send_done_marker` unset. Chat streaming honors
+Successful Chat Completions streams terminate with `data: [DONE]`, so leave
+`does_not_send_done_marker` unset. An interrupted upstream stream instead reports
+an error without a success marker. Chat streaming honors
 `stream_options.include_usage`, so Bifrost's usage tracking works without
 additional configuration.
 

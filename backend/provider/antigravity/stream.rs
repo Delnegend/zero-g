@@ -11,6 +11,15 @@ pub(crate) enum AntigravityEvent {
     Text(String),
     /// A generated reasoning fragment.
     Reasoning(String),
+    /// Signed text or reasoning part to preserve for subsequent requests.
+    SignedPart {
+        /// Text carried by the part, which may be empty.
+        text: String,
+        /// Whether this part contains reasoning.
+        reasoning: bool,
+        /// Opaque upstream signature.
+        signature: String,
+    },
     /// A generated function call.
     ToolCall {
         /// The upstream or generated call identifier.
@@ -19,6 +28,8 @@ pub(crate) enum AntigravityEvent {
         name: String,
         /// The function arguments serialized as JSON.
         arguments: String,
+        /// Opaque signature attached to the upstream function call.
+        thought_signature: Option<String>,
     },
     /// The upstream completion signal.
     Finish {
@@ -45,6 +56,8 @@ pub(super) fn map_finish_reason(reason: &str, has_tools: bool) -> String {
 struct EventDecoder {
     /// Bytes not yet consumed as complete lines.
     buffer: Vec<u8>,
+    /// Whether an invalid or oversized event was encountered.
+    error: Option<String>,
 }
 
 impl EventDecoder {
@@ -53,6 +66,7 @@ impl EventDecoder {
         const MAX_BUFFER_BYTES: usize = 1024 * 1024;
         if self.buffer.len().saturating_add(chunk.len()) > MAX_BUFFER_BYTES {
             self.buffer.clear();
+            self.error = Some("Upstream event exceeded size limit".to_string());
             return Vec::new();
         }
         self.buffer.extend_from_slice(chunk);
@@ -62,7 +76,10 @@ impl EventDecoder {
             let line_bytes: Vec<u8> = self.buffer.drain(..=pos).collect();
             let line = String::from_utf8_lossy(&line_bytes);
             let line = line.trim_end();
-            parse_line(line, &mut events);
+            if let Err(error) = parse_line(line, &mut events) {
+                self.error = Some(error);
+                break;
+            }
         }
 
         events
@@ -70,21 +87,23 @@ impl EventDecoder {
 }
 
 /// Extracts events from one upstream SSE data line.
-fn parse_line(line: &str, events: &mut Vec<AntigravityEvent>) {
-    let Some(data) = line.strip_prefix("data: ") else {
-        return;
+fn parse_line(line: &str, events: &mut Vec<AntigravityEvent>) -> Result<(), String> {
+    let Some(data) = line.strip_prefix("data:").map(str::trim_start) else {
+        return Ok(());
     };
 
     let data = data.trim();
     if data.is_empty() || data == "[DONE]" {
-        return;
+        return Ok(());
     }
 
-    let Ok(parsed) = serde_json::from_str::<Value>(data) else {
-        return;
-    };
+    let parsed = serde_json::from_str::<Value>(data)
+        .map_err(|error| format!("Invalid upstream event: {error}"))?;
+    if let Some(error) = parsed.get("error") {
+        return Err(format!("Upstream error: {error}"));
+    }
     let Some(response) = parsed.get("response") else {
-        return;
+        return Err("Upstream event missing response".to_string());
     };
 
     if let Some(parts) = response
@@ -92,12 +111,20 @@ fn parse_line(line: &str, events: &mut Vec<AntigravityEvent>) {
         .and_then(Value::as_array)
     {
         for part in parts {
-            if let Some(text) = part.get("text").and_then(Value::as_str) {
-                if part
-                    .get("thought")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false)
-                {
+            let signature = part.get("thoughtSignature").and_then(Value::as_str);
+            let text = part.get("text").and_then(Value::as_str);
+            let reasoning = part
+                .get("thought")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if let Some(signature) = signature.filter(|_| part.get("functionCall").is_none()) {
+                events.push(AntigravityEvent::SignedPart {
+                    text: text.unwrap_or_default().to_string(),
+                    reasoning,
+                    signature: signature.to_string(),
+                });
+            } else if let Some(text) = text {
+                if reasoning {
                     events.push(AntigravityEvent::Reasoning(text.to_string()));
                 } else {
                     events.push(AntigravityEvent::Text(text.to_string()));
@@ -124,6 +151,10 @@ fn parse_line(line: &str, events: &mut Vec<AntigravityEvent>) {
                     id,
                     name,
                     arguments,
+                    thought_signature: part
+                        .get("thoughtSignature")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
                 });
             }
         }
@@ -153,6 +184,7 @@ fn parse_line(line: &str, events: &mut Vec<AntigravityEvent>) {
         }
         events.push(AntigravityEvent::Usage(usage));
     }
+    Ok(())
 }
 
 /// Spawns a task that decodes byte chunks into events or a stream error.
@@ -168,14 +200,22 @@ where
     tokio::spawn(async move {
         let mut stream = std::pin::pin!(stream);
         let mut decoder = EventDecoder::default();
+        let mut finished = false;
 
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
                     for event in decoder.push_chunk(bytes.as_ref()) {
+                        if matches!(event, AntigravityEvent::Finish { .. }) {
+                            finished = true;
+                        }
                         if tx.send(Ok(event)).await.is_err() {
                             return;
                         }
+                    }
+                    if let Some(error) = decoder.error.take() {
+                        let _ = tx.send(Err(error)).await;
+                        return;
                     }
                 }
                 Err(error) => {
@@ -183,6 +223,15 @@ where
                     return;
                 }
             }
+        }
+        if !decoder.buffer.is_empty() {
+            let _ = tx.send(Err("Truncated upstream event".to_string())).await;
+        } else if !finished {
+            let _ = tx
+                .send(Err(
+                    "Upstream stream ended without a finish reason".to_string()
+                ))
+                .await;
         }
     });
 
