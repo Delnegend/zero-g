@@ -2,13 +2,13 @@ import { useState } from "react";
 import { useForm } from "@tanstack/react-form";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PolarAngleAxis, RadialBar, RadialBarChart } from "recharts";
-import { message } from "../api/client";
+import { message } from "../server/api/client";
 import {
   deleteConsoleSession,
   getCredentialUsage,
   saveConsoleSession,
   type QuotaWindow,
-} from "../api/providers";
+} from "../server/api/providers";
 import { Alert, AlertDescription } from "./ui/alert";
 import { Button } from "./ui/button";
 import { ChartContainer } from "./ui/chart";

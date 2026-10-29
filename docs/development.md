@@ -53,7 +53,7 @@ Clippy also requires documentation comments on private Rust items, including fie
 
 ## Settings API contract
 
-The Rust settings request and response types define the settings API. After changing them, run `just api-generate` and commit `frontend/src/api/generated/openapi.json` and `frontend/src/api/generated/settings.ts`; Orval generates the Zod validators used by the settings client in `frontend/src/api/settings.ts`. TanStack Query manages the dashboard's server state, and TanStack Form manages editable form values. `just check` verifies that both generated files match the Rust contract and runs the frontend client tests.
+The Rust settings request and response types define the settings API. After changing them, run `just api-generate` and commit `frontend/src/server/api/generated/openapi.json` and `frontend/src/server/api/generated/settings.ts`; Orval generates the Zod validators used by the settings client in `frontend/src/server/api/settings.ts`. TanStack Query manages the dashboard's server state, and TanStack Form manages editable form values. `just check` verifies that both generated files match the Rust contract and runs the frontend client tests.
 
 This is a pilot for `/api/settings`; the other dashboard endpoints still use their existing handwritten types and fetch calls.
 

@@ -23,10 +23,10 @@ lint:
 
 # Regenerate the settings API contract and validators
 api-generate:
-    ZERO_G_OPENAPI_OUTPUT="$PWD/frontend/src/api/generated/openapi.json" cargo test --quiet --bin zero-g contract::tests::settings_contract_exposes_operations_and_u32_bounds -- --exact
-    bun fmt --no-script frontend/src/api/generated/openapi.json
+    ZERO_G_OPENAPI_OUTPUT="$PWD/frontend/src/server/api/generated/openapi.json" cargo test --quiet --bin zero-g contract::tests::settings_contract_exposes_operations_and_u32_bounds -- --exact
+    bun fmt --no-script frontend/src/server/api/generated/openapi.json
     cd frontend && bun run orval --config orval.config.ts
-    bun fmt --no-script frontend/src/api/generated/settings.ts
+    bun fmt --no-script frontend/src/server/api/generated/settings.ts
 
 # Detect stale generated settings contracts without changing project files
 api-check:
@@ -36,10 +36,10 @@ api-check:
     trap 'rm -rf "$tmp"' EXIT
     ZERO_G_OPENAPI_OUTPUT="$tmp/openapi.json" cargo test --quiet --bin zero-g contract::tests::settings_contract_exposes_operations_and_u32_bounds -- --exact
     bun fmt --no-script "$tmp/openapi.json"
-    cmp "$tmp/openapi.json" frontend/src/api/generated/openapi.json || { echo "OpenAPI is stale; run just api-generate" >&2; exit 1; }
+    cmp "$tmp/openapi.json" frontend/src/server/api/generated/openapi.json || { echo "OpenAPI is stale; run just api-generate" >&2; exit 1; }
     (cd frontend && ZERO_G_OPENAPI_INPUT="$tmp/openapi.json" ZERO_G_CONTRACT_OUTPUT="$tmp/settings.ts" bun run orval --config orval.config.ts)
     bun fmt --no-script "$tmp/settings.ts"
-    cmp "$tmp/settings.ts" frontend/src/api/generated/settings.ts || { echo "Zod validators are stale; run just api-generate" >&2; exit 1; }
+    cmp "$tmp/settings.ts" frontend/src/server/api/generated/settings.ts || { echo "Zod validators are stale; run just api-generate" >&2; exit 1; }
 
 # Single gate CI verification
 check:
@@ -47,7 +47,7 @@ check:
     just lint
     just frontend-build
     just api-check
-    cd frontend && bun test src/api/settings.test.ts src/RequestBody.test.tsx
+    cd frontend && bun test src/server/api/settings.test.ts src/RequestBody.test.tsx
     cargo fmt --check
     cargo clippy --all-targets -- -D warnings
     cargo test

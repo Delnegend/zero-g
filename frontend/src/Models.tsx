@@ -1,7 +1,7 @@
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { message, request } from "./api/client";
+import { message, request } from "./server/api/client";
 import { CardsSkeleton, FormSkeleton } from "./components/Loading";
 import { RefreshButton } from "./components/RefreshButton";
 import { Alert, AlertDescription } from "./components/ui/alert";

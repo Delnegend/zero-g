@@ -20,9 +20,9 @@ import {
   getSettings,
   updateSettings,
   type SettingsUpdate,
-} from "./api/settings";
-import { message, request } from "./api/client";
-import { getProviders } from "./api/providers";
+} from "./server/api/settings";
+import { message, request } from "./server/api/client";
+import { getProviders } from "./server/api/providers";
 import { ProvidersPage } from "./ProvidersPage";
 
 type VirtualKey = {

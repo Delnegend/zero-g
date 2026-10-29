@@ -24,7 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./components/ui/select";
-import { message, request } from "./api/client";
+import { message, request } from "./server/api/client";
 import {
   getProviderKinds,
   getCredentials,
@@ -34,7 +34,7 @@ import {
   type Provider,
   type ProviderKind,
   type ProviderCredential,
-} from "./api/providers";
+} from "./server/api/providers";
 
 const inputClass =
   "mt-1 h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
