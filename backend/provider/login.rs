@@ -1,11 +1,12 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use axum::Json;
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::Html;
+use axum::routing::post;
+use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::Mutex;
@@ -19,10 +20,56 @@ use crate::provider::codex::auth::{
 use crate::server::AppState;
 use crate::util::urlencode;
 
-type FlowResults = HashMap<String, (Instant, Result<(), String>)>;
+type FlowResults = HashMap<String, (Instant, String, String, Result<(), String>)>;
+
+#[derive(Debug)]
+pub(crate) struct CredentialError {
+    pub(crate) message: String,
+    pub(crate) upstream_status: Option<reqwest::StatusCode>,
+}
+
+impl CredentialError {
+    pub(crate) const fn upstream(status: reqwest::StatusCode, message: String) -> Self {
+        Self {
+            message,
+            upstream_status: Some(status),
+        }
+    }
+}
+
+impl std::fmt::Display for CredentialError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for CredentialError {}
+
+impl From<String> for CredentialError {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            upstream_status: None,
+        }
+    }
+}
+
+static REFRESH_LOCKS: LazyLock<Mutex<HashMap<String, Weak<Mutex<()>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+pub(crate) async fn credential_lock(id: &str) -> Arc<Mutex<()>> {
+    let mut locks = REFRESH_LOCKS.lock().await;
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(id).and_then(Weak::upgrade) {
+        return lock;
+    }
+    let lock = Arc::new(Mutex::new(()));
+    locks.insert(id.to_string(), Arc::downgrade(&lock));
+    lock
+}
 
 #[derive(Clone, Default)]
-pub(super) struct OAuthFlows {
+struct OAuthFlows {
     pending: Arc<Mutex<HashMap<String, Flow>>>,
     results: Arc<Mutex<FlowResults>>,
     google_listener: Arc<Mutex<()>>,
@@ -30,11 +77,15 @@ pub(super) struct OAuthFlows {
 
 enum Flow {
     Google {
+        provider_id: String,
+        credential_id: String,
         created: Instant,
         in_flight: bool,
         shutdown: Arc<tokio::sync::Notify>,
     },
     Codex {
+        provider_id: String,
+        credential_id: String,
         created: Instant,
         device_id: String,
         user_code: String,
@@ -44,7 +95,50 @@ enum Flow {
     },
 }
 
+impl Flow {
+    fn belongs_to(&self, provider: &str, credential: &str) -> bool {
+        match self {
+            Self::Google {
+                provider_id,
+                credential_id,
+                ..
+            }
+            | Self::Codex {
+                provider_id,
+                credential_id,
+                ..
+            } => provider_id == provider && credential_id == credential,
+        }
+    }
+}
+
 type LoginState = (AppState, OAuthFlows);
+
+pub(crate) fn router(app: AppState) -> Router {
+    let state = (app, OAuthFlows::default());
+    Router::new()
+        .route(
+            "/api/providers/{id}/credentials/{credential_id}/agy/start",
+            post(agy_start),
+        )
+        .route(
+            "/api/providers/{id}/credentials/{credential_id}/agy/finish",
+            post(agy_finish),
+        )
+        .route(
+            "/api/providers/{id}/credentials/{credential_id}/agy/poll",
+            post(agy_poll),
+        )
+        .route(
+            "/api/providers/{id}/credentials/{credential_id}/codex/start",
+            post(codex_start),
+        )
+        .route(
+            "/api/providers/{id}/credentials/{credential_id}/codex/poll",
+            post(codex_poll),
+        )
+        .with_state(state)
+}
 
 fn same_origin(headers: &HeaderMap) -> Result<(), (StatusCode, String)> {
     let origin = headers
@@ -82,22 +176,62 @@ fn error(message: impl Into<String>) -> (StatusCode, String) {
     (StatusCode::BAD_REQUEST, message.into())
 }
 
+pub(crate) async fn require_provider(
+    store: &crate::server::settings::SettingsStore,
+    id: &str,
+    kind: &str,
+) -> Result<(), (StatusCode, String)> {
+    let provider = crate::provider::registry::get(&store.database, id)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to load provider".into(),
+            )
+        })?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "Provider not found".into()))?;
+    if provider.kind != kind {
+        return Err(error("Provider kind does not match login"));
+    }
+    Ok(())
+}
+
+pub(crate) async fn require_credential(
+    store: &crate::server::settings::SettingsStore,
+    provider_id: &str,
+    credential_id: &str,
+    kind: &str,
+) -> Result<(), (StatusCode, String)> {
+    require_provider(store, provider_id, kind).await?;
+    let credential = crate::provider::credentials::get(store, provider_id, credential_id)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to load credential".into(),
+            )
+        })?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "Credential not found".into()))?;
+    if !credential.enabled {
+        return Err(error("Credential is disabled"));
+    }
+    Ok(())
+}
+
 // Keep the OAuth listener setup and its cleanup together.
 #[allow(clippy::too_many_lines)]
-pub(super) async fn agy_start(
+async fn agy_start(
     State((app, flows)): State<LoginState>,
+    Path((provider_id, credential_id)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     same_origin(&headers)?;
+    require_credential(&app.settings, &provider_id, &credential_id, "agy").await?;
     let settings = &app.settings;
     let client_id = agy::oauth_client_id(settings).await.map_err(error)?;
     // Check configuration before starting a flow.
     agy::oauth_client_secret(settings).await.map_err(error)?;
-    let listener_guard = flows
-        .google_listener
-        .clone()
-        .try_lock_owned()
-        .map_err(|_| error("Another Google login is already in progress"))?;
+    let listener_guard = flows.google_listener.clone().try_lock_owned().ok();
     let shutdown = Arc::new(tokio::sync::Notify::new());
     let state = Uuid::new_v4().to_string();
     let mut pending = flows.pending.lock().await;
@@ -109,21 +243,29 @@ pub(super) async fn agy_start(
     pending.insert(
         state.clone(),
         Flow::Google {
+            provider_id: provider_id.clone(),
+            credential_id: credential_id.clone(),
             created: Instant::now(),
             in_flight: false,
             shutdown: shutdown.clone(),
         },
     );
     drop(pending);
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", agy::OAUTH_CALLBACK_PORT))
-        .await
-        .ok();
+    let listener = if listener_guard.is_some() {
+        tokio::net::TcpListener::bind(("127.0.0.1", agy::OAUTH_CALLBACK_PORT))
+            .await
+            .ok()
+    } else {
+        None
+    };
     let local_callback = listener.is_some();
     if let Some(listener) = listener {
         let callback_app = app.clone();
         let callback_shutdown = shutdown.clone();
         let callback_flows = flows.clone();
         let flow_id = state.clone();
+        let callback_provider_id = provider_id.clone();
+        let callback_credential_id = credential_id.clone();
         tokio::spawn(async move {
             let _listener_guard = listener_guard;
             let handler = axum::Router::new().route(
@@ -133,6 +275,8 @@ pub(super) async fn agy_start(
                     let flows = callback_flows.clone();
                     let shutdown = callback_shutdown.clone();
                     let flow_id = flow_id.clone();
+                    let provider_id = callback_provider_id.clone();
+                    let credential_id = callback_credential_id.clone();
                     async move {
                         if query.get("state").map(String::as_str) != Some(flow_id.as_str()) {
                             return Html("Invalid OAuth state. Return to the dashboard.");
@@ -152,6 +296,7 @@ pub(super) async fn agy_start(
                         );
                         let result = agy_finish(
                             State((app, flows.clone())),
+                            Path((provider_id, credential_id)),
                             headers,
                             Json(GoogleFinish {
                                 callback_url: callback.to_string(),
@@ -193,7 +338,7 @@ pub(super) async fn agy_start(
 }
 
 #[derive(Deserialize)]
-pub(super) struct GoogleFinish {
+struct GoogleFinish {
     callback_url: String,
 }
 
@@ -236,15 +381,23 @@ fn parse_google_callback(callback_url: &str) -> Result<(String, String), (Status
     Ok((state, code))
 }
 
-pub(super) async fn agy_finish(
+async fn agy_finish(
     State((app, flows)): State<LoginState>,
+    Path((provider_id, credential_id)): Path<(String, String)>,
     headers: HeaderMap,
     Json(input): Json<GoogleFinish>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     same_origin(&headers)?;
+    require_credential(&app.settings, &provider_id, &credential_id, "agy").await?;
     let (state, code) = parse_google_callback(&input.callback_url)?;
     {
         let mut pending = flows.pending.lock().await;
+        if !pending
+            .get(&state)
+            .is_some_and(|flow| flow.belongs_to(&provider_id, &credential_id))
+        {
+            return Err(error("OAuth state is invalid or expired"));
+        }
         match pending.get_mut(&state) {
             Some(Flow::Google {
                 created, in_flight, ..
@@ -254,7 +407,7 @@ pub(super) async fn agy_finish(
             _ => return Err(error("OAuth state is invalid or expired")),
         }
     }
-    let result = finish_google_exchange(&app, &code).await;
+    let result = finish_google_exchange(&app, &provider_id, &credential_id, &code).await;
     complete_google(
         &flows,
         &state,
@@ -269,6 +422,8 @@ pub(super) async fn agy_finish(
 
 async fn finish_google_exchange(
     app: &AppState,
+    provider_id: &str,
+    credential_id: &str,
     code: &str,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let settings = &app.settings;
@@ -332,39 +487,54 @@ async fn finish_google_exchange(
         expires_at: Some(expires_at),
         email,
     };
-    AuthManager::save(settings, &creds).await.map_err(error)?;
-    let manager = AuthManager::load(settings.clone()).await.map_err(error)?;
-    *app.auth.write().await = manager;
+    let lock = credential_lock(credential_id).await;
+    let _guard = lock.lock().await;
+    AuthManager::save(settings, provider_id, credential_id, &creds)
+        .await
+        .map_err(error)?;
     Ok(Json(json!({"status":"complete"})))
 }
 
 async fn complete_google(flows: &OAuthFlows, state: &str, result: Result<(), String>) {
     let mut pending = flows.pending.lock().await;
-    if let Some(Flow::Google { shutdown, .. }) = pending.remove(state) {
-        flows
-            .results
-            .lock()
-            .await
-            .insert(state.to_string(), (Instant::now(), result));
+    if let Some(Flow::Google {
+        provider_id,
+        credential_id,
+        shutdown,
+        ..
+    }) = pending.remove(state)
+    {
+        flows.results.lock().await.insert(
+            state.to_string(),
+            (Instant::now(), provider_id, credential_id, result),
+        );
         shutdown.notify_one();
     }
 }
 
 #[derive(Deserialize)]
-pub(super) struct GooglePoll {
+struct GooglePoll {
     id: String,
 }
 
-pub(super) async fn agy_poll(
-    State((_, flows)): State<LoginState>,
+async fn agy_poll(
+    State((app, flows)): State<LoginState>,
+    Path((provider_id, credential_id)): Path<(String, String)>,
     headers: HeaderMap,
     Json(input): Json<GooglePoll>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     same_origin(&headers)?;
+    require_credential(&app.settings, &provider_id, &credential_id, "agy").await?;
     let pending = flows.pending.lock().await;
     let mut results = flows.results.lock().await;
-    results.retain(|_, (created, _)| created.elapsed() < Duration::from_secs(600));
-    if let Some((_, result)) = results.remove(&input.id) {
+    results.retain(|_, (created, _, _, _)| created.elapsed() < Duration::from_secs(600));
+    if results
+        .get(&input.id)
+        .is_some_and(|(_, id, credential, _)| id == &provider_id && credential == &credential_id)
+    {
+        let Some((_, _, _, result)) = results.remove(&input.id) else {
+            return Err(error("OAuth flow is invalid or expired"));
+        };
         return Ok(Json(match result {
             Ok(()) => json!({"status":"complete"}),
             Err(message) => json!({"status":"failed", "error":message}),
@@ -372,17 +542,19 @@ pub(super) async fn agy_poll(
     }
     drop(results);
     match pending.get(&input.id) {
-        Some(Flow::Google { created, .. }) if created.elapsed() < Duration::from_secs(600) => {
+        Some(Flow::Google {
+            provider_id: id,
+            credential_id: credential,
+            created,
+            ..
+        }) if id == &provider_id
+            && credential == &credential_id
+            && created.elapsed() < Duration::from_secs(600) =>
+        {
             Ok(Json(json!({"status":"pending"})))
         }
         _ => Err(error("OAuth flow is invalid or expired")),
     }
-}
-
-pub(super) async fn status(State((app, _)): State<LoginState>) -> Json<serde_json::Value> {
-    Json(
-        json!({"agy": app.auth.read().await.is_some(), "codex": app.codex_auth.read().await.is_some()}),
-    )
 }
 
 #[derive(Deserialize)]
@@ -392,11 +564,13 @@ struct DeviceStart {
     interval: Option<serde_json::Value>,
 }
 
-pub(super) async fn codex_start(
-    State((_, flows)): State<LoginState>,
+async fn codex_start(
+    State((app, flows)): State<LoginState>,
+    Path((provider_id, credential_id)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     same_origin(&headers)?;
+    require_credential(&app.settings, &provider_id, &credential_id, "codex").await?;
     let response = reqwest::Client::new()
         .post(CODEX_DEVICE_USERCODE_URL)
         .json(&json!({"client_id": CODEX_CLIENT_ID}))
@@ -436,6 +610,8 @@ pub(super) async fn codex_start(
     pending.insert(
         id.clone(),
         Flow::Codex {
+            provider_id,
+            credential_id,
             created: Instant::now(),
             device_id: data.device_auth_id,
             user_code: data.user_code,
@@ -451,7 +627,7 @@ pub(super) async fn codex_start(
 }
 
 #[derive(Deserialize)]
-pub(super) struct CodexPoll {
+struct CodexPoll {
     id: String,
 }
 #[derive(Deserialize)]
@@ -460,15 +636,25 @@ struct DeviceToken {
     code_verifier: Option<String>,
 }
 
-pub(super) async fn codex_poll(
+// Keep the device polling state transition and token exchange together.
+#[allow(clippy::too_many_lines)]
+async fn codex_poll(
     State((app, flows)): State<LoginState>,
+    Path((provider_id, credential_id)): Path<(String, String)>,
     headers: HeaderMap,
     Json(input): Json<CodexPoll>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     same_origin(&headers)?;
+    require_credential(&app.settings, &provider_id, &credential_id, "codex").await?;
     let settings = &app.settings;
     let (device_id, user_code) = {
         let mut pending = flows.pending.lock().await;
+        if !pending
+            .get(&input.id)
+            .is_some_and(|flow| flow.belongs_to(&provider_id, &credential_id))
+        {
+            return Err(error("Device flow is invalid or expired"));
+        }
         let Some(Flow::Codex {
             created,
             device_id,
@@ -476,6 +662,7 @@ pub(super) async fn codex_poll(
             interval,
             next_poll,
             in_flight,
+            ..
         }) = pending.get_mut(&input.id)
         else {
             return Err(error("Device flow is invalid or expired"));
@@ -550,22 +737,225 @@ pub(super) async fn codex_poll(
         crate::provider::codex::login::exchange_token(&code, &verifier, CODEX_DEVICE_REDIRECT_URI)
             .await
             .map_err(error)?;
-    CodexAuthManager::save(settings, &creds)
+    let lock = credential_lock(&credential_id).await;
+    let _guard = lock.lock().await;
+    CodexAuthManager::save(settings, &provider_id, &credential_id, &creds)
         .await
         .map_err(error)?;
-    let manager = CodexAuthManager::load(settings.clone())
-        .await
-        .map_err(error)?;
-    *app.codex_auth.write().await = manager;
     Ok(Json(json!({"status":"complete"})))
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::{Flow, OAuthFlows, complete_google, parse_google_callback, same_origin};
     use axum::http::{HeaderMap, HeaderValue, header};
     use std::sync::Arc;
     use std::time::Instant;
+
+    #[test]
+    fn flows_are_bound_to_provider_and_credential() {
+        let google = Flow::Google {
+            provider_id: "google-one".into(),
+            credential_id: "google-key".into(),
+            created: Instant::now(),
+            in_flight: false,
+            shutdown: Arc::new(tokio::sync::Notify::new()),
+        };
+        let codex = Flow::Codex {
+            provider_id: "codex-one".into(),
+            credential_id: "codex-key".into(),
+            created: Instant::now(),
+            device_id: "device".into(),
+            user_code: "code".into(),
+            interval: std::time::Duration::from_secs(5),
+            next_poll: Instant::now(),
+            in_flight: false,
+        };
+        assert!(google.belongs_to("google-one", "google-key"));
+        assert!(!google.belongs_to("google-two", "google-key"));
+        assert!(!google.belongs_to("google-one", "other-key"));
+        assert!(codex.belongs_to("codex-one", "codex-key"));
+        assert!(!codex.belongs_to("codex-two", "codex-key"));
+        assert!(!codex.belongs_to("codex-one", "other-key"));
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn credentials_are_isolated_and_cannot_be_resurrected() {
+        use crate::provider::antigravity::auth::{AuthManager, Credentials};
+        use crate::{database::Database, server::settings::SettingsStore};
+        use axum::{
+            body::{Body, to_bytes},
+            http::{Request, StatusCode},
+        };
+        use tower::ServiceExt;
+
+        let database = Database::open(":memory:").await.unwrap();
+        let store = SettingsStore::new(database, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+            .await
+            .unwrap();
+        let providers = crate::provider::registry::router(store.clone());
+        for kind in ["agy", "codex"] {
+            let request = Request::builder()
+                .method("POST")
+                .uri("/api/providers")
+                .header("content-type", "application/json")
+                .body(Body::from(format!(r#"{{"kind":"{kind}"}}"#)))
+                .unwrap();
+            assert_eq!(
+                providers.clone().oneshot(request).await.unwrap().status(),
+                StatusCode::CREATED
+            );
+        }
+        let credentials = crate::provider::credentials::router(store.clone());
+        let mut ids = Vec::new();
+        for name in ["first", "second"] {
+            let request = Request::builder()
+                .method("POST")
+                .uri("/api/providers/agy/credentials")
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"name":"{name}","weight":1,"enabled":true}}"#
+                )))
+                .unwrap();
+            let response = credentials.clone().oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::CREATED);
+            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            ids.push(value["id"].as_str().unwrap().to_string());
+            let creds = Credentials {
+                access_token: name.into(),
+                refresh_token: None,
+                project_id: name.into(),
+                expires_at: None,
+                email: None,
+            };
+            AuthManager::save(&store, "agy", ids.last().unwrap(), &creds)
+                .await
+                .unwrap();
+        }
+        let first = AuthManager::load(store.clone(), "agy", &ids[0])
+            .await
+            .unwrap()
+            .unwrap();
+        let second = AuthManager::load(store.clone(), "agy", &ids[1])
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.get_credentials().await.unwrap().access_token, "first");
+        assert_eq!(
+            second.get_credentials().await.unwrap().access_token,
+            "second"
+        );
+        let replacement = Credentials {
+            access_token: "replacement".into(),
+            refresh_token: None,
+            project_id: "replacement".into(),
+            expires_at: None,
+            email: None,
+        };
+        AuthManager::save(&store, "agy", &ids[0], &replacement)
+            .await
+            .unwrap();
+        assert_eq!(
+            first.get_credentials().await.unwrap().access_token,
+            "replacement"
+        );
+        assert_eq!(
+            second.get_credentials().await.unwrap().access_token,
+            "second"
+        );
+        assert!(
+            AuthManager::save(&store, "codex", &ids[0], &replacement)
+                .await
+                .is_err()
+        );
+        assert!(
+            AuthManager::load(store.clone(), "codex", &ids[0])
+                .await
+                .is_err()
+        );
+        assert!(
+            crate::provider::codex::auth::CodexAuthManager::load(store.clone(), "codex", &ids[0])
+                .await
+                .is_err()
+        );
+
+        let request = Request::builder()
+            .method("PUT")
+            .uri(format!("/api/providers/agy/credentials/{}", ids[0]))
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"name":"first","weight":1,"enabled":false}"#))
+            .unwrap();
+        assert!(
+            credentials
+                .clone()
+                .oneshot(request)
+                .await
+                .unwrap()
+                .status()
+                .is_success()
+        );
+        let late = Credentials {
+            access_token: "late".into(),
+            refresh_token: None,
+            project_id: "late".into(),
+            expires_at: None,
+            email: None,
+        };
+        assert!(first.get_credentials().await.is_err());
+        assert!(
+            AuthManager::save(&store, "agy", &ids[0], &late)
+                .await
+                .is_err()
+        );
+
+        let request = Request::builder()
+            .method("DELETE")
+            .uri(format!("/api/providers/agy/credentials/{}", ids[1]))
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            credentials.oneshot(request).await.unwrap().status(),
+            StatusCode::NO_CONTENT
+        );
+        assert!(second.get_credentials().await.is_err());
+        assert!(
+            AuthManager::save(&store, "agy", &ids[1], &late)
+                .await
+                .is_err()
+        );
+        assert!(
+            store
+                .secret_get(&format!("credential.{}.credential", ids[1]))
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let request = Request::builder()
+            .method("DELETE")
+            .uri("/api/providers/agy")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            providers.oneshot(request).await.unwrap().status(),
+            StatusCode::NO_CONTENT
+        );
+        assert!(
+            AuthManager::save(&store, "agy", &ids[0], &late)
+                .await
+                .is_err()
+        );
+        assert!(
+            store
+                .secret_get(&format!("credential.{}.credential", ids[0]))
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
 
     #[test]
     fn callback_rejects_wrong_redirect_and_duplicate_state() {
@@ -600,42 +990,41 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn google_completion_replaces_in_flight_with_terminal_result() {
+    async fn simultaneous_google_flows_keep_results_bound_to_credentials() {
         let flows = OAuthFlows::default();
-        for (id, result) in [
-            ("success", Ok(())),
-            ("failure", Err("exchange failed".to_string())),
-        ] {
-            let shutdown = Arc::new(tokio::sync::Notify::new());
+        for id in ["success", "failure"] {
             flows.pending.lock().await.insert(
                 id.into(),
                 Flow::Google {
+                    provider_id: "account".into(),
+                    credential_id: id.into(),
                     created: Instant::now(),
                     in_flight: true,
-                    shutdown: shutdown.clone(),
+                    shutdown: Arc::new(tokio::sync::Notify::new()),
                 },
             );
-            complete_google(&flows, id, result.clone()).await;
-            assert!(!flows.pending.lock().await.contains_key(id));
-            assert_eq!(
-                flows
-                    .results
-                    .lock()
-                    .await
-                    .get(id)
-                    .map(|(_, value)| value.clone()),
-                Some(result)
-            );
-            assert!(
-                tokio::time::timeout(std::time::Duration::from_millis(10), shutdown.notified())
-                    .await
-                    .is_ok()
-            );
         }
+        complete_google(&flows, "success", Ok(())).await;
+        assert!(flows.pending.lock().await.contains_key("failure"));
+        complete_google(&flows, "failure", Err("exchange failed".into())).await;
+        let results = flows.results.lock().await;
+        let (_, provider, credential, result) = results.get("success").unwrap();
+        assert_eq!(
+            (provider.as_str(), credential.as_str()),
+            ("account", "success")
+        );
+        assert!(result.is_ok());
+        let (_, provider, credential, result) = results.get("failure").unwrap();
+        assert_eq!(
+            (provider.as_str(), credential.as_str()),
+            ("account", "failure")
+        );
+        assert_eq!(result.as_ref().unwrap_err(), "exchange failed");
+        drop(results);
     }
 
     #[tokio::test]
-    async fn google_listener_allows_only_one_active_start() {
+    async fn google_listener_has_a_single_local_callback_owner() {
         let flows = OAuthFlows::default();
         let guard = flows.google_listener.clone().try_lock_owned();
         assert!(guard.is_ok());

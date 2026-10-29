@@ -18,7 +18,7 @@ pub(crate) struct ResponsesStreamSerializer {
     pub(crate) output_items: Vec<(usize, ResponseOutputItem)>,
 }
 
-impl crate::server::sse::SseSerializer for ResponsesStreamSerializer {
+impl crate::provider::antigravity::sse::SseSerializer for ResponsesStreamSerializer {
     fn initial(&mut self) -> Vec<Event> {
         let created_event = json!({
             "type": "response.created",

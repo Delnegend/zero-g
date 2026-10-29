@@ -1,5 +1,3 @@
-use std::fs;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -8,43 +6,10 @@ use serde_with::skip_serializing_none;
 use tokio::sync::RwLock;
 use tracing::info;
 
+use crate::provider::login::CredentialError;
 use crate::server::settings::SettingsStore;
-use crate::util::config_base_dir;
-
-pub(crate) async fn migrate_oauth_settings(store: &SettingsStore) -> Result<(), String> {
-    if store
-        .setting_get("oauth_client_id.imported")
-        .await?
-        .is_none()
-    {
-        if store.setting_get("oauth_client_id").await?.is_none()
-            && let Ok(value) = std::env::var("ZERO_G_OAUTH_CLIENT_ID")
-            && !value.trim().is_empty()
-        {
-            store.setting_put("oauth_client_id", &value).await?;
-        }
-        store.setting_put("oauth_client_id.imported", "1").await?;
-    }
-    if store
-        .setting_get("oauth_client_secret.imported")
-        .await?
-        .is_none()
-    {
-        if store.secret_get("oauth_client_secret").await?.is_none()
-            && let Ok(value) = std::env::var("ZERO_G_OAUTH_CLIENT_SECRET")
-            && !value.trim().is_empty()
-        {
-            store.secret_put("oauth_client_secret", &value).await?;
-        }
-        store
-            .setting_put("oauth_client_secret.imported", "1")
-            .await?;
-    }
-    Ok(())
-}
 
 pub(crate) async fn oauth_client_id(store: &SettingsStore) -> Result<String, String> {
-    migrate_oauth_settings(store).await?;
     store
         .setting_get("oauth_client_id")
         .await?
@@ -53,7 +18,6 @@ pub(crate) async fn oauth_client_id(store: &SettingsStore) -> Result<String, Str
 }
 
 pub(crate) async fn oauth_client_secret(store: &SettingsStore) -> Result<String, String> {
-    migrate_oauth_settings(store).await?;
     store
         .secret_get("oauth_client_secret")
         .await?
@@ -92,6 +56,8 @@ pub(crate) struct Credentials {
 pub(crate) struct AuthManager {
     creds: Arc<RwLock<Credentials>>,
     store: SettingsStore,
+    provider_id: String,
+    credential_id: String,
 }
 
 #[derive(Deserialize)]
@@ -101,66 +67,53 @@ struct TokenRefreshResponse {
 }
 
 impl AuthManager {
-    pub(crate) async fn load(store: SettingsStore) -> Result<Option<Self>, String> {
-        let creds = match store.secret_get("provider.antigravity").await? {
+    pub(crate) async fn load(
+        store: SettingsStore,
+        provider_id: &str,
+        credential_id: &str,
+    ) -> Result<Option<Self>, String> {
+        let lock = crate::provider::login::credential_lock(credential_id).await;
+        let _guard = lock.lock().await;
+        crate::provider::login::require_credential(&store, provider_id, credential_id, "agy")
+            .await
+            .map_err(|(_, message)| message)?;
+        let creds = match store
+            .secret_get(&format!("credential.{credential_id}.credential"))
+            .await?
+        {
             Some(json) => Some(
                 serde_json::from_str(&json)
                     .map_err(|e| format!("Failed to parse stored Antigravity credentials: {e}"))?,
             ),
-            None if store
-                .secret_get("provider.antigravity.imported")
-                .await?
-                .is_none() =>
-            {
-                let path = Self::get_config_path();
-                match fs::read_to_string(&path) {
-                    Ok(content) => {
-                        let creds = serde_json::from_str(&content).map_err(|e| {
-                            format!("Failed to parse legacy credentials {}: {e}", path.display())
-                        })?;
-                        Self::save(&store, &creds).await?;
-                        info!("Imported Antigravity credentials from {}", path.display());
-                        Some(creds)
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                        store
-                            .secret_put("provider.antigravity.imported", "1")
-                            .await?;
-                        None
-                    }
-                    Err(e) => {
-                        return Err(format!(
-                            "Failed to read legacy credentials {}: {e}",
-                            path.display()
-                        ));
-                    }
-                }
-            }
             None => None,
         };
         Ok(creds.map(|creds| Self {
             creds: Arc::new(RwLock::new(creds)),
             store,
+            provider_id: provider_id.to_string(),
+            credential_id: credential_id.to_string(),
         }))
     }
 
-    fn get_config_path() -> PathBuf {
-        if let Ok(custom) =
-            std::env::var("ZERO_G_CREDENTIALS_AGY").or_else(|_| std::env::var("ZERO_G_CREDENTIALS"))
-            && !custom.trim().is_empty()
-        {
-            return PathBuf::from(custom);
-        }
-        if Path::new("credentials-agy.json").exists() {
-            return PathBuf::from("credentials-agy.json");
-        }
-        if let Some(base) = config_base_dir() {
-            return base.join("zero-g/credentials-agy.json");
-        }
-        PathBuf::from("credentials-agy.json")
-    }
-
-    pub(crate) async fn get_credentials(&self) -> Result<Credentials, String> {
+    pub(crate) async fn get_credentials(&self) -> Result<Credentials, CredentialError> {
+        let lock = crate::provider::login::credential_lock(&self.credential_id).await;
+        let _guard = lock.lock().await;
+        crate::provider::login::require_credential(
+            &self.store,
+            &self.provider_id,
+            &self.credential_id,
+            "agy",
+        )
+        .await
+        .map_err(|(_, message)| message)?;
+        let stored = self
+            .store
+            .secret_get(&format!("credential.{}.credential", self.credential_id))
+            .await?
+            .ok_or_else(|| "Antigravity credentials no longer exist in the store".to_string())?;
+        let current: Credentials = serde_json::from_str(&stored)
+            .map_err(|e| format!("Failed to parse stored Antigravity credentials: {e}"))?;
+        *self.creds.write().await = current;
         let needs_refresh = {
             let r = self.creds.read().await;
             r.expires_at.is_some_and(|exp| {
@@ -180,14 +133,8 @@ impl AuthManager {
         Ok(r.clone())
     }
 
-    async fn refresh(&self) -> Result<(), String> {
-        let stored = self
-            .store
-            .secret_get("provider.antigravity")
-            .await?
-            .ok_or_else(|| "Antigravity credentials no longer exist in the store".to_string())?;
-        let current: Credentials = serde_json::from_str(&stored)
-            .map_err(|e| format!("Failed to parse stored Antigravity credentials: {e}"))?;
+    async fn refresh(&self) -> Result<(), CredentialError> {
+        let current = self.creds.read().await.clone();
         let refresh_token = current.refresh_token.clone();
 
         let refresh_token = match refresh_token {
@@ -217,7 +164,10 @@ impl AuthManager {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(format!("Token refresh failed ({status}): {body}"));
+            return Err(CredentialError::upstream(
+                status,
+                format!("Token refresh failed ({status}): {body}"),
+            ));
         }
 
         let token_resp: TokenRefreshResponse = resp
@@ -237,17 +187,27 @@ impl AuthManager {
         let mut updated = current;
         updated.access_token = token_resp.access_token;
         updated.expires_at = Some(new_expires_at);
-        Self::save(&self.store, &updated).await?;
+        Self::save(
+            &self.store,
+            &self.provider_id,
+            &self.credential_id,
+            &updated,
+        )
+        .await?;
         *self.creds.write().await = updated;
         info!("Access token refreshed successfully.");
         Ok(())
     }
 
-    pub(crate) async fn save(store: &SettingsStore, creds: &Credentials) -> Result<(), String> {
-        store.secret_get("provider.antigravity").await?;
+    pub(crate) async fn save(
+        store: &SettingsStore,
+        provider_id: &str,
+        credential_id: &str,
+        creds: &Credentials,
+    ) -> Result<(), String> {
         let json = serde_json::to_string(creds)
             .map_err(|e| format!("Failed to serialize Antigravity credentials: {e}"))?;
-        store.secret_put("provider.antigravity", &json).await?;
-        store.secret_put("provider.antigravity.imported", "1").await
+        crate::provider::credentials::save_oauth(store, provider_id, credential_id, "agy", &json)
+            .await
     }
 }

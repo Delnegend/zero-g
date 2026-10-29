@@ -15,6 +15,9 @@ function dashboardAuth(): Plugin {
         if (
           pathname === "/api" ||
           pathname.startsWith("/api/") ||
+          ["/agy/", "/codex/", "/zen/", "/openai/", "/go/"].some((prefix) =>
+            pathname.startsWith(prefix),
+          ) ||
           pathname === "/auth/callback"
         ) {
           next();
@@ -27,7 +30,7 @@ function dashboardAuth(): Plugin {
             headers[name] = req.headers[name];
         }
         const check = http.request(
-          `http://127.0.0.1:8080${["/", "/llm-logs", "/settings", "/keys", "/providers"].includes(pathname) ? pathname + url.search : "/"}`,
+          `http://127.0.0.1:8080${["/", "/llm-logs", "/settings", "/keys", "/models/catalog", "/models/providers", "/models/settings"].includes(pathname) ? pathname + url.search : "/"}`,
           {
             method: "GET",
             headers,
@@ -70,6 +73,11 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: {
+      "/agy": { target: "http://127.0.0.1:8080", changeOrigin: false },
+      "/codex": { target: "http://127.0.0.1:8080", changeOrigin: false },
+      "/zen": { target: "http://127.0.0.1:8080", changeOrigin: false },
+      "/go": { target: "http://127.0.0.1:8080", changeOrigin: false },
+      "/openai": { target: "http://127.0.0.1:8080", changeOrigin: false },
       "/api": { target: "http://127.0.0.1:8080", changeOrigin: false },
       "/auth/callback": {
         target: "http://127.0.0.1:8080",

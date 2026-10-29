@@ -13,10 +13,6 @@ path = "backend/main.rs"
 name = "migrate"
 path = "backend/bin/migrate.rs"
 
-[[bin]]
-name = "zero-g-import-legacy"
-path = "backend/bin/zero-g-import-legacy.rs"
-
 [dependencies]
 tokio = { version = "1.54.1", features = ["full"] }
 axum = { version = "0.8.9", features = ["tokio"] }
@@ -25,6 +21,7 @@ tower-http = { version = "0.6.11", features = ["cors", "trace"] }
 reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls", "json", "stream"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 utoipa = "5.5.0"
 futures-util = "0.3.34"
 tokio-stream = "0.1.19"

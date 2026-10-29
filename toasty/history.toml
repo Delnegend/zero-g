@@ -4,3 +4,13 @@ version = 1
 id = 6240284849605402046
 name = "0000_initial.sql"
 snapshot_name = "0000_snapshot.toml"
+
+[[migrations]]
+id = 9146868781853628900
+name = "0001_add_providers.sql"
+snapshot_name = "0001_snapshot.toml"
+
+[[migrations]]
+id = 7352461067189203411
+name = "0002_provider_credentials.sql"
+snapshot_name = "0002_snapshot.toml"

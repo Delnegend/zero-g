@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod contract;
+mod database;
 mod openai;
 mod provider;
 mod responses;
@@ -14,8 +15,9 @@ use std::sync::Arc;
 use tracing::{Level, error, info};
 use tracing_subscriber::FmtSubscriber;
 
-use crate::provider::antigravity::{AntigravityClient, AuthManager};
-use crate::provider::codex::{CodexAuthManager, CodexClient};
+use crate::database::Database;
+use crate::provider::antigravity::AntigravityClient;
+use crate::provider::codex::CodexClient;
 use crate::server::observability::LogStore;
 use crate::server::settings::SettingsStore;
 use crate::server::{AppState, create_router};
@@ -26,8 +28,6 @@ enum ServerError {
     InvalidLogRetention(#[source] std::num::ParseIntError),
     #[error("log_retention_days must be between 1 and 36500")]
     LogRetentionOutOfRange,
-    #[error("{0}")]
-    LogStore(String),
     #[error("{0}")]
     DashboardAuth(String),
     #[error("Invalid bind address: {0}")]
@@ -69,45 +69,13 @@ async fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-async fn migrate_legacy_settings(settings: &SettingsStore) -> Result<(), String> {
-    for (name, env_name) in [
-        ("log_retention_days", "ZERO_G_LOG_RETENTION_DAYS"),
-        ("zen_url", "ZERO_G_ZEN_URL"),
-    ] {
-        let marker = format!("{name}.imported");
-        if settings.setting_get(&marker).await?.is_none() {
-            if settings.setting_get(name).await?.is_none()
-                && let Ok(value) = std::env::var(env_name)
-                && !value.trim().is_empty()
-            {
-                settings.setting_put(name, &value).await?;
-            }
-            settings.setting_put(&marker, "1").await?;
-        }
-    }
-    if settings
-        .setting_get("zen_api_key.imported")
-        .await?
-        .is_none()
-    {
-        if settings.secret_get("zen_api_key").await?.is_none()
-            && let Ok(value) = std::env::var("ZERO_G_ZEN_API_KEY")
-            && !value.trim().is_empty()
-        {
-            settings.secret_put("zen_api_key", &value).await?;
-        }
-        settings.setting_put("zen_api_key.imported", "1").await?;
-    }
-    Ok(())
-}
-
 async fn open_stores() -> Result<(SettingsStore, LogStore), String> {
     let path = std::env::var("ZERO_G_LOG_DB").unwrap_or_else(|_| "zero-g-logs.db".into());
     let key = std::env::var("ZERO_G_ENCRYPTION_KEY")
         .map_err(|_| "ZERO_G_ENCRYPTION_KEY is required".to_string())?;
-    let mut logs = LogStore::open_unpruned(&path).await?;
-    let settings = SettingsStore::new(logs.clone(), &key).await?;
-    migrate_legacy_settings(&settings).await?;
+    let database = Database::open(&path).await?;
+    let mut logs = LogStore::new(database.clone());
+    let settings = SettingsStore::new(database, &key).await?;
     let retention = settings
         .setting_get("log_retention_days")
         .await?
@@ -118,50 +86,18 @@ async fn open_stores() -> Result<(SettingsStore, LogStore), String> {
         return Err(ServerError::LogRetentionOutOfRange.to_string());
     }
     logs.set_retention(retention).await?;
-    provider::antigravity::auth::migrate_oauth_settings(&settings).await?;
     Ok((settings, logs))
 }
 
 async fn init_state(settings: SettingsStore, logs: LogStore) -> Result<AppState, ServerError> {
-    let auth = AuthManager::load(settings.clone())
-        .await
-        .map_err(ServerError::LogStore)?;
     let client = Arc::new(AntigravityClient::new());
-    let codex_auth = CodexAuthManager::load(settings.clone())
-        .await
-        .map_err(ServerError::LogStore)?;
     let codex_client = Arc::new(CodexClient::new());
-    if let Some(a) = &auth
-        && let Ok(creds) = a.get_credentials().await
-    {
-        info!("Google Antigravity: GCP Project ID {}", creds.project_id);
-        if let Some(email) = &creds.email {
-            info!("Signed in as (Antigravity): {}", email);
-        }
-    }
-
-    if let Some(ca) = &codex_auth
-        && let Ok(creds) = ca.get_credentials().await
-    {
-        if let Some(email) = &creds.email {
-            info!("Signed in as (Codex): {}", email);
-        }
-        if let Some(plan) = &creds.plan_type {
-            info!("OpenAI Codex plan: {}", plan);
-        }
-        if let Some(acc) = &creds.account_id {
-            info!("OpenAI Codex Account ID: {}", acc);
-        }
-    }
-
     let dashboard_auth = crate::server::dashboard_auth::DashboardAuth::from_env()
         .await
         .map_err(ServerError::DashboardAuth)?;
 
     Ok(AppState {
-        auth: Arc::new(tokio::sync::RwLock::new(auth)),
         client,
-        codex_auth: Arc::new(tokio::sync::RwLock::new(codex_auth)),
         codex_client,
         settings,
         logs,
@@ -171,10 +107,7 @@ async fn init_state(settings: SettingsStore, logs: LogStore) -> Result<AppState,
 
 fn log_endpoints(addr: SocketAddr) {
     info!("zero-g multi-provider proxy running at http://{addr}");
-    info!("  Google Antigravity: http://{addr}/agy/v1");
-    info!("  OpenAI Codex:       http://{addr}/codex/v1");
-    info!("  OpenCode Zen:       http://{addr}/zen/v1");
-    info!("  OpenAI compatible:  http://{addr}/openai/v1");
+    info!("  Inference routes: http://{addr}/{{kind}}/{{id}}/v1");
     info!("  Inference routes require a virtual key");
 }
 async fn shutdown_signal() {
@@ -226,15 +159,10 @@ async fn run_server(settings: SettingsStore, logs: LogStore) -> Result<(), Serve
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "127.0.0.1:8080".into());
     let addr = bind.parse().map_err(ServerError::InvalidBindAddress)?;
-    let zen_url = settings
-        .setting_get("zen_url")
-        .await
-        .map_err(ServerError::LogStore)?
-        .filter(|url| !url.is_empty())
-        .unwrap_or_else(|| "http://127.0.0.1:8090/v1".into());
     let state = init_state(settings, logs).await?;
+    tokio::spawn(crate::server::model_settings::run_background(state.clone()));
     log_endpoints(addr);
     let app = create_router(state);
-    let shim = crate::provider::shim::ensure_zen_shim(&zen_url).await;
+    let shim = crate::provider::shim::ensure_zen_shim("http://127.0.0.1:8090/v1").await;
     bind_and_serve(addr, app, shim).await
 }

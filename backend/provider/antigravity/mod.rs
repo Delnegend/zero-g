@@ -4,7 +4,10 @@ mod client;
 pub(crate) mod login;
 mod models;
 mod payload;
+pub(crate) mod quota;
 pub(crate) mod responses;
+pub(crate) mod routes;
+pub(crate) mod sse;
 mod stream;
 
 pub(crate) use auth::{AuthManager, Credentials};

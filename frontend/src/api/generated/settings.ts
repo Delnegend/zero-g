@@ -17,10 +17,6 @@ export const GetSettingsResponse = zod.object({
     .max(getSettingsResponseLogRetentionDaysMax),
   oauth_client_id: zod.string(),
   oauth_client_secret_set: zod.boolean(),
-  openai_api_key_set: zod.boolean(),
-  openai_base_url: zod.string(),
-  zen_api_key_set: zod.boolean(),
-  zen_url: zod.string(),
 });
 
 export const updateSettingsBodyLogRetentionDaysMin = 0;
@@ -34,10 +30,6 @@ export const UpdateSettingsBody = zod.object({
     .nullish(),
   oauth_client_id: zod.string().nullish(),
   oauth_client_secret: zod.string().nullish(),
-  openai_api_key: zod.string().nullish(),
-  openai_base_url: zod.string().nullish(),
-  zen_api_key: zod.string().nullish(),
-  zen_url: zod.string().nullish(),
 });
 
 export const updateSettingsResponseLogRetentionDaysMin = 0;
@@ -50,8 +42,4 @@ export const UpdateSettingsResponse = zod.object({
     .max(updateSettingsResponseLogRetentionDaysMax),
   oauth_client_id: zod.string(),
   oauth_client_secret_set: zod.boolean(),
-  openai_api_key_set: zod.boolean(),
-  openai_base_url: zod.string(),
-  zen_api_key_set: zod.boolean(),
-  zen_url: zod.string(),
 });

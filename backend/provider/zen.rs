@@ -1,3 +1,5 @@
+pub(crate) mod routes;
+
 use axum::Json;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -127,8 +129,7 @@ fn transform(req: &ChatCompletionRequest, zen_key: &str) -> (Value, Vec<(String,
     }
 
     let s = session_id();
-    let headers = vec![
-        ("Authorization".to_string(), format!("Bearer {zen_key}")),
+    let mut headers = vec![
         ("Content-Type".to_string(), "application/json".to_string()),
         (
             "User-Agent".to_string(),
@@ -140,7 +141,9 @@ fn transform(req: &ChatCompletionRequest, zen_key: &str) -> (Value, Vec<(String,
         ("x-session-affinity".to_string(), s.clone()),
         ("x-session-id".to_string(), s),
     ];
-
+    if !zen_key.is_empty() {
+        headers.push(("Authorization".to_string(), format!("Bearer {zen_key}")));
+    }
     (body, headers)
 }
 
@@ -277,11 +280,11 @@ fn aggregate_sse(sse: &str) -> Value {
 }
 
 pub(crate) async fn handle_chat(
-    req: ChatCompletionRequest,
+    req: &ChatCompletionRequest,
     zen_base_url: &str,
     zen_key: &str,
 ) -> Response {
-    let (body, headers) = transform(&req, zen_key);
+    let (body, headers) = transform(req, zen_key);
     let client = reqwest::Client::new();
     let url = format!("{}/chat/completions", zen_base_url.trim_end_matches('/'));
 

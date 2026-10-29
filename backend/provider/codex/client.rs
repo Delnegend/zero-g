@@ -1,9 +1,8 @@
 use std::convert::Infallible;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::response::{IntoResponse, Json, Response};
+use axum::response::{IntoResponse, Response};
 use futures_util::StreamExt;
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -21,6 +20,40 @@ use crate::provider::codex::payload::{
 use crate::responses::{
     ResponseContentPart, ResponseCreateRequest, ResponseObject, ResponseOutputItem, ResponseUsage,
 };
+
+#[derive(Debug)]
+pub(crate) struct UpstreamError {
+    pub(crate) status: Option<reqwest::StatusCode>,
+    pub(crate) message: String,
+}
+
+impl UpstreamError {
+    pub(crate) fn retryable(&self) -> bool {
+        matches!(
+            self.status,
+            Some(
+                reqwest::StatusCode::UNAUTHORIZED
+                    | reqwest::StatusCode::FORBIDDEN
+                    | reqwest::StatusCode::TOO_MANY_REQUESTS
+            )
+        )
+    }
+}
+
+impl From<String> for UpstreamError {
+    fn from(message: String) -> Self {
+        Self {
+            status: None,
+            message,
+        }
+    }
+}
+
+impl From<&str> for UpstreamError {
+    fn from(message: &str) -> Self {
+        message.to_string().into()
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct CodexClient {
@@ -42,7 +75,7 @@ impl CodexClient {
         &self,
         creds: &CodexCredentials,
         payload: &Value,
-    ) -> Result<reqwest::Response, String> {
+    ) -> Result<reqwest::Response, UpstreamError> {
         let url = format!("{CODEX_BASE_URL}/codex/responses");
         let model_slug = payload
             .get("model")
@@ -82,7 +115,10 @@ impl CodexClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(format!("Codex upstream returned {status}: {body}"));
+            return Err(UpstreamError {
+                status: Some(status),
+                message: format!("Codex upstream returned {status}: {body}"),
+            });
         }
 
         Ok(resp)
@@ -92,23 +128,9 @@ impl CodexClient {
         &self,
         creds: &CodexCredentials,
         req: &ChatCompletionRequest,
-    ) -> Response {
+    ) -> Result<Response, UpstreamError> {
         let payload = build_codex_payload_from_chat(req);
-        let upstream = match self.send_request(creds, &payload).await {
-            Ok(r) => r,
-            Err(e) => {
-                error!("Codex upstream error: {e}");
-                return (
-                    StatusCode::BAD_GATEWAY,
-                    Json(crate::server::error_body(
-                        &e,
-                        "upstream_error",
-                        Some("bad_gateway"),
-                    )),
-                )
-                    .into_response();
-            }
-        };
+        let upstream = self.send_request(creds, &payload).await?;
 
         let model = req.model.clone();
         let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(100);
@@ -117,16 +139,16 @@ impl CodexClient {
             pump_chat_chunks(tx, upstream, model).await;
         });
 
-        Sse::new(ReceiverStream::new(rx))
+        Ok(Sse::new(ReceiverStream::new(rx))
             .keep_alive(KeepAlive::default())
-            .into_response()
+            .into_response())
     }
 
     pub(crate) async fn complete_chat_non_streaming(
         &self,
         creds: &CodexCredentials,
         req: &ChatCompletionRequest,
-    ) -> Result<ChatCompletionResponse, String> {
+    ) -> Result<ChatCompletionResponse, UpstreamError> {
         let payload = build_codex_payload_from_chat(req);
         let upstream = self.send_request(creds, &payload).await?;
 
@@ -214,23 +236,9 @@ impl CodexClient {
         &self,
         creds: &CodexCredentials,
         req: &ResponseCreateRequest,
-    ) -> Response {
+    ) -> Result<Response, UpstreamError> {
         let payload = build_codex_payload_from_responses(req);
-        let upstream = match self.send_request(creds, &payload).await {
-            Ok(r) => r,
-            Err(e) => {
-                error!("Codex upstream error: {e}");
-                return (
-                    StatusCode::BAD_GATEWAY,
-                    Json(crate::server::error_body(
-                        &e,
-                        "upstream_error",
-                        Some("bad_gateway"),
-                    )),
-                )
-                    .into_response();
-            }
-        };
+        let upstream = self.send_request(creds, &payload).await?;
 
         let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(100);
 
@@ -238,16 +246,16 @@ impl CodexClient {
             pump_responses_events(tx, upstream).await;
         });
 
-        Sse::new(ReceiverStream::new(rx))
+        Ok(Sse::new(ReceiverStream::new(rx))
             .keep_alive(KeepAlive::default())
-            .into_response()
+            .into_response())
     }
 
     pub(crate) async fn complete_responses_non_streaming(
         &self,
         creds: &CodexCredentials,
         req: &ResponseCreateRequest,
-    ) -> Result<ResponseObject, String> {
+    ) -> Result<ResponseObject, UpstreamError> {
         let payload = build_codex_payload_from_responses(req);
         let upstream = self.send_request(creds, &payload).await?;
 

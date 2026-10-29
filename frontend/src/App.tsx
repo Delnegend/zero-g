@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   createRootRoute,
   createRoute,
   createRouter,
+  HeadContent,
   Link,
   Outlet,
   RouterProvider,
@@ -12,21 +13,28 @@ import {
 import {
   Activity,
   ArrowDownUp,
+  Boxes,
   Clock3,
   KeyRound,
   Moon,
-  RefreshCw,
-  Server,
   Settings,
   Sun,
 } from "lucide-react";
 import { Button } from "./components/ui/button";
 import { Management } from "./Management";
+import { ModelCatalogPage, ModelSettingsPage } from "./Models";
+import { ObservabilitySkeleton } from "./components/Loading";
+import { RefreshButton } from "./components/RefreshButton";
 import { Card } from "./components/ui/card";
 import { LogsTable } from "./LogsTable";
 import { ObservabilityCharts } from "./ObservabilityCharts";
 import { RequestBody, requestBodyTheme } from "./RequestBody";
 import { Alert, AlertDescription } from "./components/ui/alert";
+import {
+  DateRangePicker,
+  rangeStart,
+  type DashboardRange,
+} from "./components/DateRangePicker";
 import {
   Drawer,
   DrawerClose,
@@ -76,6 +84,8 @@ type Observability = {
     output_tokens: number | null;
     avg_latency_ms: number;
   };
+  interval: "hour" | "day" | "month" | "year";
+  buckets: { start: number; requests: number }[];
   logs: Log[];
 };
 
@@ -91,18 +101,36 @@ function formatDate(value: number): string {
 }
 
 function ObservabilityPage({ logsOnly = false }: { logsOnly?: boolean }) {
+  const [range, setRange] = useState<DashboardRange>({
+    kind: "preset",
+    value: "24h",
+  });
   const {
     data,
     error: queryError,
     isFetching: loading,
     refetch,
   } = useQuery({
-    queryKey: ["observability"],
+    queryKey: ["observability", logsOnly ? "all" : range],
     queryFn: async ({ signal }): Promise<Observability> => {
-      const response = await fetch("/api/observability", { signal });
+      let url = "/api/observability";
+      if (!logsOnly) {
+        if (range.kind === "preset") {
+          const until = Math.floor(Date.now() / 1000);
+          const since =
+            range.value === "24h"
+              ? until - 24 * 60 * 60
+              : rangeStart(range.value);
+          url += `?since=${since}&until=${until}`;
+        } else {
+          url += `?since=${range.from}&until=${range.until}`;
+        }
+      }
+      const response = await fetch(url, { signal });
       if (!response.ok) throw new Error(`Request failed (${response.status})`);
       return response.json();
     },
+    placeholderData: logsOnly ? undefined : keepPreviousData,
     retry: false,
     gcTime: 0,
     refetchOnWindowFocus: false,
@@ -156,7 +184,10 @@ function ObservabilityPage({ logsOnly = false }: { logsOnly?: boolean }) {
     : [];
 
   return (
-    <main className="mx-auto w-full min-w-0 max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
+    <main
+      aria-busy={loading}
+      className="mx-auto w-full min-w-0 max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-12"
+    >
       <header className="mb-8 flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
@@ -171,13 +202,18 @@ function ObservabilityPage({ logsOnly = false }: { logsOnly?: boolean }) {
               : "Monitor requests, usage, and responses across your gateway."}
           </p>
         </div>
-        <Button
-          variant="outline"
-          onClick={() => void refetch()}
-          disabled={loading}
-        >
-          <RefreshCw aria-hidden="true" /> {loading ? "Loading…" : "Refresh"}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {!logsOnly && (
+            <DateRangePicker
+              value={range}
+              onChange={(value) => {
+                setSelectedId(null);
+                setRange(value);
+              }}
+            />
+          )}
+          <RefreshButton loading={loading} onClick={() => void refetch()} />
+        </div>
       </header>
 
       {error && (
@@ -194,14 +230,7 @@ function ObservabilityPage({ logsOnly = false }: { logsOnly?: boolean }) {
           </AlertDescription>
         </Alert>
       )}
-      {loading && !data && (
-        <p
-          role="status"
-          className="py-12 text-center text-sm text-muted-foreground"
-        >
-          Loading observability data…
-        </p>
-      )}
+      {loading && !data && <ObservabilitySkeleton logsOnly={logsOnly} />}
       {summary && (
         <>
           {!logsOnly && (
@@ -226,7 +255,12 @@ function ObservabilityPage({ logsOnly = false }: { logsOnly?: boolean }) {
               ))}
             </section>
           )}
-          {!logsOnly && <ObservabilityCharts logs={data?.logs ?? []} />}
+          {!logsOnly && data && (
+            <ObservabilityCharts
+              interval={data.interval}
+              buckets={data.buckets}
+            />
+          )}
           <LogsTable logs={data?.logs ?? []} onSelect={selectLog} />
           <Drawer
             open={selected != null}
@@ -305,10 +339,10 @@ function DashboardSidebar() {
   const path = useRouterState({ select: (state) => state.location.pathname });
   const { isMobile, setOpenMobile, state, setOpen } = useSidebar();
   const [observabilityOpen, setObservabilityOpen] = useState(true);
+  const [modelsOpen, setModelsOpen] = useState(true);
   const items = [
     { path: "/settings", label: "Settings", icon: Settings },
     { path: "/keys", label: "Virtual keys", icon: KeyRound },
-    { path: "/providers", label: "Providers", icon: Server },
   ] as const;
   return (
     <Sidebar collapsible="icon">
@@ -374,6 +408,48 @@ function DashboardSidebar() {
                   </SidebarMenuSub>
                 )}
               </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={path.startsWith("/models/")}
+                  aria-expanded={modelsOpen}
+                  tooltip="Models"
+                  onClick={() => {
+                    if (state === "collapsed" && !isMobile) {
+                      setOpen(true);
+                      setModelsOpen(true);
+                    } else {
+                      setModelsOpen(!modelsOpen);
+                    }
+                  }}
+                >
+                  <Boxes aria-hidden="true" />
+                  <span>Models</span>
+                </SidebarMenuButton>
+                {modelsOpen && (
+                  <SidebarMenuSub>
+                    {(
+                      [
+                        ["/models/catalog", "Catalog"],
+                        ["/models/providers", "Providers"],
+                        ["/models/settings", "Settings"],
+                      ] as const
+                    ).map(([to, label]) => (
+                      <SidebarMenuSubItem key={to}>
+                        <SidebarMenuSubButton
+                          render={<Link to={to} />}
+                          isActive={path === to}
+                          aria-current={path === to ? "page" : undefined}
+                          onClick={() => {
+                            if (isMobile) setOpenMobile(false);
+                          }}
+                        >
+                          <span>{label}</span>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                    ))}
+                  </SidebarMenuSub>
+                )}
+              </SidebarMenuItem>
               {items.map(({ path: to, label, icon: Icon }) => (
                 <SidebarMenuItem key={to}>
                   <SidebarMenuButton
@@ -413,6 +489,7 @@ function App() {
   }, [dark]);
   return (
     <SidebarProvider>
+      <HeadContent />
       <DashboardSidebar />
       <SidebarInset className="min-w-0">
         <header className="flex h-12 items-center justify-between border-b px-4">
@@ -437,27 +514,44 @@ const routeTree = rootRoute.addChildren([
   createRoute({
     getParentRoute: () => rootRoute,
     path: "/",
+    head: () => ({ meta: [{ title: "Dashboard · Zero-G" }] }),
     component: () => <ObservabilityPage />,
   }),
   createRoute({
     getParentRoute: () => rootRoute,
     path: "/llm-logs",
+    head: () => ({ meta: [{ title: "LLM Logs · Zero-G" }] }),
     component: () => <ObservabilityPage logsOnly />,
   }),
   createRoute({
     getParentRoute: () => rootRoute,
     path: "/settings",
+    head: () => ({ meta: [{ title: "Settings · Zero-G" }] }),
     component: () => <Management page="settings" />,
   }),
   createRoute({
     getParentRoute: () => rootRoute,
     path: "/keys",
+    head: () => ({ meta: [{ title: "Virtual keys · Zero-G" }] }),
     component: () => <Management page="keys" />,
   }),
   createRoute({
     getParentRoute: () => rootRoute,
-    path: "/providers",
+    path: "/models/providers",
+    head: () => ({ meta: [{ title: "Providers · Zero-G" }] }),
     component: () => <Management page="providers" />,
+  }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/models/catalog",
+    head: () => ({ meta: [{ title: "Catalog · Zero-G" }] }),
+    component: ModelCatalogPage,
+  }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/models/settings",
+    head: () => ({ meta: [{ title: "Model settings · Zero-G" }] }),
+    component: ModelSettingsPage,
   }),
 ]);
 const router = createRouter({ routeTree });

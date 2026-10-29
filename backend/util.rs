@@ -1,5 +1,4 @@
 use std::fmt::Write;
-use std::path::PathBuf;
 
 pub(crate) fn urlencode(s: &str) -> String {
     let mut out = String::new();
@@ -11,17 +10,6 @@ pub(crate) fn urlencode(s: &str) -> String {
         }
     }
     out
-}
-
-pub(crate) fn config_base_dir() -> Option<PathBuf> {
-    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME")
-        && !xdg.trim().is_empty()
-    {
-        return Some(PathBuf::from(xdg));
-    }
-    std::env::var("HOME")
-        .ok()
-        .map(|h| PathBuf::from(h).join(".config"))
 }
 
 #[cfg(test)]

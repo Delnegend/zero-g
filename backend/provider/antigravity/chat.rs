@@ -21,7 +21,7 @@ pub(crate) struct ChatStreamSerializer {
     pub(crate) saw_usage: bool,
 }
 
-impl crate::server::sse::SseSerializer for ChatStreamSerializer {
+impl crate::provider::antigravity::sse::SseSerializer for ChatStreamSerializer {
     fn handle(&mut self, event: AntigravityEvent) -> Vec<Event> {
         match event {
             AntigravityEvent::Text(text) => self.text_event(Some(text), None),

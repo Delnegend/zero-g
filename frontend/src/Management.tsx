@@ -1,10 +1,5 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type FormEvent,
-} from "react";
+import { useEffect, useRef, useState } from "react";
+import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
@@ -12,13 +7,23 @@ import { Textarea } from "./components/ui/textarea";
 import { Checkbox } from "./components/ui/checkbox";
 import { Alert, AlertDescription } from "./components/ui/alert";
 import { Card } from "./components/ui/card";
+import { FormSkeleton, RowsSkeleton } from "./components/Loading";
 import { Label } from "./components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "./components/ui/dialog";
 import {
   getSettings,
   updateSettings,
-  type Settings,
   type SettingsUpdate,
 } from "./api/settings";
+import { message, request } from "./api/client";
+import { getProviders } from "./api/providers";
+import { ProvidersPage } from "./ProvidersPage";
 
 type VirtualKey = {
   id: string;
@@ -32,28 +37,8 @@ const inputClass =
   "mt-1 h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 const panelClass = "p-5";
 
-async function request<T>(url: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(url, options);
-  if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || `Request failed (${response.status})`);
-  }
-  if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
-}
-
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : "Request failed";
-}
-
 function SettingsPage() {
-  const [draft, setSettings] = useState<Settings | null>(null);
-  const [zenKey, setZenKey] = useState("");
-  const [openaiKey, setOpenaiKey] = useState("");
-  const [oauthSecret, setOauthSecret] = useState("");
-  const [clearZen, setClearZen] = useState(false);
-  const [clearOpenai, setClearOpenai] = useState(false);
-  const [clearOauth, setClearOauth] = useState(false);
+  const draftStarted = useRef(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -76,14 +61,35 @@ function SettingsPage() {
     }) => updateSettings(body, signal),
   });
 
-  const settings = draft ?? settingsQuery.data ?? null;
+  const settings = settingsQuery.data ?? null;
   const displayError =
     error || (settingsQuery.error ? message(settingsQuery.error) : "");
 
   useEffect(() => () => saveController.current?.abort(), []);
 
-  async function save(event: FormEvent) {
-    event.preventDefault();
+  const form = useForm({
+    defaultValues: {
+      log_retention_days: settings?.log_retention_days ?? 1,
+      oauth_client_id: settings?.oauth_client_id ?? "",
+      oauthSecret: "",
+      clearOauth: false,
+    },
+    onSubmit: ({ value }) => save(value),
+  });
+
+  useEffect(() => {
+    if (settings && !draftStarted.current) {
+      form.setFieldValue("log_retention_days", settings.log_retention_days);
+      form.setFieldValue("oauth_client_id", settings.oauth_client_id);
+    }
+  }, [settings, form]);
+
+  async function save(value: {
+    log_retention_days: number;
+    oauth_client_id: string;
+    oauthSecret: string;
+    clearOauth: boolean;
+  }) {
     if (!settings) return;
     saveController.current?.abort();
     const controller = new AbortController();
@@ -93,16 +99,11 @@ function SettingsPage() {
     setSaved(false);
     try {
       const body: SettingsUpdate = {
-        log_retention_days: settings.log_retention_days,
-        zen_url: settings.zen_url,
-        openai_base_url: settings.openai_base_url,
-        oauth_client_id: settings.oauth_client_id,
+        log_retention_days: value.log_retention_days,
+        oauth_client_id: value.oauth_client_id,
       };
-      if (clearZen || zenKey) body.zen_api_key = clearZen ? "" : zenKey;
-      if (clearOpenai || openaiKey)
-        body.openai_api_key = clearOpenai ? "" : openaiKey;
-      if (clearOauth || oauthSecret)
-        body.oauth_client_secret = clearOauth ? "" : oauthSecret;
+      if (value.clearOauth || value.oauthSecret)
+        body.oauth_client_secret = value.clearOauth ? "" : value.oauthSecret;
       const updated = await saveMutation.mutateAsync({
         body,
         signal: controller.signal,
@@ -110,46 +111,25 @@ function SettingsPage() {
       if (controller.signal.aborted) return;
       await queryClient.cancelQueries({ queryKey: ["settings"] });
       if (controller.signal.aborted) return;
-      setZenKey((current) => (current === zenKey ? "" : current));
-      setOpenaiKey((current) => (current === openaiKey ? "" : current));
-      setOauthSecret((current) => (current === oauthSecret ? "" : current));
-      setClearZen((current) => (current === clearZen ? false : current));
-      setClearOpenai((current) => (current === clearOpenai ? false : current));
-      setClearOauth((current) => (current === clearOauth ? false : current));
-      setSettings((current) => {
-        if (!current) return null;
-        const logRetention =
-          current.log_retention_days === settings.log_retention_days
-            ? updated.log_retention_days
-            : current.log_retention_days;
-        const zenUrl =
-          current.zen_url === settings.zen_url
-            ? updated.zen_url
-            : current.zen_url;
-        const openaiBaseUrl =
-          current.openai_base_url === settings.openai_base_url
-            ? updated.openai_base_url
-            : current.openai_base_url;
-        const oauthClientId =
-          current.oauth_client_id === settings.oauth_client_id
-            ? updated.oauth_client_id
-            : current.oauth_client_id;
-        if (
-          logRetention === updated.log_retention_days &&
-          zenUrl === updated.zen_url &&
-          openaiBaseUrl === updated.openai_base_url &&
-          oauthClientId === updated.oauth_client_id
-        )
-          return null;
-        return {
-          ...updated,
-          log_retention_days: logRetention,
-          zen_url: zenUrl,
-          openai_base_url: openaiBaseUrl,
-          oauth_client_id: oauthClientId,
-        };
-      });
+      const current = form.state.values;
+      const logRetention =
+        current.log_retention_days === value.log_retention_days
+          ? updated.log_retention_days
+          : current.log_retention_days;
+      const oauthClientId =
+        current.oauth_client_id === value.oauth_client_id
+          ? updated.oauth_client_id
+          : current.oauth_client_id;
+      draftStarted.current =
+        logRetention !== updated.log_retention_days ||
+        oauthClientId !== updated.oauth_client_id;
       queryClient.setQueryData(["settings"], updated);
+      form.setFieldValue("log_retention_days", logRetention);
+      form.setFieldValue("oauth_client_id", oauthClientId);
+      if (current.oauthSecret === value.oauthSecret)
+        form.setFieldValue("oauthSecret", "");
+      if (current.clearOauth === value.clearOauth)
+        form.setFieldValue("clearOauth", false);
       setSaved(true);
     } catch (err) {
       if (!controller.signal.aborted) setError(message(err));
@@ -160,7 +140,7 @@ function SettingsPage() {
   }
 
   return (
-    <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
+    <main className="mx-auto w-full min-w-0 max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
       <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
       <p className="mt-2 text-sm text-muted-foreground">
         Configure the gateway and provider credentials. Some changes may require
@@ -176,142 +156,92 @@ function SettingsPage() {
           Settings saved.
         </p>
       )}
+      {settingsQuery.isPending && <FormSkeleton label="Loading settings" />}
       {settings && (
-        <Card className="mt-6 max-w-2xl p-5">
-          <form onSubmit={(event) => void save(event)} className="grid gap-5">
-            <Label className="block text-sm font-medium">
-              Log retention (days)
-              <Input
-                className={inputClass}
-                type="number"
-                min={1}
-                max={36500}
-                required
-                value={settings.log_retention_days}
-                onChange={(e) =>
-                  setSettings({
-                    ...settings,
-                    log_retention_days: Number(e.target.value),
-                  })
-                }
-              />
-            </Label>
-            <Label className="block text-sm font-medium">
-              Zen URL
-              <Input
-                className={inputClass}
-                type="url"
-                value={settings.zen_url}
-                onChange={(e) =>
-                  setSettings({ ...settings, zen_url: e.target.value })
-                }
-              />
-            </Label>
-            <Label className="block text-sm font-medium">
-              Zen API key{" "}
-              <span className="font-normal text-muted-foreground">
-                (
-                {settings.zen_api_key_set
-                  ? "configured; leave blank to retain"
-                  : "not configured"}
-                )
-              </span>
-              <Input
-                className={inputClass}
-                type="password"
-                autoComplete="new-password"
-                disabled={clearZen}
-                value={zenKey}
-                onChange={(e) => setZenKey(e.target.value)}
-              />
-            </Label>
-            {settings.zen_api_key_set && (
-              <Label htmlFor="clear-zen" className="text-sm">
-                <Checkbox
-                  id="clear-zen"
-                  checked={clearZen}
-                  onCheckedChange={setClearZen}
-                />
-                Clear Zen API key
-              </Label>
-            )}
-            <Label className="block text-sm font-medium">
-              OpenAI-compatible base URL
-              <Input
-                className={inputClass}
-                type="url"
-                placeholder="https://api.openai.com/v1"
-                value={settings.openai_base_url}
-                onChange={(e) =>
-                  setSettings({ ...settings, openai_base_url: e.target.value })
-                }
-              />
-            </Label>
-            <Label className="block text-sm font-medium">
-              OpenAI-compatible API key{" "}
-              <span className="font-normal text-muted-foreground">
-                (
-                {settings.openai_api_key_set
-                  ? "configured; leave blank to retain"
-                  : "not configured; upstream requests will have no bearer token"}
-                )
-              </span>
-              <Input
-                className={inputClass}
-                type="password"
-                autoComplete="new-password"
-                disabled={clearOpenai}
-                value={openaiKey}
-                onChange={(e) => setOpenaiKey(e.target.value)}
-              />
-            </Label>
-            {settings.openai_api_key_set && (
-              <Label htmlFor="clear-openai" className="text-sm">
-                <Checkbox
-                  id="clear-openai"
-                  checked={clearOpenai}
-                  onCheckedChange={setClearOpenai}
-                />
-                Clear OpenAI-compatible API key
-              </Label>
-            )}
-            <Label className="block text-sm font-medium">
-              Google OAuth client ID
-              <Input
-                className={inputClass}
-                value={settings.oauth_client_id}
-                onChange={(e) =>
-                  setSettings({ ...settings, oauth_client_id: e.target.value })
-                }
-              />
-            </Label>
-            <Label className="block text-sm font-medium">
-              Google OAuth client secret{" "}
-              <span className="font-normal text-muted-foreground">
-                (
-                {settings.oauth_client_secret_set
-                  ? "configured; leave blank to retain"
-                  : "not configured"}
-                )
-              </span>
-              <Input
-                className={inputClass}
-                type="password"
-                autoComplete="new-password"
-                disabled={clearOauth}
-                value={oauthSecret}
-                onChange={(e) => setOauthSecret(e.target.value)}
-              />
-            </Label>
+        <Card className="mt-6 p-5">
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void form.handleSubmit();
+            }}
+            className="grid gap-5"
+          >
+            <form.Field name="log_retention_days">
+              {(field) => (
+                <Label className="block text-sm font-medium">
+                  Log retention (days)
+                  <Input
+                    className={inputClass}
+                    type="number"
+                    min={1}
+                    max={36500}
+                    required
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(e) => {
+                      draftStarted.current = true;
+                      field.handleChange(Number(e.target.value));
+                    }}
+                  />
+                </Label>
+              )}
+            </form.Field>
+            <form.Field name="oauth_client_id">
+              {(field) => (
+                <Label className="block text-sm font-medium">
+                  Google OAuth client ID
+                  <Input
+                    className={inputClass}
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(e) => {
+                      draftStarted.current = true;
+                      field.handleChange(e.target.value);
+                    }}
+                  />
+                </Label>
+              )}
+            </form.Field>
+            <form.Subscribe selector={(state) => state.values.clearOauth}>
+              {(clearOauth) => (
+                <form.Field name="oauthSecret">
+                  {(field) => (
+                    <Label className="block text-sm font-medium">
+                      Google OAuth client secret{" "}
+                      <span className="font-normal text-muted-foreground">
+                        (
+                        {settings.oauth_client_secret_set
+                          ? "configured; leave blank to retain"
+                          : "not configured"}
+                        )
+                      </span>
+                      <Input
+                        className={inputClass}
+                        type="password"
+                        autoComplete="new-password"
+                        disabled={clearOauth}
+                        value={field.state.value}
+                        onBlur={field.handleBlur}
+                        onChange={(e) => field.handleChange(e.target.value)}
+                      />
+                    </Label>
+                  )}
+                </form.Field>
+              )}
+            </form.Subscribe>
             {settings.oauth_client_secret_set && (
-              <Label htmlFor="clear-oauth" className="text-sm">
-                <Checkbox
-                  id="clear-oauth"
-                  checked={clearOauth}
-                  onCheckedChange={setClearOauth}
-                />
-                Clear Google OAuth client secret
-              </Label>
+              <form.Field name="clearOauth">
+                {(field) => (
+                  <Label htmlFor="clear-oauth" className="text-sm">
+                    <Checkbox
+                      id="clear-oauth"
+                      checked={field.state.value}
+                      onCheckedChange={field.handleChange}
+                    />
+                    Clear Google OAuth client secret
+                  </Label>
+                )}
+              </form.Field>
             )}
             <div>
               <Button type="submit" disabled={busy}>
@@ -333,6 +263,11 @@ function KeysPage() {
     queryFn: ({ signal }) =>
       request<{ keys: VirtualKey[] }>("/api/keys", { signal }),
   });
+  const providersQuery = useQuery({
+    queryKey: ["providers"],
+    retry: false,
+    queryFn: ({ signal }) => getProviders(signal),
+  });
   const keys = keysQuery.data?.keys ?? [];
   const createMutation = useMutation({
     gcTime: 0,
@@ -351,34 +286,39 @@ function KeysPage() {
     mutationFn: (id: string) =>
       request(`/api/keys/${encodeURIComponent(id)}`, { method: "DELETE" }),
   });
-  const [name, setName] = useState("");
-  const [providers, setProviders] = useState<string[]>([]);
-  const [models, setModels] = useState("");
   const [newKey, setNewKey] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [revokeKey, setRevokeKey] = useState<VirtualKey | null>(null);
   const loading = keysQuery.isPending;
   const displayError =
-    error || (keysQuery.error ? message(keysQuery.error) : "");
+    (keysQuery.error ? message(keysQuery.error) : "") ||
+    (providersQuery.error ? message(providersQuery.error) : "");
+  const form = useForm({
+    defaultValues: { name: "", providers: [] as string[], models: "" },
+    onSubmit: ({ value }) => create(value),
+  });
 
-  async function create(event: FormEvent) {
-    event.preventDefault();
+  async function create(value: {
+    name: string;
+    providers: string[];
+    models: string;
+  }) {
     setBusy(true);
     setError("");
     setNewKey("");
     try {
       const result = await createMutation.mutateAsync({
-        name,
-        providers,
-        models: models
+        name: value.name,
+        providers: value.providers,
+        models: value.models
           .split(/[\n,]/)
           .map((model) => model.trim())
           .filter(Boolean),
       });
       setNewKey(result.key);
-      setName("");
-      setProviders([]);
-      setModels("");
+      form.reset();
       await queryClient.invalidateQueries(
         { queryKey: ["virtual-keys"] },
         { throwOnError: true },
@@ -391,12 +331,6 @@ function KeysPage() {
     }
   }
   async function revoke(key: VirtualKey) {
-    if (
-      !window.confirm(
-        `Revoke and delete key “${key.name}”? This cannot be undone.`,
-      )
-    )
-      return;
     setBusy(true);
     setError("");
     try {
@@ -414,6 +348,7 @@ function KeysPage() {
         { queryKey: ["virtual-keys"] },
         { throwOnError: true },
       );
+      setRevokeKey(null);
     } catch (err) {
       setError(message(err));
     } finally {
@@ -421,7 +356,7 @@ function KeysPage() {
     }
   }
   return (
-    <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
+    <main className="mx-auto w-full min-w-0 max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
       <h1 className="text-3xl font-semibold tracking-tight">Virtual keys</h1>
       <p className="mt-2 text-sm text-muted-foreground">
         Create keys for inference access and restrict their providers and
@@ -432,85 +367,210 @@ function KeysPage() {
           <AlertDescription>{displayError}</AlertDescription>
         </Alert>
       )}
-      {newKey && (
-        <Card role="status" className="mt-6 border border-primary p-5">
-          <h2 className="font-semibold">Copy your new key now</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            It will not be shown again.
-          </p>
-          <code className="mt-3 block break-all select-all">{newKey}</code>
-          <Button
-            className="mt-3"
-            variant="outline"
-            onClick={() => setNewKey("")}
-          >
-            Dismiss
-          </Button>
-        </Card>
-      )}
-      <Card className="mt-6 max-w-2xl p-5">
-        <form onSubmit={(event) => void create(event)} className="grid gap-5">
-          <h2 className="text-lg font-semibold">Create key</h2>
-          <Label className="block text-sm font-medium">
-            Name
-            <Input
-              className={inputClass}
-              required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </Label>
-          <fieldset>
-            <legend className="text-sm font-medium">Providers</legend>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Select none to allow all providers.
-            </p>
-            <div className="mt-2 flex flex-wrap gap-4">
-              {["agy", "codex", "zen", "openai"].map((provider) => (
-                <Label
-                  key={provider}
-                  htmlFor={`provider-${provider}`}
-                  className="text-sm"
-                >
-                  <Checkbox
-                    id={`provider-${provider}`}
-                    checked={providers.includes(provider)}
-                    onCheckedChange={(checked) =>
-                      setProviders(
-                        checked
-                          ? [...providers, provider]
-                          : providers.filter((item) => item !== provider),
-                      )
-                    }
-                  />
-                  {provider}
-                </Label>
-              ))}
+      <Button
+        className="mt-6"
+        onClick={() => {
+          setError("");
+          setCreateOpen(true);
+        }}
+      >
+        Create key
+      </Button>
+      <Dialog
+        open={createOpen}
+        onOpenChange={(open) => {
+          if (!open && (busy || newKey)) return;
+          setCreateOpen(open);
+        }}
+      >
+        <DialogContent
+          className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
+          showCloseButton={!busy && !newKey}
+        >
+          <DialogHeader>
+            <DialogTitle>
+              {newKey ? "Copy your new key now" : "Create key"}
+            </DialogTitle>
+            <DialogDescription>
+              {newKey
+                ? "It will not be shown again."
+                : "Create an inference key and choose its provider and model restrictions."}
+            </DialogDescription>
+          </DialogHeader>
+          {error && (
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+          {providersQuery.error && !newKey && (
+            <Alert variant="destructive">
+              <AlertDescription>
+                {message(providersQuery.error)}
+              </AlertDescription>
+            </Alert>
+          )}
+          {newKey ? (
+            <div role="status">
+              <code className="block break-all select-all">{newKey}</code>
+              <Button
+                className="mt-3"
+                variant="outline"
+                disabled={busy}
+                onClick={() => {
+                  setNewKey("");
+                  setError("");
+                  setCreateOpen(false);
+                }}
+              >
+                Dismiss
+              </Button>
             </div>
-          </fieldset>
-          <Label className="block text-sm font-medium">
-            Models{" "}
-            <span className="font-normal text-muted-foreground">
-              (comma or newline separated; blank allows all)
-            </span>
-            <Textarea
-              className={`${inputClass} h-24 py-2`}
-              value={models}
-              onChange={(e) => setModels(e.target.value)}
-            />
-          </Label>
-          <div>
-            <Button type="submit" disabled={busy}>
-              {busy ? "Working…" : "Create key"}
-            </Button>
-          </div>
-        </form>
-      </Card>
+          ) : (
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                void form.handleSubmit();
+              }}
+              className="grid gap-5"
+            >
+              <form.Field name="name">
+                {(field) => (
+                  <Label className="block text-sm font-medium">
+                    Name
+                    <Input
+                      className={inputClass}
+                      disabled={busy}
+                      required
+                      value={field.state.value}
+                      onBlur={field.handleBlur}
+                      onChange={(e) => field.handleChange(e.target.value)}
+                    />
+                  </Label>
+                )}
+              </form.Field>
+              <form.Field name="providers">
+                {(field) => {
+                  const providers = field.state.value;
+                  const missingProviders = providers.filter(
+                    (id) =>
+                      !providersQuery.data?.providers.some(
+                        (provider) => provider.id === id,
+                      ),
+                  );
+                  return (
+                    <fieldset>
+                      <legend className="text-sm font-medium">Providers</legend>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Select none to allow all providers.
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-4">
+                        {(providersQuery.data?.providers ?? []).map(
+                          (provider) => (
+                            <Label
+                              key={provider.id}
+                              htmlFor={`provider-${provider.id}`}
+                              className="text-sm"
+                            >
+                              <Checkbox
+                                id={`provider-${provider.id}`}
+                                disabled={busy}
+                                checked={providers.includes(provider.id)}
+                                onCheckedChange={(checked) =>
+                                  field.handleChange(
+                                    checked
+                                      ? [...providers, provider.id]
+                                      : providers.filter(
+                                          (item) => item !== provider.id,
+                                        ),
+                                  )
+                                }
+                              />
+                              {provider.name} ({provider.id})
+                            </Label>
+                          ),
+                        )}
+                        {missingProviders.map((id) => (
+                          <Label
+                            key={id}
+                            htmlFor={`provider-${id}`}
+                            className="text-sm"
+                          >
+                            <Checkbox
+                              id={`provider-${id}`}
+                              disabled={busy}
+                              checked
+                              onCheckedChange={() =>
+                                field.handleChange(
+                                  providers.filter((item) => item !== id),
+                                )
+                              }
+                            />
+                            {id} (no longer available; deselect)
+                          </Label>
+                        ))}
+                      </div>
+                    </fieldset>
+                  );
+                }}
+              </form.Field>
+              <form.Field name="models">
+                {(field) => (
+                  <Label className="block text-sm font-medium">
+                    Models{" "}
+                    <span className="font-normal text-muted-foreground">
+                      (comma or newline separated; blank allows all)
+                    </span>
+                    <Textarea
+                      className={`${inputClass} h-24 py-2`}
+                      disabled={busy}
+                      value={field.state.value}
+                      onBlur={field.handleBlur}
+                      onChange={(e) => field.handleChange(e.target.value)}
+                    />
+                  </Label>
+                )}
+              </form.Field>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => setCreateOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <form.Subscribe selector={(state) => state.values.providers}>
+                  {(providers) => (
+                    <Button
+                      type="submit"
+                      disabled={
+                        busy ||
+                        providersQuery.isPending ||
+                        !!providersQuery.error ||
+                        providers.some(
+                          (id) =>
+                            !providersQuery.data?.providers.some(
+                              (provider) => provider.id === id,
+                            ),
+                        )
+                      }
+                    >
+                      {busy ? "Working…" : "Create key"}
+                    </Button>
+                  )}
+                </form.Subscribe>
+              </div>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
       <Card className={`${panelClass} mt-6`}>
         <h2 className="text-lg font-semibold">Existing keys</h2>
         {loading ? (
-          <p className="mt-4 text-sm text-muted-foreground">Loading keys…</p>
-        ) : keys.length === 0 ? (
+          <div className="mt-4">
+            <RowsSkeleton label="Loading virtual keys" />
+          </div>
+        ) : keysQuery.error ? null : keys.length === 0 ? (
           <p className="mt-4 text-sm text-muted-foreground">
             No keys created yet.
           </p>
@@ -532,7 +592,10 @@ function KeysPage() {
                 <Button
                   variant="outline"
                   disabled={busy}
-                  onClick={() => void revoke(key)}
+                  onClick={() => {
+                    setError("");
+                    setRevokeKey(key);
+                  }}
                 >
                   Revoke / delete
                 </Button>
@@ -541,333 +604,47 @@ function KeysPage() {
           </ul>
         )}
       </Card>
-    </main>
-  );
-}
-
-function ProvidersPage() {
-  const [googleUrl, setGoogleUrl] = useState("");
-  const [googleFlow, setGoogleFlow] = useState<{
-    id: string;
-    local_callback: boolean;
-  } | null>(null);
-  const [callback, setCallback] = useState("");
-  const [device, setDevice] = useState<{
-    id: string;
-    url: string;
-    user_code: string;
-    interval: number;
-  } | null>(null);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const [busy, setBusy] = useState(false);
-  const statusQuery = useQuery({
-    queryKey: ["provider-status"],
-    retry: false,
-    queryFn: ({ signal }) =>
-      request<{ agy: boolean; codex: boolean }>("/api/providers/status", {
-        signal,
-      }),
-  });
-  const status = statusQuery.data ?? null;
-  const queryClient = useQueryClient();
-  const refreshStatus = useCallback(async () => {
-    try {
-      await queryClient.fetchQuery({
-        queryKey: ["provider-status"],
-        queryFn: ({ signal }) =>
-          request<{ agy: boolean; codex: boolean }>("/api/providers/status", {
-            signal,
-          }),
-        staleTime: 0,
-      });
-    } catch (err) {
-      setError(message(err));
-    }
-  }, [queryClient]);
-
-  const displayError =
-    error || (statusQuery.error ? message(statusQuery.error) : "");
-
-  useEffect(() => {
-    if (!googleFlow || busy) return;
-    const controller = new AbortController();
-    let timer: number;
-    const poll = async () => {
-      try {
-        const result = await request<{ status: string; error?: string }>(
-          "/api/providers/agy/poll",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id: googleFlow.id }),
-            signal: controller.signal,
-          },
-        );
-        if (controller.signal.aborted) return;
-        if (result.status === "complete") {
-          setGoogleFlow(null);
-          setGoogleUrl("");
-          setCallback("");
-          void refreshStatus();
-          setNotice("Antigravity sign-in complete.");
-        } else if (result.status === "pending")
-          timer = window.setTimeout(() => void poll(), 2000);
-        else {
-          setGoogleFlow(null);
-          setError(result.error || "Google sign-in failed.");
-        }
-      } catch (err) {
-        if (!controller.signal.aborted) {
-          setGoogleFlow(null);
-          setError(message(err));
-        }
-      }
-    };
-    timer = window.setTimeout(() => void poll(), 2000);
-    return () => {
-      controller.abort();
-      window.clearTimeout(timer);
-    };
-  }, [googleFlow, busy, refreshStatus]);
-
-  useEffect(() => {
-    if (!device) return;
-    const controller = new AbortController();
-    let timer: number;
-    const poll = async () => {
-      try {
-        const result = await request<{ status: string }>(
-          "/api/providers/codex/poll",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id: device.id }),
-            signal: controller.signal,
-          },
-        );
-        if (controller.signal.aborted) return;
-        if (result.status === "complete") {
-          setDevice(null);
-          void refreshStatus();
-          setNotice("Codex sign-in complete.");
-        } else if (result.status === "pending")
-          timer = window.setTimeout(
-            () => void poll(),
-            Math.max(1, device.interval) * 1000,
-          );
-        else {
-          setDevice(null);
-          setError("Unexpected device sign-in status.");
-        }
-      } catch (err) {
-        if (!controller.signal.aborted) {
-          setDevice(null);
-          setError(message(err));
-        }
-      }
-    };
-    timer = window.setTimeout(
-      () => void poll(),
-      Math.max(1, device.interval) * 1000,
-    );
-    return () => {
-      controller.abort();
-      window.clearTimeout(timer);
-    };
-  }, [device, refreshStatus]);
-
-  async function startGoogle() {
-    setBusy(true);
-    setError("");
-    setNotice("");
-    setGoogleUrl("");
-    setGoogleFlow(null);
-    setCallback("");
-    try {
-      const result = await request<{
-        id: string;
-        url: string;
-        local_callback: boolean;
-      }>("/api/providers/agy/start", { method: "POST" });
-      const url = new URL(result.url);
-      if (url.protocol !== "https:" || url.hostname !== "accounts.google.com")
-        throw new Error("Invalid Google authorization URL.");
-      setGoogleUrl(url.href);
-      setGoogleFlow({ id: result.id, local_callback: result.local_callback });
-    } catch (err) {
-      setError(message(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-  async function finishGoogle(event: FormEvent) {
-    event.preventDefault();
-    setBusy(true);
-    setError("");
-    setNotice("");
-    try {
-      await request("/api/providers/agy/finish", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ callback_url: callback }),
-      });
-      setGoogleFlow(null);
-      setGoogleUrl("");
-      setCallback("");
-      void refreshStatus();
-      setNotice("Antigravity sign-in complete.");
-    } catch (err) {
-      setError(message(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-  async function startCodex() {
-    setBusy(true);
-    setError("");
-    setNotice("");
-    setDevice(null);
-    try {
-      const result = await request<{
-        id: string;
-        url: string;
-        user_code: string;
-        interval: number;
-      }>("/api/providers/codex/start", { method: "POST" });
-      const url = new URL(result.url);
-      if (url.protocol !== "https:" || url.hostname !== "auth.openai.com")
-        throw new Error("Invalid Codex authorization URL.");
-      setDevice({ ...result, url: url.href });
-    } catch (err) {
-      setError(message(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
-      <h1 className="text-3xl font-semibold tracking-tight">Providers</h1>
-      <p className="mt-2 text-sm text-muted-foreground">
-        Sign in to connect provider accounts to the gateway.
-      </p>
-      {displayError && (
-        <Alert variant="destructive" className="mt-5">
-          <AlertDescription>{displayError}</AlertDescription>
-        </Alert>
-      )}
-      {notice && (
-        <p role="status" className="mt-5 text-sm">
-          {notice}
-        </p>
-      )}
-      <Card className={`${panelClass} mt-6 max-w-2xl`}>
-        <h2 className="text-lg font-semibold">Antigravity (Google)</h2>
-        <p className="mt-2 text-sm">
-          {status
-            ? status.agy
-              ? "Credentials configured"
-              : "Not signed in"
-            : "Credential status unavailable"}
-        </p>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Configure your Google OAuth client in Settings before signing in.
-        </p>
-        <Button
-          className="mt-4"
-          disabled={busy}
-          onClick={() => void startGoogle()}
+      <Dialog
+        open={revokeKey !== null}
+        onOpenChange={(open) => {
+          if (!open && !busy) setRevokeKey(null);
+        }}
+      >
+        <DialogContent
+          className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
+          showCloseButton={!busy}
         >
-          Start Google sign-in
-        </Button>
-        {googleUrl && (
-          <form
-            onSubmit={(event) => void finishGoogle(event)}
-            className="mt-4 grid gap-4"
-          >
-            <p className="text-sm">
-              Open{" "}
-              <a
-                className="underline"
-                href={googleUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Google authorization
-              </a>{" "}
-              and sign in.{" "}
-              {googleFlow?.local_callback
-                ? "Waiting for the local callback. If the callback is on another machine, copy its URL below instead."
-                : "Copy the entire redirected URL from the browser address bar; the loopback page may not load."}
-            </p>
-            <Label className="block text-sm font-medium">
-              Redirected callback URL
-              <Input
-                className={inputClass}
-                required
-                type="url"
-                autoComplete="off"
-                value={callback}
-                onChange={(e) => setCallback(e.target.value)}
-              />
-            </Label>
-            <p className="text-xs text-muted-foreground">
-              The callback URL contains a temporary authorization code. Do not
-              share it.
-            </p>
-            <div>
-              <Button type="submit" disabled={busy}>
-                Finish Google sign-in
-              </Button>
-            </div>
-          </form>
-        )}
-      </Card>
-      <Card className={`${panelClass} mt-6 max-w-2xl`}>
-        <h2 className="text-lg font-semibold">Codex (OpenAI)</h2>
-        <p className="mt-2 text-sm">
-          {status
-            ? status.codex
-              ? "Credentials configured"
-              : "Not signed in"
-            : "Credential status unavailable"}
-        </p>
-        <Button
-          className="mt-4"
-          disabled={busy || !!device}
-          onClick={() => void startCodex()}
-        >
-          Start Codex sign-in
-        </Button>
-        {device && (
-          <div className="mt-4 grid gap-3 text-sm">
-            <p>
-              Open{" "}
-              <a
-                className="underline"
-                href={device.url}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                OpenAI device authorization
-              </a>{" "}
-              and enter this code:
-            </p>
-            <code className="select-all text-lg font-semibold">
-              {device.user_code}
-            </code>
-            <p role="status" className="text-muted-foreground">
-              Waiting for authorization…
-            </p>
-            <div>
-              <Button variant="outline" onClick={() => setDevice(null)}>
-                Cancel
-              </Button>
-            </div>
+          <DialogHeader>
+            <DialogTitle>Revoke and delete key?</DialogTitle>
+            <DialogDescription>
+              Revoke and delete key “{revokeKey?.name}”? This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          {error && (
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => setRevokeKey(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={busy}
+              onClick={() => {
+                if (revokeKey) void revoke(revokeKey);
+              }}
+            >
+              {busy ? "Working…" : "Revoke / delete"}
+            </Button>
           </div>
-        )}
-      </Card>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }

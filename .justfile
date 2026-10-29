@@ -11,7 +11,7 @@ dev-backend:
 dev-frontend:
     cd frontend && bun run --bun vite
 
-# Add example request logs to the initialized development database (server stopped)
+# Add example providers, keys and logs to the initialized development database (server stopped)
 seed:
     bun run frontend/scripts/seed.ts
 

@@ -7,6 +7,7 @@ use crate::provider::antigravity::AntigravityClient;
 use crate::provider::antigravity::auth::{
     ANTIGRAVITY_USER_AGENT, CLOUD_CODE_ASSIST_ENDPOINT, Credentials,
 };
+use crate::provider::antigravity::client::UpstreamError;
 
 pub(super) const SANDBOX_ENDPOINT: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com";
 pub(super) const CLAUDE_THINKING_BETA_HEADER: &str = "interleaved-thinking-2025-05-14";
@@ -29,15 +30,17 @@ pub(crate) struct AntigravityModelInfo {
     pub(crate) max_output_tokens: Option<u32>,
     #[serde(default)]
     pub(crate) disabled: Option<bool>,
+    #[serde(flatten)]
+    pub(crate) extra: HashMap<String, serde_json::Value>,
 }
 
 impl AntigravityClient {
     pub(crate) async fn fetch_models(
         &self,
         creds: &Credentials,
-    ) -> Result<Vec<(String, AntigravityModelInfo)>, String> {
+    ) -> Result<Vec<(String, AntigravityModelInfo)>, UpstreamError> {
         let endpoints = [CLOUD_CODE_ASSIST_ENDPOINT, SANDBOX_ENDPOINT];
-        let mut last_err = String::new();
+        let mut last_err = UpstreamError::from("No upstream endpoint available".to_string());
 
         for endpoint in &endpoints {
             let url = format!("{endpoint}/v1internal:fetchAvailableModels");
@@ -53,10 +56,9 @@ impl AntigravityClient {
 
             match resp {
                 Ok(r) if r.status().is_success() => {
-                    let disc: AntigravityDiscoveryResponse = r
-                        .json()
-                        .await
-                        .map_err(|e| format!("Failed to parse models response: {e}"))?;
+                    let disc: AntigravityDiscoveryResponse = r.json().await.map_err(|e| {
+                        UpstreamError::from(format!("Failed to parse models response: {e}"))
+                    })?;
                     let mut models = Vec::new();
                     for (id, info) in disc.models {
                         if info.disabled.unwrap_or(false) {
@@ -73,10 +75,16 @@ impl AntigravityClient {
                 Ok(r) => {
                     let status = r.status();
                     let body = r.text().await.unwrap_or_default();
-                    last_err = format!("Endpoint {endpoint} returned {status}: {body}");
+                    last_err = UpstreamError {
+                        status: Some(status),
+                        message: format!("Endpoint {endpoint} returned {status}: {body}"),
+                    };
+                    if !status.is_server_error() {
+                        return Err(last_err);
+                    }
                 }
                 Err(e) => {
-                    last_err = format!("Endpoint {endpoint} failed: {e}");
+                    last_err = UpstreamError::from(format!("Endpoint {endpoint} failed: {e}"));
                 }
             }
         }

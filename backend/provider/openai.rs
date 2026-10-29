@@ -1,3 +1,5 @@
+pub(crate) mod routes;
+
 use std::sync::LazyLock;
 
 use axum::body::{Body, Bytes};

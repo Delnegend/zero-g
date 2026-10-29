@@ -13,15 +13,49 @@ use crate::provider::antigravity::auth::{
 use crate::provider::antigravity::models::{CLAUDE_THINKING_BETA_HEADER, SANDBOX_ENDPOINT};
 use crate::provider::antigravity::{AntigravityEvent, map_finish_reason, spawn_event_stream};
 
+#[derive(Debug)]
+pub(crate) struct UpstreamError {
+    pub(super) status: Option<reqwest::StatusCode>,
+    pub(super) message: String,
+}
+
+impl UpstreamError {
+    pub(super) fn retryable(&self) -> bool {
+        matches!(
+            self.status,
+            Some(
+                reqwest::StatusCode::UNAUTHORIZED
+                    | reqwest::StatusCode::FORBIDDEN
+                    | reqwest::StatusCode::TOO_MANY_REQUESTS
+            )
+        )
+    }
+}
+
+impl std::fmt::Display for UpstreamError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl From<String> for UpstreamError {
+    fn from(message: String) -> Self {
+        Self {
+            status: None,
+            message,
+        }
+    }
+}
+
 impl AntigravityClient {
     pub(crate) async fn stream_request(
         &self,
         creds: &Credentials,
         payload: &Value,
         is_claude: bool,
-    ) -> Result<Response, String> {
+    ) -> Result<Response, UpstreamError> {
         let endpoints = [CLOUD_CODE_ASSIST_ENDPOINT, SANDBOX_ENDPOINT];
-        let mut last_err = String::new();
+        let mut last_err = UpstreamError::from("No upstream endpoint available".to_string());
 
         for endpoint in &endpoints {
             let url = format!("{endpoint}/v1internal:streamGenerateContent?alt=sse");
@@ -44,14 +78,17 @@ impl AntigravityClient {
                 Ok(resp) => {
                     let status = resp.status();
                     let body = resp.text().await.unwrap_or_default();
-                    last_err = format!("Antigravity error ({status}): {body}");
+                    last_err = UpstreamError {
+                        status: Some(status),
+                        message: format!("Antigravity error ({status}): {body}"),
+                    };
                     if status.is_server_error() {
                         continue;
                     }
                     return Err(last_err);
                 }
                 Err(e) => {
-                    last_err = format!("Request failed to {endpoint}: {e}");
+                    last_err = UpstreamError::from(format!("Request failed to {endpoint}: {e}"));
                 }
             }
         }
@@ -63,7 +100,7 @@ impl AntigravityClient {
         &self,
         creds: &Credentials,
         req: &ChatCompletionRequest,
-    ) -> Result<ChatCompletionResponse, String> {
+    ) -> Result<ChatCompletionResponse, UpstreamError> {
         let wire_model = req.model.clone();
         let is_claude = wire_model.contains("claude");
         let payload = Self::build_request_payload(req, &creds.project_id, &wire_model);
@@ -75,7 +112,7 @@ impl AntigravityClient {
         while let Some(event) = events.recv().await {
             match event {
                 Ok(event) => collected.apply(event),
-                Err(error) => return Err(error),
+                Err(error) => return Err(error.into()),
             }
         }
 

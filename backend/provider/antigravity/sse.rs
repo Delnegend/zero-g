@@ -1,8 +1,7 @@
 use std::convert::Infallible;
 
-use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::response::{IntoResponse, Json, Response};
+use axum::response::{IntoResponse, Response};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -79,17 +78,5 @@ where
     });
     Sse::new(ReceiverStream::new(rx))
         .keep_alive(KeepAlive::default())
-        .into_response()
-}
-
-pub(super) fn bad_gateway_response() -> Response {
-    (
-        StatusCode::BAD_GATEWAY,
-        Json(crate::server::error_body(
-            "Upstream request failed",
-            "upstream_error",
-            Some("bad_gateway"),
-        )),
-    )
         .into_response()
 }

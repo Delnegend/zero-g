@@ -1,64 +1,29 @@
-use std::sync::Arc;
+use std::collections::BTreeMap;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use crate::database::Database;
 use crate::storage::RequestLog;
 use axum::body::{Body, Bytes, to_bytes};
-use axum::extract::{Request, State};
+use axum::extract::{Query, Request, State};
 use axum::http::{Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Json, Response};
-use serde::Serialize;
+use chrono::{DateTime, Datelike, Months, NaiveDate, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::sync::Mutex;
 use tracing::error;
-
-static MIGRATIONS: toasty::migration::MigrationSet = toasty::embed_migrations!();
 
 #[derive(Clone)]
 pub(crate) struct LogStore {
-    pub(super) db: Arc<toasty::Db>,
+    database: Database,
     retention_days: i64,
-    pub(super) lock: Arc<Mutex<()>>,
 }
 impl LogStore {
-    #[cfg(test)]
-    async fn open(path: &str, retention_days: i64) -> Result<Self, String> {
-        let mut store = Self::open_unpruned(path).await?;
-        store.set_retention(retention_days).await?;
-        Ok(store)
-    }
-
-    pub(crate) async fn open_unpruned(path: &str) -> Result<Self, String> {
-        if path != ":memory:" {
-            let mut options = std::fs::OpenOptions::new();
-            options.write(true).create_new(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600);
-            }
-            if let Err(err) = options.open(path)
-                && err.kind() != std::io::ErrorKind::AlreadyExists
-            {
-                return Err(err.to_string());
-            }
-        }
-        let db = toasty::Db::builder()
-            .models(toasty::models!(
-                crate::storage::RequestLog,
-                crate::storage::Setting,
-                crate::storage::Secret,
-                crate::storage::VirtualKey
-            ))
-            .connect(&format!("turso:{path}"))
-            .await
-            .map_err(|e| e.to_string())?;
-        MIGRATIONS.apply(&db).await.map_err(|e| e.to_string())?;
-        Ok(Self {
-            db: Arc::new(db),
+    pub(crate) const fn new(database: Database) -> Self {
+        Self {
+            database,
             retention_days: 30,
-            lock: Arc::new(Mutex::new(())),
-        })
+        }
     }
 
     pub(crate) async fn set_retention(&mut self, retention_days: i64) -> Result<(), String> {
@@ -67,48 +32,93 @@ impl LogStore {
     }
 
     async fn prune(&self) -> Result<(), String> {
-        RequestLog::filter(
-            RequestLog::fields()
-                .created_at()
-                .lt(now().saturating_sub(self.retention_days.saturating_mul(86400))),
-        )
-        .delete()
-        .exec(&mut (*self.db).clone())
-        .await
-        .map_err(|e| e.to_string())?;
-        Ok(())
+        let cutoff = now().saturating_sub(self.retention_days.saturating_mul(86400));
+        self.database
+            .retry(|| async {
+                let mut db = (*self.database.db).clone();
+                let mut tx = db.transaction().await?;
+                RequestLog::filter(RequestLog::fields().created_at().lt(cutoff))
+                    .delete()
+                    .exec(&mut tx)
+                    .await?;
+                tx.commit().await?;
+                Ok(())
+            })
+            .await
+            .map_err(|e| e.to_string())
     }
 
     async fn insert(&self, log: LogEntry) -> Result<(), String> {
-        let _guard = self.lock.lock().await;
-        toasty::create!(RequestLog {
-            created_at: log.created_at,
-            provider: log.provider,
-            model: log.model,
-            path: log.path,
-            status: log.status,
-            latency_ms: log.latency_ms,
-            input_tokens: log.input_tokens,
-            output_tokens: log.output_tokens,
-            request_body: log.request_body,
-            response_body: log.response_body,
-        })
-        .exec(&mut (*self.db).clone())
-        .await
-        .map_err(|e| e.to_string())?;
-        self.prune().await
+        let cutoff = now().saturating_sub(self.retention_days.saturating_mul(86400));
+        self.database
+            .retry(|| async {
+                let mut db = (*self.database.db).clone();
+                let mut tx = db.transaction().await?;
+                toasty::create!(RequestLog {
+                    created_at: log.created_at,
+                    provider: log.provider.clone(),
+                    model: log.model.clone(),
+                    path: log.path.clone(),
+                    status: log.status,
+                    latency_ms: log.latency_ms,
+                    input_tokens: log.input_tokens,
+                    output_tokens: log.output_tokens,
+                    request_body: log.request_body.clone(),
+                    response_body: log.response_body.clone(),
+                })
+                .exec(&mut tx)
+                .await?;
+                RequestLog::filter(RequestLog::fields().created_at().lt(cutoff))
+                    .delete()
+                    .exec(&mut tx)
+                    .await?;
+                tx.commit().await?;
+                Ok(())
+            })
+            .await
+            .map_err(|e| e.to_string())
     }
 
-    async fn dashboard(&self) -> Result<Value, String> {
-        let _guard = self.lock.lock().await;
-        let rows = RequestLog::all()
-            .select((
-                RequestLog::fields().status(),
-                RequestLog::fields().latency_ms(),
-                RequestLog::fields().input_tokens(),
-                RequestLog::fields().output_tokens(),
-            ))
-            .exec(&mut (*self.db).clone())
+    async fn dashboard(&self, since: Option<i64>, until: Option<i64>) -> Result<Value, String> {
+        let upper = until.or_else(|| since.map(|_| now()));
+        let interval = interval(since, upper)?;
+        let (rows, logs) = self
+            .database
+            .retry(|| async {
+                let mut db = (*self.database.db).clone();
+                let mut tx = db.transaction().await?;
+                let mut rows_query = RequestLog::all();
+                let mut logs_query = RequestLog::all();
+                if let Some(since) = since {
+                    rows_query = rows_query.filter(RequestLog::fields().created_at().ge(since));
+                    logs_query = logs_query.filter(RequestLog::fields().created_at().ge(since));
+                }
+                if let Some(upper) = upper {
+                    rows_query = rows_query.filter(RequestLog::fields().created_at().le(upper));
+                    logs_query = logs_query.filter(RequestLog::fields().created_at().le(upper));
+                }
+                let rows = rows_query
+                    .select((
+                        RequestLog::fields().status(),
+                        RequestLog::fields().latency_ms(),
+                        RequestLog::fields().input_tokens(),
+                        RequestLog::fields().output_tokens(),
+                        RequestLog::fields().created_at(),
+                    ))
+                    .exec(&mut tx)
+                    .await?;
+                let logs_query = if since.is_some() || until.is_some() {
+                    logs_query.order_by((
+                        RequestLog::fields().created_at().desc(),
+                        RequestLog::fields().id().desc(),
+                    ))
+                } else {
+                    logs_query.order_by(RequestLog::fields().id().desc())
+                };
+                let logs = logs_query.limit(200).exec(&mut tx).await?;
+                tx.commit().await?;
+                Ok((rows, logs))
+            })
             .await
             .map_err(|e| e.to_string())?;
         let count = rows.len();
@@ -124,12 +134,17 @@ impl LogStore {
             rows.iter().map(|r| r.1 as f64).sum::<f64>() / count as f64
         };
         let summary = json!({"requests": count, "successes": successes, "errors": errors, "input_tokens": input_tokens, "output_tokens": output_tokens, "avg_latency_ms": avg_latency_ms});
-        let logs: Vec<LogEntry> = RequestLog::all()
-            .order_by(RequestLog::fields().id().desc())
-            .limit(200)
-            .exec(&mut (*self.db).clone())
-            .await
-            .map_err(|e| e.to_string())?
+        let mut counts = BTreeMap::<i64, usize>::new();
+        for row in &rows {
+            let start = bucket_start(row.4, interval)?;
+            let requests = counts.entry(start).or_default();
+            *requests = requests.saturating_add(1);
+        }
+        let buckets: Vec<Value> = counts
+            .into_iter()
+            .map(|(start, requests)| json!({"start": start, "requests": requests}))
+            .collect();
+        let logs: Vec<LogEntry> = logs
             .into_iter()
             .map(|r| LogEntry {
                 id: r.id,
@@ -145,8 +160,59 @@ impl LogStore {
                 response_body: r.response_body,
             })
             .collect();
-        Ok(json!({"summary": summary, "logs": logs}))
+        Ok(json!({"summary": summary, "logs": logs, "interval": interval, "buckets": buckets}))
     }
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum Interval {
+    Hour,
+    Day,
+    Month,
+    Year,
+}
+
+fn date(timestamp: i64) -> Result<DateTime<Utc>, String> {
+    DateTime::from_timestamp(timestamp, 0)
+        .ok_or_else(|| format!("timestamp outside supported date range: {timestamp}"))
+}
+
+fn interval(since: Option<i64>, until: Option<i64>) -> Result<Interval, String> {
+    let start = since.map(date).transpose()?;
+    let end = until.map(date).transpose()?;
+    let (Some(start), Some(end)) = (start, end) else {
+        return Ok(Interval::Day);
+    };
+    if end.signed_duration_since(start).num_seconds() <= 86_400 {
+        return Ok(Interval::Hour);
+    }
+    if start
+        .checked_add_months(Months::new(3))
+        .is_none_or(|limit| end <= limit)
+    {
+        return Ok(Interval::Day);
+    }
+    if start
+        .checked_add_months(Months::new(36))
+        .is_none_or(|limit| end <= limit)
+    {
+        return Ok(Interval::Month);
+    }
+    Ok(Interval::Year)
+}
+
+fn bucket_start(timestamp: i64, interval: Interval) -> Result<i64, String> {
+    let value = date(timestamp)?;
+    let day = match interval {
+        Interval::Hour => return Ok(timestamp.div_euclid(3600).saturating_mul(3600)),
+        Interval::Day => Some(value.date_naive()),
+        Interval::Month => NaiveDate::from_ymd_opt(value.year(), value.month(), 1),
+        Interval::Year => NaiveDate::from_ymd_opt(value.year(), 1, 1),
+    };
+    day.and_then(|day| day.and_hms_opt(0, 0, 0))
+        .map(|day| day.and_utc().timestamp())
+        .ok_or_else(|| format!("cannot bucket timestamp: {timestamp}"))
 }
 
 #[derive(Serialize)]
@@ -170,8 +236,17 @@ fn now() -> i64 {
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
 }
 
-pub(super) async fn dashboard(State(store): State<LogStore>) -> Response {
-    match store.dashboard().await {
+#[derive(Deserialize)]
+pub(super) struct DashboardQuery {
+    since: Option<i64>,
+    until: Option<i64>,
+}
+
+pub(super) async fn dashboard(
+    State(store): State<LogStore>,
+    Query(query): Query<DashboardQuery>,
+) -> Response {
+    match store.dashboard(query.since, query.until).await {
         Ok(data) => Json(data).into_response(),
         Err(err) => {
             error!("Log query failed: {err}");
@@ -186,7 +261,7 @@ pub(super) async fn capture(State(store): State<LogStore>, req: Request, next: N
     }
     let start = Instant::now();
     let path = req.uri().path().to_owned();
-    let provider = path.split('/').nth(1).unwrap_or_default().to_owned();
+    let provider = path.split('/').nth(2).unwrap_or_default().to_owned();
     let (parts, body) = req.into_parts();
     let Ok(body) = to_bytes(body, 2 * 1024 * 1024).await else {
         return StatusCode::PAYLOAD_TOO_LARGE.into_response();
@@ -296,12 +371,16 @@ fn usage(body: &str) -> (Option<i64>, Option<i64>) {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use axum::{Router, routing::get};
+    use tower::ServiceExt;
 
     #[tokio::test]
     async fn stores_and_expires_private_request_logs() {
         let path =
             std::env::temp_dir().join(format!("zero-g-log-test-{}.db", uuid::Uuid::new_v4()));
-        let store = LogStore::open(path.to_str().unwrap(), 30).await.unwrap();
+        let database = Database::open(path.to_str().unwrap()).await.unwrap();
+        let mut store = LogStore::new(database);
+        store.set_retention(30).await.unwrap();
         let entry = |created_at| LogEntry {
             id: 0,
             created_at,
@@ -320,13 +399,278 @@ mod tests {
             .await
             .unwrap();
         store.insert(entry(now())).await.unwrap();
-        let result = store.dashboard().await.unwrap();
+        let result = store.dashboard(None, None).await.unwrap();
         assert_eq!(result["summary"]["requests"], 1);
         assert_eq!(result["summary"]["input_tokens"], 10);
         assert_eq!(result["logs"][0]["request_body"], "private prompt");
         assert_eq!(result["logs"][0]["response_body"], "private response");
         drop(store);
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn concurrent_inserts_are_not_duplicated() {
+        let path =
+            std::env::temp_dir().join(format!("zero-g-log-test-{}.db", uuid::Uuid::new_v4()));
+        let database = Database::open(path.to_str().unwrap()).await.unwrap();
+        let store = LogStore::new(database);
+        let entry = |body: &str| LogEntry {
+            id: 0,
+            created_at: now(),
+            provider: "codex".into(),
+            model: "model".into(),
+            path: "/codex/v1/responses".into(),
+            status: 200,
+            latency_ms: 42,
+            input_tokens: Some(10),
+            output_tokens: Some(3),
+            request_body: body.into(),
+            response_body: String::new(),
+        };
+        let (first, second) =
+            tokio::join!(store.insert(entry("first")), store.insert(entry("second")));
+        first.unwrap();
+        second.unwrap();
+        let result = store.dashboard(None, None).await.unwrap();
+        assert_eq!(result["summary"]["requests"], 2);
+        let logs = result["logs"].as_array().unwrap();
+        assert_eq!(
+            logs.iter()
+                .filter(|row| row["request_body"] == "first")
+                .count(),
+            1
+        );
+        assert_eq!(
+            logs.iter()
+                .filter(|row| row["request_body"] == "second")
+                .count(),
+            1
+        );
+        drop(store);
+        std::fs::remove_file(path).unwrap();
+    }
+    async fn check_bounded_ranges(app: &Router) {
+        let request = |uri: &str| Request::builder().uri(uri).body(Body::empty()).unwrap();
+        let response = app
+            .clone()
+            .oneshot(request("/api/observability?since=-86400&until=-86400"))
+            .await
+            .unwrap();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let bounded: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(bounded["summary"]["requests"], 1);
+        assert_eq!(bounded["summary"]["errors"], 1);
+        assert_eq!(bounded["summary"]["input_tokens"], 2);
+        assert_eq!(bounded["interval"], "hour");
+        assert_eq!(
+            bounded["buckets"],
+            json!([{"start": -86400, "requests": 1}])
+        );
+        assert!(bounded.get("daily").is_none());
+        assert_eq!(bounded["logs"].as_array().unwrap().len(), 1);
+        assert_eq!(bounded["logs"][0]["request_body"], "boundary");
+
+        let response = app
+            .clone()
+            .oneshot(request("/api/observability?until=-86400"))
+            .await
+            .unwrap();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let until_only: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(until_only["summary"]["requests"], 2);
+        assert_eq!(until_only["interval"], "day");
+        assert_eq!(
+            until_only["buckets"],
+            json!([
+                {"start": -172_800, "requests": 1},
+                {"start": -86400, "requests": 1}
+            ])
+        );
+        assert_eq!(until_only["logs"].as_array().unwrap().len(), 2);
+        assert_eq!(until_only["logs"][0]["request_body"], "boundary");
+        assert_eq!(until_only["logs"][1]["request_body"], "before");
+
+        let response = app
+            .clone()
+            .oneshot(request(
+                "/api/observability?since=9223372036854775807&until=9223372036854775807",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let response = app
+            .clone()
+            .oneshot(request("/api/observability?since=0&until=-1"))
+            .await
+            .unwrap();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let reversed: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(reversed["summary"]["requests"], 0);
+        assert_eq!(reversed["logs"], json!([]));
+        assert_eq!(reversed["buckets"], json!([]));
+        for uri in [
+            "/api/observability?since=nope",
+            "/api/observability?since=9223372036854775808",
+            "/api/observability?since=",
+            "/api/observability?until=nope",
+            "/api/observability?until=9223372036854775808",
+            "/api/observability?until=",
+        ] {
+            assert_eq!(
+                app.clone().oneshot(request(uri)).await.unwrap().status(),
+                StatusCode::BAD_REQUEST
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn range_filters_all_aggregates_and_latest_logs() {
+        let path =
+            std::env::temp_dir().join(format!("zero-g-log-test-{}.db", uuid::Uuid::new_v4()));
+        let database = Database::open(path.to_str().unwrap()).await.unwrap();
+        let mut store = LogStore::new(database);
+        store.set_retention(i64::MAX).await.unwrap();
+        let entry = |created_at, status, body: String| LogEntry {
+            id: 0,
+            created_at,
+            provider: "codex".into(),
+            model: "model".into(),
+            path: "/v1".into(),
+            status,
+            latency_ms: 10,
+            input_tokens: Some(2),
+            output_tokens: Some(3),
+            request_body: body,
+            response_body: "response".into(),
+        };
+        store
+            .insert(entry(-86401, 500, "before".into()))
+            .await
+            .unwrap();
+        store
+            .insert(entry(-86400, 500, "boundary".into()))
+            .await
+            .unwrap();
+        store
+            .insert(entry(0, 200, "midnight".into()))
+            .await
+            .unwrap();
+        for i in 0..201 {
+            store.insert(entry(-1, 200, i.to_string())).await.unwrap();
+        }
+        store
+            .insert(entry(2_000_000_000, 500, "future".into()))
+            .await
+            .unwrap();
+
+        let app = Router::new()
+            .route("/api/observability", get(dashboard))
+            .with_state(store.clone());
+        let request = |uri: &str| Request::builder().uri(uri).body(Body::empty()).unwrap();
+        let response = app
+            .clone()
+            .oneshot(request("/api/observability?since=-86400"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let result: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(result["summary"]["requests"], 203);
+        assert_eq!(result["summary"]["successes"], 202);
+        assert_eq!(result["summary"]["errors"], 1);
+        assert_eq!(result["summary"]["input_tokens"], 406);
+        assert_eq!(result["summary"]["output_tokens"], 609);
+        assert_eq!(result["interval"], "year");
+        assert_eq!(
+            result["buckets"],
+            json!([
+                {"start": -31_536_000, "requests": 202},
+                {"start": 0, "requests": 1}
+            ])
+        );
+        let hourly = store.dashboard(Some(-86400), Some(0)).await.unwrap();
+        assert_eq!(hourly["interval"], "hour");
+        assert_eq!(hourly["summary"]["requests"], 203);
+        assert_eq!(hourly["logs"].as_array().unwrap().len(), 200);
+        assert_eq!(
+            hourly["buckets"],
+            json!([
+                {"start": -86400, "requests": 1},
+                {"start": -3600, "requests": 201},
+                {"start": 0, "requests": 1}
+            ])
+        );
+        let logs = result["logs"].as_array().unwrap();
+        assert_eq!(logs.len(), 200);
+        assert_eq!(logs[0]["request_body"], "midnight");
+        assert_eq!(logs[199]["request_body"], "2");
+        assert_eq!(logs[0]["response_body"], "response");
+
+        let response = app
+            .clone()
+            .oneshot(request("/api/observability"))
+            .await
+            .unwrap();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let all: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(all["summary"]["requests"], 205);
+        assert_eq!(all["logs"][0]["request_body"], "future");
+        check_bounded_ranges(&app).await;
+
+        let response = app
+            .clone()
+            .oneshot(request("/api/observability?since=9223372036854775807"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        drop(app);
+        drop(store);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn interval_thresholds_and_utc_bucket_boundaries() {
+        let stamp = |year, month, day, hour, minute, second| {
+            NaiveDate::from_ymd_opt(year, month, day)
+                .unwrap()
+                .and_hms_opt(hour, minute, second)
+                .unwrap()
+                .and_utc()
+                .timestamp()
+        };
+        let selected =
+            |start, end| serde_json::to_value(interval(Some(start), Some(end)).unwrap()).unwrap();
+        let jan31 = stamp(2024, 1, 31, 12, 0, 0);
+        assert_eq!(selected(jan31, jan31 + 86_400), "hour");
+        assert_eq!(selected(jan31, jan31 + 86_401), "day");
+        let april30 = stamp(2024, 4, 30, 12, 0, 0);
+        assert_eq!(selected(jan31, april30), "day");
+        assert_eq!(selected(jan31, april30 + 1), "month");
+        let leap = stamp(2024, 2, 29, 0, 0, 0);
+        let three_years = stamp(2027, 2, 28, 0, 0, 0);
+        assert_eq!(selected(leap, three_years), "month");
+        assert_eq!(selected(leap, three_years + 1), "year");
+        assert_eq!(
+            serde_json::to_value(interval(None, None).unwrap()).unwrap(),
+            "day"
+        );
+        assert_eq!(
+            serde_json::to_value(interval(None, Some(0)).unwrap()).unwrap(),
+            "day"
+        );
+        assert_eq!(bucket_start(-1, Interval::Hour).unwrap(), -3600);
+        assert_eq!(bucket_start(-1, Interval::Day).unwrap(), -86400);
+        assert_eq!(
+            bucket_start(-1, Interval::Month).unwrap(),
+            stamp(1969, 12, 1, 0, 0, 0)
+        );
+        assert_eq!(
+            bucket_start(leap, Interval::Year).unwrap(),
+            stamp(2024, 1, 1, 0, 0, 0)
+        );
+        assert!(bucket_start(i64::MIN, Interval::Day).is_err());
+        assert!(interval(Some(i64::MAX), Some(i64::MAX)).is_err());
     }
 
     #[test]

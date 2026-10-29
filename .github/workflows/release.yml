@@ -91,7 +91,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo build --release --bin zero-g --bin zero-g-import-legacy
+          cargo build --release --bin zero-g
 
       - name: Compile Zen TLS shim
         shell: bash
@@ -106,7 +106,7 @@ jobs:
           version: ${{ needs.prepare.outputs.version }}
           target: x86_64-unknown-linux-gnu
           source: target/release/zero-g
-          extra: zen-shim target/release/zero-g-import-legacy
+          extra: zen-shim
 
   build-container:
     name: Build Container Image

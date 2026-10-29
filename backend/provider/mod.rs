@@ -1,5 +1,11 @@
 pub(crate) mod antigravity;
+pub(crate) mod catalog;
 pub(crate) mod codex;
+pub(crate) mod credentials;
+pub(crate) mod go;
+pub(crate) mod login;
 pub(crate) mod openai;
+pub(crate) mod quota;
+pub(crate) mod registry;
 pub(crate) mod shim;
 pub(crate) mod zen;

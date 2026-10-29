@@ -45,3 +45,26 @@ pub(crate) struct VirtualKey {
     pub models: String,
     pub created_at: i64,
 }
+
+#[derive(Debug, toasty::Model)]
+#[table = "providers"]
+pub(crate) struct ProviderRecord {
+    #[key]
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub base_url: String,
+    pub deleted: bool,
+}
+
+#[derive(Debug, toasty::Model)]
+#[table = "provider_credentials"]
+pub(crate) struct ProviderCredential {
+    #[key]
+    pub id: String,
+    #[index]
+    pub provider_id: String,
+    pub name: String,
+    pub weight: i64,
+    pub enabled: bool,
+}
