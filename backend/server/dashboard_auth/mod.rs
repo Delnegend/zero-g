@@ -21,7 +21,7 @@ use std::{
 
 use axum::{
     Router,
-    extract::{Query, Request, State},
+    extract::{Request, State},
     http::{HeaderMap, HeaderValue, Method, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Redirect, Response},
@@ -32,21 +32,24 @@ use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
 use openidconnect::{
-    AdditionalClaims, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EmptyExtraTokenFields,
-    EndpointMaybeSet, EndpointNotSet, EndpointSet, IdTokenFields, IssuerUrl, JsonWebKeySetUrl,
-    Nonce, OAuth2TokenResponse, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope,
-    StandardErrorResponse, StandardTokenResponse, TokenResponse,
+    AdditionalClaims, ClientId, ClientSecret, CsrfToken, EmptyExtraTokenFields, EndpointMaybeSet,
+    EndpointNotSet, EndpointSet, IdTokenFields, IssuerUrl, JsonWebKeySetUrl, Nonce,
+    PkceCodeChallenge, RedirectUrl, Scope, StandardErrorResponse, StandardTokenResponse,
     core::{
         CoreAuthDisplay, CoreAuthPrompt, CoreAuthenticationFlow, CoreErrorResponseType,
-        CoreGenderClaim, CoreIdTokenVerifier, CoreJsonWebKey, CoreJsonWebKeySet,
-        CoreJweContentEncryptionAlgorithm, CoreJwsSigningAlgorithm, CoreProviderMetadata,
-        CoreRevocableToken, CoreRevocationErrorResponse, CoreTokenIntrospectionResponse,
-        CoreTokenType,
+        CoreGenderClaim, CoreJsonWebKey, CoreJweContentEncryptionAlgorithm,
+        CoreJwsSigningAlgorithm, CoreProviderMetadata, CoreRevocableToken,
+        CoreRevocationErrorResponse, CoreTokenIntrospectionResponse, CoreTokenType,
     },
 };
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
+
+/// OIDC authorization callback and identity verification.
+mod callback;
+
+use callback::{__path_callback, callback};
 
 /// OIDC HTTP client that validates every requested endpoint before sending.
 struct SafeHttp(reqwest::Client);
@@ -180,17 +183,6 @@ struct Pending {
     return_to: String,
     /// Instant at which the login flow began.
     created: Instant,
-}
-
-/// Query parameters returned by the OIDC authorization endpoint.
-#[derive(Deserialize)]
-struct Callback {
-    /// CSRF state returned by the provider.
-    state: Option<String>,
-    /// Authorization code to exchange for tokens.
-    code: Option<String>,
-    /// Provider-reported authorization error, if any.
-    error: Option<String>,
 }
 
 /// Dashboard sign-in callback operation.
@@ -565,123 +557,6 @@ async fn authenticate_inner(auth: DashboardAuth, req: Request, next: Next) -> Re
     }
 }
 
-/// Consumes OIDC callback state and creates a session after successful verification.
-#[utoipa::path(get, path = "/auth/callback", operation_id = "dashboardOidcCallback",
-    params(("state" = Option<String>, Query, description = "OIDC state"),
-        ("code" = Option<String>, Query, description = "Authorization code"),
-        ("error" = Option<String>, Query, description = "Identity provider error")),
-    responses((status = 303, description = "Signed in; redirects to the dashboard"),
-        (status = 400, description = "Invalid or expired login state"),
-        (status = 401, description = "Authentication rejected"),
-        (status = 404, description = "OIDC is not enabled"),
-        (status = 500, description = "Session could not be created")))]
-async fn callback(
-    State(auth): State<DashboardAuth>,
-    headers: HeaderMap,
-    Query(params): Query<Callback>,
-) -> Response {
-    let Mode::Oidc(oidc) = auth.0.as_ref() else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let clear = set_cookie(STATE_COOKIE, "", 0, oidc.secure);
-    let Some(state) = params.state else {
-        return with_cookie(StatusCode::BAD_REQUEST.into_response(), &clear);
-    };
-    let Some(browser_state) = cookie(&headers, STATE_COOKIE) else {
-        return with_cookie(StatusCode::BAD_REQUEST.into_response(), &clear);
-    };
-    if !equal(state.as_bytes(), browser_state.as_bytes()) {
-        return with_cookie(StatusCode::BAD_REQUEST.into_response(), &clear);
-    }
-    let pending = oidc.state.lock().await.pending.remove(&state);
-    let Some(pending) = pending.filter(|p| p.created.elapsed() < LOGIN_TTL) else {
-        return with_cookie(StatusCode::BAD_REQUEST.into_response(), &clear);
-    };
-    let Some(code) = params.code.filter(|_| params.error.is_none()) else {
-        return with_cookie(StatusCode::UNAUTHORIZED.into_response(), &clear);
-    };
-    if verify_login(oidc, &code, &pending).await.is_err() {
-        return with_cookie(StatusCode::UNAUTHORIZED.into_response(), &clear);
-    }
-    let Some(expires) = Instant::now().checked_add(SESSION_TTL) else {
-        return with_cookie(StatusCode::INTERNAL_SERVER_ERROR.into_response(), &clear);
-    };
-    let session = random_token();
-    oidc.state
-        .lock()
-        .await
-        .sessions
-        .insert(session.clone(), expires);
-    let response = with_cookie(Redirect::to(&pending.return_to).into_response(), &clear);
-    with_cookie(
-        response,
-        &set_cookie(SESSION_COOKIE, &session, SESSION_TTL.as_secs(), oidc.secure),
-    )
-}
-
-/// Exchanges a code and verifies the identity token and authorization claims.
-async fn verify_login(oidc: &Oidc, code: &str, pending: &Pending) -> Result<(), String> {
-    let tokens = oidc
-        .client
-        .exchange_code(AuthorizationCode::new(code.to_owned()))
-        .map_err(|e| e.to_string())?
-        .set_pkce_verifier(PkceCodeVerifier::new(pending.verifier.clone()))
-        .request_async(&oidc.http_client)
-        .await
-        .map_err(|e| e.to_string())?;
-    let id_token = tokens.id_token().ok_or("OIDC response missing ID token")?;
-    if !matches!(
-        id_token.signing_alg().map_err(|e| e.to_string())?,
-        CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256
-            | CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha384
-            | CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha512
-            | CoreJwsSigningAlgorithm::RsaSsaPssSha256
-            | CoreJwsSigningAlgorithm::RsaSsaPssSha384
-            | CoreJwsSigningAlgorithm::RsaSsaPssSha512
-            | CoreJwsSigningAlgorithm::EcdsaP256Sha256
-            | CoreJwsSigningAlgorithm::EcdsaP384Sha384
-            | CoreJwsSigningAlgorithm::EdDsa
-    ) {
-        return Err("unsupported ID token algorithm".into());
-    }
-    let keys = CoreJsonWebKeySet::fetch_async(&oidc.jwks_uri, &oidc.http_client)
-        .await
-        .map_err(|e| e.to_string())?;
-    let verifier = CoreIdTokenVerifier::new_public_client(
-        oidc.client.client_id().clone(),
-        oidc.issuer.clone(),
-        keys,
-    )
-    .set_allowed_algs(oidc.signing_algorithms.clone());
-    let claims = id_token
-        .claims(&verifier, &Nonce::new(pending.nonce.clone()))
-        .map_err(|e| e.to_string())?;
-    if claims.subject().as_str().is_empty() {
-        return Err("invalid ID token subject".into());
-    }
-    if let Some(expected) = claims.access_token_hash() {
-        let actual = openidconnect::AccessTokenHash::from_token(
-            tokens.access_token(),
-            id_token.signing_alg().map_err(|e| e.to_string())?,
-            id_token.signing_key(&verifier).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())?;
-        if actual != *expected {
-            return Err("invalid access token hash".into());
-        }
-    }
-    if !authorized(
-        claims.email().map(|email| email.as_str()),
-        claims.email_verified().unwrap_or(false),
-        &claims.additional_claims().groups,
-        &oidc.allowed_emails,
-        &oidc.allowed_groups,
-    ) {
-        return Err("OIDC identity is not authorized".into());
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 /// Exercises dashboard authentication, origin checks, and OIDC login.
 #[allow(clippy::unwrap_used)]
@@ -975,7 +850,8 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let issuer = format!("http://{}", listener.local_addr().unwrap());
         let fixture: Value =
-            serde_json::from_str(include_str!("../../tests/fixtures/oidc-test-key.json")).unwrap();
+            serde_json::from_str(include_str!("../../../tests/fixtures/oidc-test-key.json"))
+                .unwrap();
         let signing_key = Arc::new(
             RsaKeyPair::from_pkcs8(
                 &STANDARD
