@@ -7,6 +7,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::Html;
 use axum::routing::post;
 use axum::{Json, Router};
+use openidconnect::PkceCodeChallenge;
 use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
@@ -14,13 +15,14 @@ use uuid::Uuid;
 use crate::provider::antigravity::auth::{self as agy, AuthManager, Credentials};
 use crate::provider::login::{credential_lock, error, require_credential, same_origin};
 use crate::server::AppState;
+use crate::server::settings::SettingsStore;
 use crate::util::urlencode;
 
 /// Completed flow results keyed by OAuth state, with their time and ownership.
 type FlowResults = HashMap<String, (Instant, String, String, Result<(), String>)>;
 
 /// Shared pending flows, completed results, and local listener lock.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct OAuthFlows {
     /// Active flows indexed by OAuth state.
     pending: Arc<tokio::sync::Mutex<HashMap<String, Flow>>>,
@@ -28,6 +30,25 @@ struct OAuthFlows {
     results: Arc<tokio::sync::Mutex<FlowResults>>,
     /// Ensures only one flow owns the local Google callback listener.
     google_listener: Arc<tokio::sync::Mutex<()>>,
+    /// Token exchange endpoint.
+    token_url: String,
+    /// Google user information endpoint.
+    userinfo_url: String,
+    /// Cloud Code Assist endpoint.
+    cloud_url: String,
+}
+
+impl Default for OAuthFlows {
+    fn default() -> Self {
+        Self {
+            pending: Arc::default(),
+            results: Arc::default(),
+            google_listener: Arc::default(),
+            token_url: agy::OAUTH_TOKEN_URL.into(),
+            userinfo_url: "https://www.googleapis.com/oauth2/v2/userinfo".into(),
+            cloud_url: agy::CLOUD_CODE_ASSIST_ENDPOINT.into(),
+        }
+    }
 }
 
 /// State and ownership of a pending Google OAuth flow.
@@ -40,6 +61,8 @@ struct Flow {
     created: Instant,
     /// Whether the callback exchange is already in progress.
     in_flight: bool,
+    /// PKCE verifier tied to this flow.
+    verifier: String,
     /// Signal for shutting down the local callback listener.
     shutdown: Arc<tokio::sync::Notify>,
 }
@@ -52,7 +75,7 @@ impl Flow {
 }
 
 /// Application and OAuth flow state shared by the login routes.
-type LoginState = (AppState, OAuthFlows);
+type LoginState = (SettingsStore, OAuthFlows);
 
 /// Builds the dashboard routes for Google OAuth login.
 pub(crate) fn router(app: AppState) -> Router {
@@ -69,26 +92,26 @@ pub(crate) fn router(app: AppState) -> Router {
             "/api/providers/{id}/credentials/{credential_id}/agy/poll",
             post(agy_poll),
         )
-        .with_state((app, OAuthFlows::default()))
+        .with_state((app.settings, OAuthFlows::default()))
 }
 
 /// Starts a Google OAuth flow and optionally serves its local callback.
 // Keep the OAuth listener setup and its cleanup together.
 #[allow(clippy::too_many_lines)]
 async fn agy_start(
-    State((app, flows)): State<LoginState>,
+    State((settings, flows)): State<LoginState>,
     Path((provider_id, credential_id)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     same_origin(&headers)?;
-    require_credential(&app.settings, &provider_id, &credential_id, "agy").await?;
-    let settings = &app.settings;
-    let client_id = agy::oauth_client_id(settings).await.map_err(error)?;
+    require_credential(&settings, &provider_id, &credential_id, "agy").await?;
+    let client_id = agy::oauth_client_id(&settings).await.map_err(error)?;
     // Check configuration before starting a flow.
-    agy::oauth_client_secret(settings).await.map_err(error)?;
+    agy::oauth_client_secret(&settings).await.map_err(error)?;
     let listener_guard = flows.google_listener.clone().try_lock_owned().ok();
     let shutdown = Arc::new(tokio::sync::Notify::new());
     let state = Uuid::new_v4().to_string();
+    let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
     let mut pending = flows.pending.lock().await;
     pending.retain(|_, flow| flow.created.elapsed() < Duration::from_secs(600));
     pending.insert(
@@ -98,6 +121,7 @@ async fn agy_start(
             credential_id: credential_id.clone(),
             created: Instant::now(),
             in_flight: false,
+            verifier: verifier.secret().to_owned(),
             shutdown: shutdown.clone(),
         },
     );
@@ -111,7 +135,7 @@ async fn agy_start(
     };
     let local_callback = listener.is_some();
     if let Some(listener) = listener {
-        let callback_app = app.clone();
+        let callback_settings = settings.clone();
         let callback_shutdown = shutdown.clone();
         let callback_flows = flows.clone();
         let flow_id = state.clone();
@@ -122,7 +146,7 @@ async fn agy_start(
             let handler = axum::Router::new().route(
                 agy::OAUTH_CALLBACK_PATH,
                 axum::routing::get(move |Query(query): Query<HashMap<String, String>>| {
-                    let app = callback_app.clone();
+                    let settings = callback_settings.clone();
                     let flows = callback_flows.clone();
                     let shutdown = callback_shutdown.clone();
                     let flow_id = flow_id.clone();
@@ -146,7 +170,7 @@ async fn agy_start(
                             axum::http::HeaderValue::from_static("127.0.0.1:51123"),
                         );
                         let result = agy_finish(
-                            State((app, flows.clone())),
+                            State((settings, flows.clone())),
                             Path((provider_id, credential_id)),
                             headers,
                             Json(GoogleFinish {
@@ -177,11 +201,12 @@ async fn agy_start(
         drop(listener_guard);
     }
     let url = format!(
-        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}&access_type=offline&prompt=consent",
+        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}&access_type=offline&prompt=consent&code_challenge={}&code_challenge_method=S256",
         urlencode(&client_id),
         urlencode(agy::OAUTH_CALLBACK_URL),
         urlencode(&agy::OAUTH_SCOPES.join(" ")),
-        urlencode(&state)
+        urlencode(&state),
+        urlencode(challenge.as_str())
     );
     Ok(Json(
         json!({"id": state, "url": url, "local_callback": local_callback}),
@@ -241,15 +266,15 @@ fn parse_google_callback(callback_url: &str) -> Result<(String, String), (Status
 
 /// Validates and completes a pending Google OAuth callback.
 async fn agy_finish(
-    State((app, flows)): State<LoginState>,
+    State((settings, flows)): State<LoginState>,
     Path((provider_id, credential_id)): Path<(String, String)>,
     headers: HeaderMap,
     Json(input): Json<GoogleFinish>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     same_origin(&headers)?;
-    require_credential(&app.settings, &provider_id, &credential_id, "agy").await?;
+    require_credential(&settings, &provider_id, &credential_id, "agy").await?;
     let (state, code) = parse_google_callback(&input.callback_url)?;
-    {
+    let verifier = {
         let mut pending = flows.pending.lock().await;
         if !pending
             .get(&state)
@@ -259,14 +284,26 @@ async fn agy_finish(
         }
         match pending.get_mut(&state) {
             Some(Flow {
-                created, in_flight, ..
+                created,
+                in_flight,
+                verifier,
+                ..
             }) if created.elapsed() < Duration::from_secs(600) && !*in_flight => {
                 *in_flight = true;
+                verifier.clone()
             }
             _ => return Err(error("OAuth state is invalid or expired")),
         }
-    }
-    let result = finish_google_exchange(&app, &provider_id, &credential_id, &code).await;
+    };
+    let result = finish_google_exchange(
+        &settings,
+        &flows,
+        &provider_id,
+        &credential_id,
+        &code,
+        &verifier,
+    )
+    .await;
     complete_google(
         &flows,
         &state,
@@ -281,23 +318,28 @@ async fn agy_finish(
 
 /// Exchanges the code, discovers the project, and stores Google credentials.
 async fn finish_google_exchange(
-    app: &AppState,
+    settings: &SettingsStore,
+    flows: &OAuthFlows,
     provider_id: &str,
     credential_id: &str,
     code: &str,
+    verifier: &str,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let settings = &app.settings;
     let client_id = agy::oauth_client_id(settings).await.map_err(error)?;
     let client_secret = agy::oauth_client_secret(settings).await.map_err(error)?;
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| error(format!("Failed to create OAuth client: {e}")))?;
     let response = client
-        .post(agy::OAUTH_TOKEN_URL)
+        .post(&flows.token_url)
         .form(&[
             ("client_id", client_id.as_str()),
             ("client_secret", client_secret.as_str()),
             ("code", code),
             ("grant_type", "authorization_code"),
             ("redirect_uri", agy::OAUTH_CALLBACK_URL),
+            ("code_verifier", verifier),
         ])
         .send()
         .await
@@ -312,8 +354,19 @@ async fn finish_google_exchange(
         .json()
         .await
         .map_err(|e| error(format!("Invalid token response: {e}")))?;
+    if token.access_token.trim().is_empty()
+        || token
+            .refresh_token
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+        || token.expires_in <= 0
+    {
+        return Err(error(
+            "Google token response is missing valid offline credentials",
+        ));
+    }
     let email = match client
-        .get("https://www.googleapis.com/oauth2/v2/userinfo")
+        .get(&flows.userinfo_url)
         .bearer_auth(&token.access_token)
         .send()
         .await
@@ -325,10 +378,10 @@ async fn finish_google_exchange(
             .and_then(|v| v.get("email").and_then(|v| v.as_str()).map(str::to_string)),
         _ => None,
     };
-    let project_id = crate::provider::antigravity::login::fetch_or_onboard_project(
+    let project_id = crate::provider::antigravity::login::fetch_or_onboard_project_at(
         &client,
         &token.access_token,
-        email.as_deref(),
+        &flows.cloud_url,
     )
     .await
     .map_err(error)?;
@@ -382,13 +435,13 @@ struct GooglePoll {
 
 /// Returns pending status or consumes the completed result for a flow.
 async fn agy_poll(
-    State((app, flows)): State<LoginState>,
+    State((settings, flows)): State<LoginState>,
     Path((provider_id, credential_id)): Path<(String, String)>,
     headers: HeaderMap,
     Json(input): Json<GooglePoll>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     same_origin(&headers)?;
-    require_credential(&app.settings, &provider_id, &credential_id, "agy").await?;
+    require_credential(&settings, &provider_id, &credential_id, "agy").await?;
     let pending = flows.pending.lock().await;
     let mut results = flows.results.lock().await;
     results.retain(|_, (created, _, _, _)| created.elapsed() < Duration::from_secs(600));
@@ -425,6 +478,312 @@ async fn agy_poll(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use axum::{
+        body::{Body, to_bytes},
+        http::Request,
+        routing::put,
+    };
+    use openidconnect::PkceCodeVerifier;
+    use tower::ServiceExt;
+
+    /// Sends a request to the dashboard routes.
+    async fn request(
+        router: &Router,
+        method: &str,
+        uri: &str,
+        body: serde_json::Value,
+    ) -> (StatusCode, serde_json::Value) {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header("content-type", "application/json")
+                    .header("host", "dashboard.test")
+                    .header("origin", "http://dashboard.test")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let value = serde_json::from_slice(&bytes)
+            .unwrap_or_else(|_| json!({"error":String::from_utf8_lossy(&bytes)}));
+        (status, value)
+    }
+
+    /// Verifies the OAuth wire protocol and failed onboarding through dashboard routes.
+    #[tokio::test]
+    #[allow(clippy::too_many_lines, clippy::literal_string_with_formatting_args)]
+    async fn oauth_pkce_project_and_expiry() {
+        use crate::{
+            database::Database,
+            provider::{credentials, registry},
+        };
+        let store = SettingsStore::new(
+            Database::open(":memory:").await.unwrap(),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )
+        .await
+        .unwrap();
+        let settings = Router::new()
+            .route("/api/settings", put(crate::server::settings::put_settings))
+            .with_state(store.clone());
+        assert_eq!(
+            request(
+                &settings,
+                "PUT",
+                "/api/settings",
+                json!({"oauth_client_id":"custom-client","oauth_client_secret":"custom-secret"})
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+        assert_eq!(
+            request(
+                &registry::router(store.clone()),
+                "POST",
+                "/api/providers",
+                json!({"kind":"agy"})
+            )
+            .await
+            .0,
+            StatusCode::CREATED
+        );
+        let (status, created) = request(
+            &credentials::router(store.clone()),
+            "POST",
+            "/api/providers/agy/credentials",
+            json!({"name":"primary","weight":1,"enabled":true}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let id = created["id"].as_str().unwrap();
+        let old = Credentials {
+            access_token: "old-access".into(),
+            refresh_token: Some("old-refresh".into()),
+            project_id: "old-project".into(),
+            expires_at: None,
+            email: Some("old@example.test".into()),
+        };
+        AuthManager::save(&store, "agy", id, &old).await.unwrap();
+        let challenge = Arc::new(tokio::sync::Mutex::new(String::new()));
+        let project_exists = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let onboarding_error = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let fake = Router::new()
+            .route("/token", post({
+                let challenge = challenge.clone();
+                move |axum::Form(form): axum::Form<HashMap<String, String>>| {
+                    let challenge = challenge.clone();
+                    async move {
+                        let verifier = PkceCodeVerifier::new(form.get("code_verifier").cloned().unwrap_or_default());
+                        let valid = verifier.secret().len() >= 43 && verifier.secret().len() <= 128
+                            && PkceCodeChallenge::from_code_verifier_sha256(&verifier).as_str() == *challenge.lock().await
+                            && form.get("client_id").is_some_and(|v| v == "custom-client")
+                            && form.get("client_secret").is_some_and(|v| v == "custom-secret")
+                            && form.get("code").is_some_and(|v| v == "authorized-code")
+                            && form.get("redirect_uri").is_some_and(|v| v == agy::OAUTH_CALLBACK_URL);
+                        if valid { (StatusCode::OK, Json(json!({"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600}))) }
+                        else { (StatusCode::BAD_REQUEST, Json(json!({"error":"invalid_grant"}))) }
+                    }
+                }
+            }))
+            .route("/userinfo", axum::routing::get(|| async { Json(json!({"email":"user@example.test"})) }))
+            .route("/v1internal:loadCodeAssist", post({
+                let project_exists = project_exists.clone();
+                move || {
+                    let project_exists = project_exists.clone();
+                    async move {
+                        if project_exists.load(std::sync::atomic::Ordering::SeqCst) { Json(json!({"cloudaicompanionProject":"real-project"})) }
+                        else { Json(json!({"currentTier":{"name":"free-tier"}})) }
+                    }
+                }
+            }))
+            .route("/v1internal:onboardUser", post({
+                let onboarding_error = onboarding_error.clone();
+                move || {
+                    let onboarding_error = onboarding_error.clone();
+                    async move {
+                        if onboarding_error.load(std::sync::atomic::Ordering::SeqCst) {
+                            Json(json!({"done":true,"error":{"message":"account ineligible"}}))
+                        } else {
+                            Json(json!({"done":true}))
+                        }
+                    }
+                }
+            }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, fake).await.unwrap() });
+        let flows = OAuthFlows {
+            token_url: format!("{base}/token"),
+            userinfo_url: format!("{base}/userinfo"),
+            cloud_url: base,
+            ..OAuthFlows::default()
+        };
+        let _listener_guard = flows.google_listener.lock().await;
+        let router = Router::new()
+            .route(
+                "/api/providers/{id}/credentials/{credential_id}/agy/start",
+                post(agy_start),
+            )
+            .route(
+                "/api/providers/{id}/credentials/{credential_id}/agy/finish",
+                post(agy_finish),
+            )
+            .route(
+                "/api/providers/{id}/credentials/{credential_id}/agy/poll",
+                post(agy_poll),
+            )
+            .with_state((store.clone(), flows.clone()));
+        let start = format!("/api/providers/agy/credentials/{id}/agy/start");
+        let finish = format!("/api/providers/agy/credentials/{id}/agy/finish");
+        let poll = format!("/api/providers/agy/credentials/{id}/agy/poll");
+        let (status, flow) = request(&router, "POST", &start, json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        let state = flow["id"].as_str().unwrap();
+        let url = reqwest::Url::parse(flow["url"].as_str().unwrap()).unwrap();
+        let params: HashMap<_, _> = url.query_pairs().into_owned().collect();
+        assert_eq!(params.get("code_challenge_method").unwrap(), "S256");
+        assert_eq!(params.get("access_type").unwrap(), "offline");
+        assert!(
+            params
+                .get("scope")
+                .unwrap()
+                .contains("https://www.googleapis.com/auth/cloud-platform")
+        );
+        *challenge.lock().await = params.get("code_challenge").unwrap().clone();
+        assert_eq!(
+            request(&router, "POST", &poll, json!({"id":state})).await.1["status"],
+            "pending"
+        );
+        let callback =
+            format!("http://127.0.0.1:51123/oauth-callback?state={state}&code=authorized-code");
+        let wrong_state = "http://127.0.0.1:51123/oauth-callback?state=wrong&code=authorized-code";
+        assert_ne!(
+            request(
+                &router,
+                "POST",
+                &finish,
+                json!({"callback_url":wrong_state})
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+        let cross_origin = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(&finish)
+                    .header("content-type", "application/json")
+                    .header("host", "dashboard.test")
+                    .header("origin", "http://attacker.test")
+                    .body(Body::from(json!({"callback_url":callback}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(cross_origin.status(), StatusCode::OK);
+        assert_ne!(
+            request(&router, "POST", &finish, json!({"callback_url":callback}))
+                .await
+                .0,
+            StatusCode::OK
+        );
+        let (_, failed) = request(&router, "POST", &poll, json!({"id":state})).await;
+        assert_eq!(failed["status"], "failed");
+        assert!(failed["error"].as_str().unwrap().contains("project ID"));
+        let stored = AuthManager::load(store.clone(), "agy", id)
+            .await
+            .unwrap()
+            .unwrap()
+            .get_credentials()
+            .await
+            .unwrap();
+        assert_eq!(stored.access_token, "old-access");
+        assert_eq!(stored.refresh_token.as_deref(), Some("old-refresh"));
+        assert_eq!(stored.project_id, "old-project");
+        onboarding_error.store(true, std::sync::atomic::Ordering::SeqCst);
+        let (_, error_flow) = request(&router, "POST", &start, json!({})).await;
+        let error_state = error_flow["id"].as_str().unwrap();
+        let url = reqwest::Url::parse(error_flow["url"].as_str().unwrap()).unwrap();
+        let params: HashMap<_, _> = url.query_pairs().into_owned().collect();
+        *challenge.lock().await = params.get("code_challenge").unwrap().clone();
+        let callback = format!(
+            "http://127.0.0.1:51123/oauth-callback?state={error_state}&code=authorized-code"
+        );
+        assert_ne!(
+            request(&router, "POST", &finish, json!({"callback_url":callback}))
+                .await
+                .0,
+            StatusCode::OK
+        );
+        let (_, failed) = request(&router, "POST", &poll, json!({"id":error_state})).await;
+        assert_eq!(failed["status"], "failed");
+        assert!(
+            failed["error"]
+                .as_str()
+                .unwrap()
+                .contains("account ineligible")
+        );
+        onboarding_error.store(false, std::sync::atomic::Ordering::SeqCst);
+        project_exists.store(true, std::sync::atomic::Ordering::SeqCst);
+        let (_, flow) = request(&router, "POST", &start, json!({})).await;
+        let state = flow["id"].as_str().unwrap();
+        let url = reqwest::Url::parse(flow["url"].as_str().unwrap()).unwrap();
+        let params: HashMap<_, _> = url.query_pairs().into_owned().collect();
+        *challenge.lock().await = params.get("code_challenge").unwrap().clone();
+        let callback =
+            format!("http://127.0.0.1:51123/oauth-callback?state={state}&code=authorized-code");
+        assert_eq!(
+            request(&router, "POST", &finish, json!({"callback_url":callback}))
+                .await
+                .0,
+            StatusCode::OK
+        );
+        assert_eq!(
+            request(&router, "POST", &poll, json!({"id":state})).await.1["status"],
+            "complete"
+        );
+        assert_ne!(
+            request(&router, "POST", &finish, json!({"callback_url":callback}))
+                .await
+                .0,
+            StatusCode::OK
+        );
+        let stored = AuthManager::load(store.clone(), "agy", id)
+            .await
+            .unwrap()
+            .unwrap()
+            .get_credentials()
+            .await
+            .unwrap();
+        assert_eq!(stored.access_token, "new-access");
+        assert_eq!(stored.project_id, "real-project");
+        let (_, flow) = request(&router, "POST", &start, json!({})).await;
+        let state = flow["id"].as_str().unwrap();
+        flows.pending.lock().await.get_mut(state).unwrap().created = Instant::now()
+            .checked_sub(Duration::from_secs(601))
+            .unwrap();
+        let callback =
+            format!("http://127.0.0.1:51123/oauth-callback?state={state}&code=authorized-code");
+        assert_ne!(
+            request(&router, "POST", &finish, json!({"callback_url":callback}))
+                .await
+                .0,
+            StatusCode::OK
+        );
+        assert_ne!(
+            request(&router, "POST", &poll, json!({"id":state})).await.0,
+            StatusCode::OK
+        );
+        server.abort();
+    }
 
     #[test]
     fn flow_is_bound_to_provider_and_credential() {
@@ -433,6 +792,7 @@ mod tests {
             credential_id: "google-key".into(),
             created: Instant::now(),
             in_flight: false,
+            verifier: "test".into(),
             shutdown: Arc::new(tokio::sync::Notify::new()),
         };
         assert!(flow.belongs_to("google-one", "google-key"));
@@ -469,6 +829,7 @@ mod tests {
                     credential_id: id.into(),
                     created: Instant::now(),
                     in_flight: true,
+                    verifier: "test".into(),
                     shutdown: Arc::new(tokio::sync::Notify::new()),
                 },
             );
