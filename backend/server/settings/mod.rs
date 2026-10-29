@@ -1,18 +1,40 @@
-use crate::storage::{ProviderRecord, Secret, Setting, VirtualKey};
-use axum::extract::{Path, Request, State};
-use axum::http::{Method, StatusCode, header};
-use axum::middleware::Next;
-use axum::response::{IntoResponse, Json, Response};
+use crate::storage::{Secret, Setting, VirtualKey};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ring::{
     aead, digest,
     rand::{SecureRandom, SystemRandom},
 };
 use serde::{Deserialize, Serialize};
-use std::time::{SystemTime, UNIX_EPOCH};
 use utoipa::ToSchema;
 
 use crate::database::{Database, transaction_with_retry};
+
+/// Create a virtual key.
+mod create_key;
+/// Read dashboard settings.
+mod get_settings;
+/// List virtual keys.
+mod list_keys;
+/// Update dashboard settings.
+mod put_settings;
+/// Revoke a virtual key.
+mod revoke_key;
+/// Authenticate virtual key requests.
+mod virtual_key_auth;
+
+use create_key::__path_create_key;
+pub(super) use create_key::create_key;
+use get_settings::__path_get_settings;
+pub(crate) use get_settings::get_settings;
+use list_keys::__path_list_keys;
+pub(super) use list_keys::list_keys;
+use put_settings::__path_put_settings;
+pub(crate) use put_settings::put_settings;
+use revoke_key::__path_revoke_key;
+pub(super) use revoke_key::revoke_key;
+pub(crate) use virtual_key_auth::virtual_key_auth;
 
 /// Reserved secret name for checking the configured encryption key.
 const SENTINEL: &str = "__zero_g_encryption_key_check";
@@ -275,7 +297,6 @@ fn internal_error(err: &str) -> Response {
     tracing::error!("Settings store error: {err}");
     StatusCode::INTERNAL_SERVER_ERROR.into_response()
 }
-
 /// Dashboard-visible settings without the OAuth client secret.
 #[derive(Serialize, ToSchema)]
 pub(crate) struct SettingsResponse {
@@ -286,55 +307,6 @@ pub(crate) struct SettingsResponse {
     oauth_client_id: String,
     /// Whether an OAuth client secret is stored.
     oauth_client_secret_set: bool,
-}
-
-/// Returns current settings and whether an OAuth secret is configured.
-#[utoipa::path(
-    get,
-    path = "/api/settings",
-    operation_id = "getSettings",
-    responses(
-        (status = 200, description = "Current settings", body = SettingsResponse),
-        (status = 500, description = "Settings store error")
-    )
-)]
-pub(crate) async fn get_settings(State(store): State<SettingsStore>) -> Response {
-    /// Loads the settings and validates any stored OAuth secret.
-    async fn load(store: &SettingsStore) -> Result<SettingsResponse, String> {
-        transaction_with_retry!(store.database, |mut tx| {
-            let retention = Setting::filter_by_name("log_retention_days")
-                .first()
-                .exec(&mut tx)
-                .await?
-                .and_then(|row| row.value.parse::<u32>().ok())
-                .unwrap_or(30);
-            let client_id = Setting::filter_by_name("oauth_client_id")
-                .first()
-                .exec(&mut tx)
-                .await?
-                .map_or_else(String::new, |row| row.value);
-            let secret = Secret::filter_by_name("oauth_client_secret")
-                .first()
-                .exec(&mut tx)
-                .await?;
-            if let Some(row) = &secret
-                && let Err(err) = store.decrypt("oauth_client_secret", &row.value)
-            {
-                return Ok(Err(err));
-            }
-            tx.commit().await?;
-            Ok(Ok(SettingsResponse {
-                log_retention_days: retention,
-                oauth_client_id: client_id,
-                oauth_client_secret_set: secret.is_some(),
-            }))
-        })
-        .map_err(|e| e.to_string())?
-    }
-    match load(&store).await {
-        Ok(value) => Json(value).into_response(),
-        Err(err) => internal_error(&err),
-    }
 }
 
 /// Partial settings update supplied by the dashboard.
@@ -349,293 +321,15 @@ pub(crate) struct UpdateSettings {
     oauth_client_secret: Option<String>,
 }
 
-/// Validates and atomically applies supplied settings.
-#[utoipa::path(
-    put,
-    path = "/api/settings",
-    operation_id = "updateSettings",
-    request_body = UpdateSettings,
-    responses(
-        (status = 200, description = "Updated settings", body = SettingsResponse),
-        (status = 400, description = "Invalid log retention", body = String, content_type = "text/plain"),
-        (status = 500, description = "Settings store error")
-    )
-)]
-pub(crate) async fn put_settings(
-    State(store): State<SettingsStore>,
-    Json(input): Json<UpdateSettings>,
-) -> Response {
-    if input
-        .log_retention_days
-        .is_some_and(|days| !(1..=36500).contains(&days))
-    {
-        return (StatusCode::BAD_REQUEST, "Invalid log retention").into_response();
-    }
-    let values = [
-        ("oauth_client_id", input.oauth_client_id),
-        (
-            "log_retention_days",
-            input.log_retention_days.map(|v| v.to_string()),
-        ),
-    ];
-    let secret = match input.oauth_client_secret {
-        Some(value) if value.is_empty() => Some(None),
-        Some(value) => match store.encrypt("oauth_client_secret", &value) {
-            Ok(encrypted) => Some(Some(encrypted)),
-            Err(err) => return internal_error(&err),
-        },
-        None => None,
-    };
-    let result = transaction_with_retry!(store.database, |mut tx| {
-        for (name, value) in &values {
-            if let Some(value) = value {
-                Setting::upsert_by_name(*name)
-                    .value(value.as_str())
-                    .exec(&mut tx)
-                    .await?;
-            }
-        }
-        if let Some(value) = &secret {
-            if let Some(encrypted) = value {
-                Secret::upsert_by_name("oauth_client_secret")
-                    .value(encrypted.clone())
-                    .exec(&mut tx)
-                    .await?;
-            } else {
-                Secret::delete_by_name(&mut tx, "oauth_client_secret").await?;
-            }
-        }
-        tx.commit().await?;
-        Ok(())
-    });
-    if let Err(err) = result {
-        return internal_error(&err.to_string());
-    }
-    get_settings(State(store)).await
-}
-
-/// Lists virtual key metadata without exposing key tokens.
-#[utoipa::path(get, path = "/api/keys", operation_id = "listKeys",
-    responses((status = 200, body = KeyList), (status = 500, description = "Settings store error")))]
-pub(super) async fn list_keys(State(store): State<SettingsStore>) -> Response {
-    /// Loads and decodes stored virtual key metadata.
-    async fn list(store: &SettingsStore) -> Result<Vec<KeyInfo>, String> {
-        let rows = VirtualKey::all()
-            .order_by((
-                VirtualKey::fields().created_at().desc(),
-                VirtualKey::fields().id().asc(),
-            ))
-            .exec(&mut (*store.database.db).clone())
-            .await
-            .map_err(|e| e.to_string())?;
-        let mut keys = Vec::new();
-        for row in rows {
-            keys.push(KeyInfo {
-                id: row.id,
-                name: row.name,
-                providers: serde_json::from_str(&row.providers).map_err(|e| e.to_string())?,
-                models: serde_json::from_str(&row.models).map_err(|e| e.to_string())?,
-                created_at: row.created_at,
-            });
-        }
-        Ok(keys)
-    }
-    match list(&store).await {
-        Ok(keys) => Json(KeyList { keys }).into_response(),
-        Err(err) => internal_error(&err),
-    }
-}
-
-/// Creates a virtual key and returns its token once.
-#[utoipa::path(post, path = "/api/keys", operation_id = "createKey",
-    request_body = CreateKey,
-    responses((status = 201, body = CreatedKey),
-        (status = 400, description = "Invalid key", body = String, content_type = "text/plain"),
-        (status = 500, description = "Settings store error")))]
-pub(super) async fn create_key(
-    State(store): State<SettingsStore>,
-    Json(input): Json<CreateKey>,
-) -> Response {
-    if input.name.trim().is_empty() || input.models.iter().any(|m| m.trim().is_empty()) {
-        return (
-            StatusCode::BAD_REQUEST,
-            "Invalid key name, provider, or model",
-        )
-            .into_response();
-    }
-    let mut random = [0u8; 32];
-    if SystemRandom::new().fill(&mut random).is_err() {
-        return internal_error("Secure randomness unavailable");
-    }
-    let token = format!(
-        "zg-{}",
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(random)
-    );
-    let hash = digest::digest(&digest::SHA256, token.as_bytes());
-    let id = uuid::Uuid::new_v4().to_string();
-    let created_at = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
-    let providers = match serde_json::to_string(&input.providers) {
-        Ok(v) => v,
-        Err(e) => return internal_error(&e.to_string()),
-    };
-    let models = match serde_json::to_string(&input.models) {
-        Ok(v) => v,
-        Err(e) => return internal_error(&e.to_string()),
-    };
-    let result = transaction_with_retry!(store.database, |mut tx| {
-        for provider_id in &input.providers {
-            let row = ProviderRecord::filter_by_id(provider_id.as_str())
-                .first()
-                .exec(&mut tx)
-                .await?;
-            if !matches!(row, Some(row) if !row.deleted) {
-                return Ok(false);
-            }
-        }
-        toasty::create!(VirtualKey {
-            id: id.clone(),
-            name: input.name.clone(),
-            key_hash: hash.as_ref().to_vec(),
-            providers: providers.clone(),
-            models: models.clone(),
-            created_at
-        })
-        .exec(&mut tx)
-        .await?;
-        tx.commit().await?;
-        Ok(true)
-    });
-    match result {
-        Ok(true) => (
-            StatusCode::CREATED,
-            Json(CreatedKey {
-                id,
-                name: input.name,
-                providers: input.providers,
-                models: input.models,
-                created_at,
-                key: token,
-            }),
-        )
-            .into_response(),
-        Ok(false) => (StatusCode::BAD_REQUEST, "Invalid key provider").into_response(),
-        Err(err) => internal_error(&err.to_string()),
-    }
-}
-
-/// Deletes a virtual key by ID.
-#[utoipa::path(delete, path = "/api/keys/{id}", operation_id = "revokeKey",
-    params(("id" = String, Path, description = "Virtual key ID")),
-    responses((status = 204, description = "Key revoked"),
-        (status = 404, description = "Key not found"), (status = 500, description = "Settings store error")))]
-pub(super) async fn revoke_key(
-    State(store): State<SettingsStore>,
-    Path(id): Path<String>,
-) -> Response {
-    let result = transaction_with_retry!(store.database, |mut tx| {
-        let Some(row) = VirtualKey::filter_by_id(id.as_str())
-            .first()
-            .exec(&mut tx)
-            .await?
-        else {
-            return Ok(false);
-        };
-        row.delete().exec(&mut tx).await?;
-        tx.commit().await?;
-        Ok(true)
-    });
-    match result {
-        Ok(true) => StatusCode::NO_CONTENT.into_response(),
-        Ok(false) => StatusCode::NOT_FOUND.into_response(),
-        Err(err) => internal_error(&err.to_string()),
-    }
-}
-
-/// Authenticates a virtual key and attaches provider and permission context.
-pub(crate) async fn virtual_key_auth(
-    State((store, kind)): State<(SettingsStore, &'static str)>,
-    Path(id): Path<String>,
-    mut req: Request,
-    next: Next,
-) -> Response {
-    if req.method() == Method::OPTIONS {
-        return next.run(req).await;
-    }
-    let provider = match crate::provider::registry::get(&store.database, &id).await {
-        Ok(Some(provider)) if provider.kind == kind => provider,
-        Ok(_) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(super::error_body(
-                    "Provider not found",
-                    "invalid_request_error",
-                    Some("provider_not_found"),
-                )),
-            )
-                .into_response();
-        }
-        Err(err) => return internal_error(&err),
-    };
-    let token = req
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|h| h.split_once(' '))
-        .filter(|(scheme, token)| scheme.eq_ignore_ascii_case("bearer") && !token.trim().is_empty())
-        .map(|(_, token)| token.trim());
-    let Some(token) = token else {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(super::error_body(
-                "A virtual key is required",
-                "authentication_error",
-                None,
-            )),
-        )
-            .into_response();
-    };
-    match store.permissions(token).await {
-        Ok(Some(permissions))
-            if permissions.providers.is_empty()
-                || permissions.providers.iter().any(|p| p == &id) =>
-        {
-            let session =
-                crate::provider::common::session::RequestSession::new(req.headers(), token, &id);
-            req.extensions_mut().insert(session);
-            req.extensions_mut().insert(provider);
-            req.extensions_mut().insert(permissions);
-            next.run(req).await
-        }
-        Ok(Some(_)) => (
-            StatusCode::FORBIDDEN,
-            Json(super::error_body(
-                "Virtual key does not permit this provider",
-                "permission_error",
-                None,
-            )),
-        )
-            .into_response(),
-        Ok(None) => (
-            StatusCode::UNAUTHORIZED,
-            Json(super::error_body(
-                "Invalid virtual key",
-                "authentication_error",
-                None,
-            )),
-        )
-            .into_response(),
-        Err(err) => internal_error(&err),
-    }
-}
-
 #[cfg(test)]
 /// Exercises settings persistence, encryption, and virtual key authorization.
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::storage::ProviderRecord;
+    use axum::extract::{Path, Request, State};
+    use axum::http::header;
+    use axum::response::Json;
     use axum::{
         Extension, Router,
         body::{Body, to_bytes},
