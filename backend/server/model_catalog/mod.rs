@@ -2,10 +2,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use axum::{
-    Json, Router,
-    extract::State,
-    http::StatusCode,
-    response::{IntoResponse, Response},
+    Router,
     routing::{get, post},
 };
 use futures_util::future::join_all;
@@ -17,6 +14,14 @@ use crate::openai::Model;
 use crate::provider::{catalog::discover, registry};
 use crate::server::{AppState, settings::SettingsStore};
 use crate::storage::Setting;
+
+/// Read the current catalog.
+mod get;
+/// Refresh the catalog on demand.
+mod refresh;
+
+use get::__path_get_catalog;
+use refresh::__path_post_refresh;
 
 /// Settings key for the persisted discovery snapshot.
 const CACHE_KEY: &str = "model_catalog";
@@ -439,53 +444,11 @@ fn enrich_catalog(catalog: CachedCatalog, data: &super::model_setting::ModelData
     }
 }
 
-/// Return the current reconciled catalog.
-#[utoipa::path(get, path = "/api/model-catalog", operation_id = "getModelCatalog",
-    responses((status = 200, body = ModelCatalog),
-        (status = 500, description = "Catalog load failed", body = String, content_type = "text/plain")))]
-async fn get_catalog(State(state): State<AppState>) -> Response {
-    let result = match load(&state.settings).await {
-        Ok(catalog) => Ok(normalize_catalog(&state.settings, catalog).await),
-        Err(error) => Err(error),
-    };
-    result.map_or_else(
-        |_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to load model catalog",
-            )
-                .into_response()
-        },
-        |catalog| Json(catalog).into_response(),
-    )
-}
-
-/// Refresh the catalog on demand and return the result.
-#[utoipa::path(post, path = "/api/model-catalog/refresh", operation_id = "refreshModelCatalog",
-    responses((status = 200, body = ModelCatalog),
-        (status = 500, description = "Catalog refresh failed", body = String, content_type = "text/plain")))]
-async fn post_refresh(State(state): State<AppState>) -> Response {
-    let result = match refresh_catalog(&state).await {
-        Ok(catalog) => Ok(normalize_catalog(&state.settings, catalog).await),
-        Err(error) => Err(error),
-    };
-    result.map_or_else(
-        |_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to refresh model catalog",
-            )
-                .into_response()
-        },
-        |catalog| Json(catalog).into_response(),
-    )
-}
-
 /// Build dashboard routes for catalog access and refresh.
 pub(crate) fn router(state: AppState) -> Router {
     Router::new()
-        .route("/api/model-catalog", get(get_catalog))
-        .route("/api/model-catalog/refresh", post(post_refresh))
+        .route("/api/model-catalog", get(get::get_catalog))
+        .route("/api/model-catalog/refresh", post(refresh::post_refresh))
         .with_state(state)
 }
 
@@ -497,7 +460,7 @@ mod tests {
     use crate::database::Database;
     use axum::{
         body::Body,
-        http::{Request, header},
+        http::{Request, StatusCode, header},
     };
     use serde_json::Value;
     use serde_json::json;
