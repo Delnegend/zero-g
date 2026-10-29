@@ -1335,7 +1335,14 @@ mod tests {
     async fn tool_calls_round_trip_without_changing_arguments() {
         let sse = concat!(
             "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"read\"}}\n\n",
+            "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"id\":\"fc_2\",\"call_id\":\"call_2\",\"name\":\"grep\"}}\n\n",
+            "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"delta\":\"{\\\"path\\\":\"}\n\n",
+            "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_2\",\"delta\":\"{\\\"pattern\\\":\\\"foo\\\"\"}\n\n",
+            "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"delta\":\"\\\"/tmp/a\\\"}\"}\n\n",
+            "data: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_2\",\"arguments\":\"{\\\"pattern\\\":\\\"foo\\\",\\\"path\\\":\\\"/tmp\\\"}\"}\n\n",
+            "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"function_call\",\"id\":\"fc_2\",\"call_id\":\"call_2\",\"name\":\"grep\",\"arguments\":\"{\\\"pattern\\\":\\\"foo\\\",\\\"path\\\":\\\"/tmp\\\"}\"}}\n\n",
             "data: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_1\",\"arguments\":\"{\\\"path\\\":\\\"/tmp/a\\\"}\"}\n\n",
+            "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"/tmp/a\\\"}\"}}\n\n",
             "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n",
         );
         let (client, mut requests) = fake_client(sse).await;
@@ -1372,9 +1379,54 @@ mod tests {
                 .unwrap(),
         )
         .await;
-        assert!(stream.contains("call_1"));
-        assert!(stream.contains("tool_calls"));
-        assert!(stream.contains("[DONE]"));
+        let mut calls = std::collections::BTreeMap::<u64, (String, String, String)>::new();
+        let mut done = false;
+        for frame in stream.split("\n\n") {
+            for line in frame.lines() {
+                let Some(data) = line.strip_prefix("data:") else {
+                    continue;
+                };
+                let data = data.trim_start();
+                if data == "[DONE]" {
+                    done = true;
+                    continue;
+                }
+                let chunk: Value = serde_json::from_str(data).unwrap();
+                if let Some(tool_calls) = chunk["choices"][0]["delta"]["tool_calls"].as_array() {
+                    for tool_call in tool_calls {
+                        let index = tool_call["index"].as_u64().unwrap();
+                        let call = calls.entry(index).or_default();
+                        if let Some(id) = tool_call["id"].as_str() {
+                            call.0.push_str(id);
+                        }
+                        if let Some(name) = tool_call["function"]["name"].as_str() {
+                            call.1.push_str(name);
+                        }
+                        if let Some(arguments) = tool_call["function"]["arguments"].as_str() {
+                            call.2.push_str(arguments);
+                        }
+                    }
+                }
+            }
+        }
+        assert!(done);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(
+            calls.get(&0),
+            Some(&(
+                "call_1".into(),
+                "read".into(),
+                "{\"path\":\"/tmp/a\"}".into()
+            ))
+        );
+        assert_eq!(
+            calls.get(&1),
+            Some(&(
+                "call_2".into(),
+                "grep".into(),
+                "{\"pattern\":\"foo\",\"path\":\"/tmp\"}".into()
+            ))
+        );
     }
 
     /// Responses history keeps opaque reasoning and pairs repaired tool IDs.
