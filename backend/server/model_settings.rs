@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use axum::{
@@ -343,6 +343,8 @@ struct CatalogModels {
     ids: HashSet<String>,
     /// Pairs of provider identifier or kind and model identifier.
     provider_models: HashSet<(String, String)>,
+    /// Datasheet keys for Antigravity's reference API prices and their owners.
+    reference_keys: HashMap<String, &'static str>,
 }
 
 impl CatalogModels {
@@ -355,6 +357,24 @@ impl CatalogModels {
                     for model in models {
                         if let Some(id) = model.get("id").and_then(Value::as_str) {
                             result.ids.insert(id.to_owned());
+                            if provider.get("kind").and_then(Value::as_str) == Some("agy") {
+                                if id.starts_with("gemini-") {
+                                    for owner in ["gemini", "vertex_ai"] {
+                                        result
+                                            .reference_keys
+                                            .insert(format!("{owner}/{id}"), owner);
+                                        result
+                                            .reference_keys
+                                            .insert(format!("{owner}/{id}-preview"), owner);
+                                    }
+                                } else if id.starts_with("claude-") {
+                                    let base = id.strip_suffix("-thinking").unwrap_or(id);
+                                    result.reference_keys.insert(base.to_owned(), "anthropic");
+                                    result
+                                        .reference_keys
+                                        .insert(format!("anthropic/{base}"), "anthropic");
+                                }
+                            }
                             for field in ["id", "kind"] {
                                 if let Some(name) = provider.get(field).and_then(Value::as_str) {
                                     result
@@ -373,6 +393,13 @@ impl CatalogModels {
     /// Match either the sheet key or its provider and base model.
     fn matches(&self, key: &str, value: &Value) -> bool {
         if self.ids.contains(key) {
+            return true;
+        }
+        if self
+            .reference_keys
+            .get(key)
+            .is_some_and(|owner| value.get("provider").and_then(Value::as_str) == Some(*owner))
+        {
             return true;
         }
         match (
@@ -656,6 +683,30 @@ mod tests {
         assert!(filtered.get("openai/gpt-test").is_some());
         assert!(filter_datasheet("[]", &models).is_err());
         assert!(filter_datasheet("{} trailing", &models).is_err());
+    }
+
+    /// Antigravity reference prices survive filtering without admitting unrelated models.
+    #[test]
+    fn retains_antigravity_reference_prices() {
+        let models = CatalogModels::from_catalog(&json!({
+            "providers": [{"id": "agy", "kind": "agy", "models": [
+                {"id": "gemini-3-pro"},
+                {"id": "claude-sonnet-4-6-thinking"}
+            ]}]
+        }));
+        let sheet = r#"{
+            "gemini/gemini-3-pro-preview": {"provider":"gemini","base_model":"gemini-3-pro","input_cost_per_token":0.000002},
+            "vertex_ai/gemini-3-pro-preview": {"provider":"vertex_ai","base_model":"gemini-3-pro"},
+            "claude-sonnet-4-6": {"provider":"anthropic","input_cost_per_token":0.000003},
+            "gemini/gemini-3-flash-preview": {"provider":"gemini","base_model":"gemini-3-flash"},
+            "vertex_ai/gemini-3-pro": {"provider":"other"}
+        }"#;
+        let filtered = filter_datasheet(sheet, &models).unwrap();
+        assert!(filtered.get("gemini/gemini-3-pro-preview").is_some());
+        assert!(filtered.get("vertex_ai/gemini-3-pro-preview").is_some());
+        assert!(filtered.get("claude-sonnet-4-6").is_some());
+        assert!(filtered.get("gemini/gemini-3-flash-preview").is_none());
+        assert!(filtered.get("vertex_ai/gemini-3-pro").is_none());
     }
 
     /// Reject stale downloads without replacing the cached pair.
