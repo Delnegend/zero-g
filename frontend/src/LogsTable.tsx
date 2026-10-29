@@ -9,6 +9,7 @@ import {
   type ColumnDef,
   type SortingState,
 } from "@tanstack/react-table";
+import { formatDistanceToNow } from "date-fns";
 import { ArrowUpDown, ChevronLeft, ChevronRight, Search } from "lucide-react";
 import type { Log } from "./App";
 import { Button } from "./components/ui/button";
@@ -20,6 +21,13 @@ import {
   PaginationItem,
 } from "./components/ui/pagination";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./components/ui/select";
+import {
   Table,
   TableBody,
   TableCell,
@@ -29,10 +37,49 @@ import {
 } from "./components/ui/table";
 
 const number = new Intl.NumberFormat();
+const sortOptions = [
+  { value: "recent", label: "Recent first" },
+  { value: "created_at:desc", label: "Time: newest" },
+  { value: "created_at:asc", label: "Time: oldest" },
+  { value: "model:asc", label: "Model: A–Z" },
+  { value: "model:desc", label: "Model: Z–A" },
+  { value: "status:asc", label: "Status: low to high" },
+  { value: "status:desc", label: "Status: high to low" },
+  { value: "latency_ms:asc", label: "Latency: low to high" },
+  { value: "latency_ms:desc", label: "Latency: high to low" },
+  { value: "path:asc", label: "Path: A–Z" },
+  { value: "path:desc", label: "Path: Z–A" },
+];
 
 function formatDate(value: number): string {
   const date = new Date(value * 1000);
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+}
+
+function relativeDate(value: number): string {
+  const date = new Date(value * 1000);
+  return Number.isNaN(date.getTime())
+    ? "Unknown time"
+    : formatDistanceToNow(date, { addSuffix: true });
+}
+
+function requestType(path: string): string {
+  if (path.endsWith("/chat/completions")) return "Chat completions";
+  if (path.endsWith("/responses")) return "Responses";
+  return path;
+}
+
+function tokenCount(log: Log): string {
+  if (log.input_tokens == null && log.output_tokens == null) return "Unknown";
+  return `${log.input_tokens == null ? "?" : number.format(log.input_tokens)} in / ${log.output_tokens == null ? "?" : number.format(log.output_tokens)} out`;
+}
+
+function statusColor(status: number): string {
+  return status >= 400
+    ? "bg-destructive"
+    : status >= 200
+      ? "bg-teal-500"
+      : "bg-muted-foreground";
 }
 
 export function LogsTable({
@@ -47,9 +94,36 @@ export function LogsTable({
   const columns = useMemo<ColumnDef<Log>[]>(
     () => [
       {
+        id: "indicator",
+        header: () => <span className="sr-only">Status indicator</span>,
+        enableSorting: false,
+        cell: ({ row }) => (
+          <span
+            aria-hidden="true"
+            className={`block h-6 w-1 rounded-sm ${statusColor(row.original.status)}`}
+          />
+        ),
+      },
+      {
         accessorKey: "created_at",
         header: "Time",
-        cell: ({ row }) => formatDate(row.original.created_at),
+        cell: ({ row }) => (
+          <button
+            type="button"
+            data-log-open
+            aria-label={`View request ${row.original.id}`}
+            aria-haspopup="dialog"
+            className="flex flex-col rounded-sm text-left leading-tight focus-visible:outline-2 focus-visible:outline-ring"
+            onClick={(event) => onSelect(row.original.id, event.currentTarget)}
+          >
+            <span className="text-xs tabular-nums">
+              {formatDate(row.original.created_at)}
+            </span>
+            <span className="text-[11px] text-muted-foreground">
+              {relativeDate(row.original.created_at)}
+            </span>
+          </button>
+        ),
       },
       {
         accessorKey: "model",
@@ -65,9 +139,14 @@ export function LogsTable({
       },
       {
         accessorKey: "path",
-        header: "Path",
+        header: "Type",
         cell: ({ row }) => (
-          <span className="font-mono text-xs">{row.original.path}</span>
+          <span
+            title={row.original.path}
+            className="inline-flex max-w-48 truncate rounded-sm bg-muted px-1.5 py-1 font-mono text-[11px] font-medium uppercase"
+          >
+            {requestType(row.original.path)}
+          </span>
         ),
       },
       {
@@ -87,19 +166,13 @@ export function LogsTable({
         cell: ({ row }) => `${number.format(row.original.latency_ms)} ms`,
       },
       {
-        id: "details",
-        header: () => <span className="sr-only">Details</span>,
+        id: "tokens",
+        header: "Tokens",
         enableSorting: false,
         cell: ({ row }) => (
-          <Button
-            variant="outline"
-            size="sm"
-            aria-label={`View request ${row.original.id}`}
-            aria-haspopup="dialog"
-            onClick={(event) => onSelect(row.original.id, event.currentTarget)}
-          >
-            View
-          </Button>
+          <span className="text-xs tabular-nums">
+            {tokenCount(row.original)}
+          </span>
         ),
       },
     ],
@@ -163,33 +236,36 @@ export function LogsTable({
         </div>
       </div>
       <div className="px-5 pt-4 sm:hidden">
-        <label className="flex items-center gap-3 text-sm">
-          Sort by
-          <select
-            className="min-w-0 rounded-md border border-input bg-background px-2 py-1 text-foreground"
+        <div className="flex items-center gap-3 text-sm">
+          <label htmlFor="logs-sort">Sort by</label>
+          <Select
+            items={sortOptions}
             value={
               sorting.length
                 ? `${sorting[0].id}:${sorting[0].desc ? "desc" : "asc"}`
-                : ""
+                : "recent"
             }
-            onChange={(event) => {
-              const [id, direction] = event.target.value.split(":");
-              setSorting(id ? [{ id, desc: direction === "desc" }] : []);
+            onValueChange={(value) => {
+              if (!value || value === "recent") {
+                setSorting([]);
+                return;
+              }
+              const [id, direction] = value.split(":");
+              setSorting([{ id, desc: direction === "desc" }]);
             }}
           >
-            <option value="">Recent first</option>
-            <option value="created_at:desc">Time: newest</option>
-            <option value="created_at:asc">Time: oldest</option>
-            <option value="model:asc">Model: A–Z</option>
-            <option value="model:desc">Model: Z–A</option>
-            <option value="status:asc">Status: low to high</option>
-            <option value="status:desc">Status: high to low</option>
-            <option value="latency_ms:asc">Latency: low to high</option>
-            <option value="latency_ms:desc">Latency: high to low</option>
-            <option value="path:asc">Path: A–Z</option>
-            <option value="path:desc">Path: Z–A</option>
-          </select>
-        </label>
+            <SelectTrigger id="logs-sort" className="min-w-0">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {sortOptions.map(({ value, label }) => (
+                <SelectItem key={value} value={value}>
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
       <div className="sm:hidden">
         {rows.map((row) => {
@@ -197,8 +273,12 @@ export function LogsTable({
           return (
             <article
               key={row.id}
-              className="min-w-0 border-b p-5 last:border-0"
+              className="relative min-w-0 border-b p-4 pl-6 last:border-0"
             >
+              <span
+                aria-hidden="true"
+                className={`absolute top-4 bottom-4 left-3 w-1 rounded-sm ${statusColor(log.status)}`}
+              />
               <div className="flex min-w-0 items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="break-all font-medium">{log.model}</p>
@@ -216,12 +296,18 @@ export function LogsTable({
                   View
                 </Button>
               </div>
-              <p className="mt-3 break-all font-mono text-xs text-muted-foreground">
-                {log.path}
+              <p
+                title={log.path}
+                className="mt-3 inline-block max-w-full break-all rounded-sm bg-muted px-1.5 py-1 text-[11px] font-medium uppercase"
+              >
+                {requestType(log.path)}
               </p>
               <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                 <span className="text-muted-foreground">
                   {formatDate(log.created_at)}
+                  <span className="block text-[11px]">
+                    {relativeDate(log.created_at)}
+                  </span>
                 </span>
                 <span
                   className={`rounded-md px-2 py-1 font-medium ${log.status >= 400 ? "bg-destructive/10 text-destructive" : "bg-muted text-foreground"}`}
@@ -229,13 +315,14 @@ export function LogsTable({
                   {log.status}
                 </span>
                 <span>{number.format(log.latency_ms)} ms</span>
+                <span>{tokenCount(log)}</span>
               </div>
             </article>
           );
         })}
       </div>
       <div className="hidden min-w-0 overflow-x-auto sm:block">
-        <Table className="w-full min-w-[720px] text-left text-sm">
+        <Table className="w-full min-w-[850px] text-left text-sm">
           <TableHeader className="border-b text-xs text-muted-foreground">
             {table.getHeaderGroups().map((group) => (
               <TableRow key={group.id}>
@@ -283,12 +370,24 @@ export function LogsTable({
             {rows.map((row) => (
               <TableRow
                 key={row.id}
-                className="border-b last:border-0 hover:bg-muted/50"
+                className="cursor-pointer border-b last:border-0 hover:bg-muted/50"
+                onClick={(event) => {
+                  if ((event.target as HTMLElement).closest("button")) return;
+                  const trigger =
+                    event.currentTarget.querySelector<HTMLButtonElement>(
+                      "[data-log-open]",
+                    );
+                  if (trigger) onSelect(row.original.id, trigger);
+                }}
               >
                 {row.getVisibleCells().map((cell) => (
                   <TableCell
                     key={cell.id}
-                    className={`px-5 py-4 ${cell.column.id === "created_at" ? "whitespace-nowrap text-muted-foreground" : cell.column.id === "latency_ms" ? "whitespace-nowrap" : ""}`}
+                    className={
+                      cell.column.id === "indicator"
+                        ? "w-1 px-3 py-1.5"
+                        : "px-4 py-1.5"
+                    }
                   >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </TableCell>
