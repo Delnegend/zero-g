@@ -18,7 +18,7 @@ For a systemd user service, create `~/.config/systemd/user/zero-g.service`, adju
 
 ```ini
 [Unit]
-Description=zero-g proxy
+Description=zero-g AI gateway
 After=network.target
 
 [Service]

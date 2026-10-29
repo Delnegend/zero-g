@@ -122,7 +122,7 @@ async fn init_state(settings: SettingsStore, logs: LogStore) -> Result<AppState,
 
 /// Logs the listening address and inference route format.
 fn log_endpoints(addr: SocketAddr) {
-    info!("zero-g multi-provider proxy running at http://{addr}");
+    info!("zero-g AI gateway running at http://{addr}");
     info!("  Inference routes: http://{addr}/{{kind}}/{{id}}/v1");
     info!("  Inference routes require a virtual key");
 }

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "zero-g",
-    "description": "OpenAI-compatible proxy for Google Antigravity subscriptions",
+    "description": "OpenAI-compatible AI gateway for multiple providers",
     "license": {
       "name": "MIT OR Apache-2.0",
       "identifier": "MIT OR Apache-2.0"

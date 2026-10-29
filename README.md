@@ -2,7 +2,7 @@
 
 # zero-g
 
-**OpenAI-compatible proxy for Google Antigravity and OpenAI Codex subscriptions.**
+**OpenAI-compatible AI gateway for multiple providers.**
 
 [![CI](https://img.shields.io/github/actions/workflow/status/Delnegend/zero-g/ci.yml?branch=main&style=flat-square)](https://github.com/Delnegend/zero-g/actions)
 [![Release](https://img.shields.io/github/v/release/Delnegend/zero-g?style=flat-square)](https://github.com/Delnegend/zero-g/releases)
