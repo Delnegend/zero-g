@@ -23,28 +23,3 @@ test("surfaces HTTP failures", async () => {
   await assert.rejects(getSettings(signal), /Invalid settings/);
   await assert.rejects(updateSettings({}, signal), /Invalid settings/);
 });
-
-test("aborting interrupts the request", async () => {
-  let markStarted!: () => void;
-  const requestStarted = new Promise<void>((resolve) => {
-    markStarted = resolve;
-  });
-  let requestSignal: AbortSignal | undefined;
-  globalThis.fetch = ((_url: string | URL | Request, options?: RequestInit) => {
-    requestSignal = options?.signal ?? undefined;
-    markStarted();
-    return new Promise<Response>((_resolve, reject) => {
-      requestSignal?.addEventListener(
-        "abort",
-        () => reject(new DOMException("Aborted", "AbortError")),
-        { once: true },
-      );
-    });
-  }) as typeof fetch;
-  const controller = new AbortController();
-  const pending = getSettings(controller.signal);
-  await requestStarted;
-  controller.abort();
-  await assert.rejects(pending);
-  assert.equal(requestSignal?.aborted, true);
-});

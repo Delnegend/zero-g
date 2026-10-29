@@ -65,7 +65,7 @@ check:
     just lint
     just frontend-build
     just api-check
-    cd frontend && bun test src/server/api/settings.test.ts src/RequestBody.test.tsx
+    cd frontend && bun test src
     cargo fmt --check
     cargo clippy --all-targets -- -D warnings
     cargo test
@@ -77,6 +77,7 @@ fmt:
 
 # Run tests
 test: frontend-build
+    cd frontend && bun test src
     cargo test
 
 # Build release binary

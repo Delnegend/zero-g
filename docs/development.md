@@ -52,6 +52,8 @@ just fmt
 just build
 ```
 
+Both `just test` and `just check` discover frontend tests under `frontend/src/` and run the Rust test suite.
+
 `just check-dependencies` ensures the OSV exception for `rsa 0.10.0-rc.19` remains limited to Toasty's unused MySQL driver. If that version enters the build, remove the exception in `osv-scanner.toml` and reassess its security advisory.
 
 `osv-scanner.toml` contains temporary, version-specific OIDC and shadcn tooling dependency exceptions through 2026-11-28. Each suppresses all OSV findings for that exact package version, not only the named advisory; review raw findings and dependency usage before renewing. For `block-buffer 0.10.4`, the source advisory lists versions starting at 0.11.0 while the OSV record starts at 0; recheck both before renewal. `deepmerge` is used by shadcn's development tool and is not included in the built dashboard.
