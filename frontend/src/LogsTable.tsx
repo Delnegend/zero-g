@@ -1,11 +1,18 @@
 import { useMemo, useState } from "react";
 import {
   flexRender,
-  getCoreRowModel,
-  getFilteredRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
-  useReactTable,
+  tableFeatures,
+  columnFilteringFeature,
+  columnVisibilityFeature,
+  globalFilteringFeature,
+  rowPaginationFeature,
+  rowSortingFeature,
+  createFilteredRowModel,
+  createPaginatedRowModel,
+  createSortedRowModel,
+  sortFn_alphanumeric,
+  sortFn_text,
+  useTable,
   type ColumnDef,
   type SortingState,
 } from "@tanstack/react-table";
@@ -35,6 +42,18 @@ import {
   TableHeader,
   TableRow,
 } from "./components/ui/table";
+
+const features = tableFeatures({
+  columnFilteringFeature,
+  columnVisibilityFeature,
+  globalFilteringFeature,
+  rowSortingFeature,
+  rowPaginationFeature,
+  filteredRowModel: createFilteredRowModel(),
+  sortedRowModel: createSortedRowModel(),
+  paginatedRowModel: createPaginatedRowModel(),
+  sortFns: { alphanumeric: sortFn_alphanumeric, text: sortFn_text },
+});
 
 const number = new Intl.NumberFormat();
 const sortOptions = [
@@ -91,7 +110,7 @@ export function LogsTable({
 }) {
   const [query, setQuery] = useState("");
   const [sorting, setSorting] = useState<SortingState>([]);
-  const columns = useMemo<ColumnDef<Log>[]>(
+  const columns = useMemo<ColumnDef<typeof features, Log>[]>(
     () => [
       {
         id: "indicator",
@@ -178,7 +197,8 @@ export function LogsTable({
     ],
     [onSelect],
   );
-  const table = useReactTable({
+  const table = useTable({
+    features,
     data: logs,
     columns,
     initialState: { pagination: { pageIndex: 0, pageSize: 20 } },
@@ -200,14 +220,10 @@ export function LogsTable({
           .includes(term),
       );
     },
-    getCoreRowModel: getCoreRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
   });
   const rows = table.getRowModel().rows;
   const total = table.getFilteredRowModel().rows.length;
-  const { pageIndex, pageSize } = table.getState().pagination;
+  const { pageIndex, pageSize } = table.state.pagination;
 
   return (
     <Card aria-labelledby="logs-heading" className="min-w-0 py-0">
