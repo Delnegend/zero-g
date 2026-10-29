@@ -172,7 +172,7 @@ async fn bind_and_serve(
 
 /// Configures the listener, background tasks, and provider process.
 async fn run_server(settings: SettingsStore, logs: LogStore) -> Result<(), ServerError> {
-    let bind = std::env::var("ZERO_G_BIND")
+    let bind: String = std::env::var("ZERO_G_BIND")
         .ok()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "127.0.0.1:8080".into());
