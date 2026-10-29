@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::openai::{ModelEntry, ModelListResponse};
+use crate::openai::{Model, ModelListResponse};
 use crate::provider::codex::auth::{CODEX_BASE_URL, CODEX_CLIENT_VERSION, CodexCredentials};
 use crate::provider::common::errors::UpstreamError;
 use crate::provider::registry::Provider;
@@ -55,28 +55,23 @@ struct CodexReasoningLevel {
 pub(crate) async fn fetch_codex_models(
     creds: &CodexCredentials,
 ) -> Result<ModelListResponse, UpstreamError> {
-    Ok(fetch_models(creds, false).await?.0)
+    fetch_models(creds).await
 }
 
 /// Fetches normalized models and catalog metadata through the provider credential pool.
 pub(crate) async fn fetch_catalog_pool(
     state: &AppState,
     provider: &Provider,
-) -> Result<(ModelListResponse, Vec<Value>), String> {
+) -> Result<ModelListResponse, String> {
     crate::provider::codex::routes::with_pool(state, provider, |creds| async move {
-        fetch_models(&creds, true).await
+        fetch_models(&creds).await
     })
     .await
     .map_err(|e| e.message)
 }
 
-/// Fetches and normalizes an upstream model list, optionally retaining catalog metadata.
-// Fetch and normalize one upstream response together so both views stay consistent.
-#[allow(clippy::too_many_lines)]
-async fn fetch_models(
-    creds: &CodexCredentials,
-    include_catalog: bool,
-) -> Result<(ModelListResponse, Vec<Value>), UpstreamError> {
+/// Fetches and normalizes an upstream model list, retaining provider metadata.
+async fn request_models(creds: &CodexCredentials) -> Result<CodexModelsResponse, UpstreamError> {
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
@@ -112,26 +107,46 @@ async fn fetch_models(
         });
     }
 
-    let parsed: CodexModelsResponse = resp
-        .json()
+    resp.json()
         .await
-        .map_err(|e| format!("Failed to parse Codex models response: {e}"))?;
+        .map_err(|e| format!("Failed to parse Codex models response: {e}").into())
+}
+
+/// Normalize the upstream model list while retaining provider metadata.
+async fn fetch_models(creds: &CodexCredentials) -> Result<ModelListResponse, UpstreamError> {
+    let parsed = request_models(creds).await?;
 
     let entries = parsed
         .models
         .or(parsed.data)
         .ok_or("Invalid Codex model list")?;
     let mut models = Vec::new();
-    let mut catalog = Vec::new();
 
     for entry in entries {
-        let mut raw = if include_catalog {
-            Some(serde_json::to_value(&entry).map_err(|_| "Failed to serialize Codex model")?)
-        } else {
-            None
+        let Value::Object(mut extra) =
+            serde_json::to_value(&entry).map_err(|_| "Failed to serialize Codex model")?
+        else {
+            return Err("Failed to serialize Codex model".into());
         };
+        for key in [
+            "id",
+            "object",
+            "created",
+            "owned_by",
+            "name",
+            "display_name",
+            "reasoning",
+            "default_reasoning_effort",
+            "supported_reasoning_efforts",
+            "context_window",
+            "max_output_tokens",
+        ] {
+            extra.remove(key);
+        }
         let slug = entry.slug.or(entry.id);
-        let Some(model_id) = slug else { continue };
+        let Some(model_id) = slug.filter(|id| !id.is_empty()) else {
+            continue;
+        };
 
         if let Some(vis) = &entry.visibility
             && (vis.eq_ignore_ascii_case("hide") || vis.eq_ignore_ascii_case("hidden"))
@@ -157,11 +172,11 @@ async fn fetch_models(
 
         let default_effort = entry.default_reasoning_level.filter(|l| l != "none");
 
-        let model = ModelEntry {
+        let model = Model {
             id: model_id,
-            object: "model".to_string(),
-            created: 1_700_000_000,
-            owned_by: "openai-codex".to_string(),
+            object: Some("model".to_string()),
+            created: Some(1_700_000_000),
+            owned_by: Some("openai-codex".to_string()),
             name: entry.display_name.clone(),
             display_name: entry.display_name,
             reasoning: if has_reasoning { Some(true) } else { None },
@@ -169,25 +184,12 @@ async fn fetch_models(
             supported_reasoning_efforts: supported_efforts,
             context_window: entry.context_window,
             max_output_tokens: None,
+            extra,
         };
-        if let Some(raw) = &mut raw
-            && let (Some(raw), Value::Object(normalized)) = (
-                raw.as_object_mut(),
-                serde_json::to_value(&model).map_err(|_| "Failed to serialize Codex model")?,
-            )
-        {
-            raw.extend(normalized.into_iter().filter(|(_, value)| !value.is_null()));
-        }
-        if let Some(raw) = raw {
-            catalog.push(raw);
-        }
         models.push(model);
     }
-    Ok((
-        ModelListResponse {
-            object: "list".to_string(),
-            data: models,
-        },
-        catalog,
-    ))
+    Ok(ModelListResponse {
+        object: "list".to_string(),
+        data: models,
+    })
 }

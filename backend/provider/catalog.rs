@@ -1,9 +1,9 @@
+use crate::openai::Model;
 use crate::provider::{ProviderKind, registry::Provider};
 use crate::server::AppState;
-use serde_json::Value;
 
 /// Discovers models using the configured provider's backend.
-pub(crate) async fn discover(state: &AppState, provider: &Provider) -> Result<Vec<Value>, String> {
+pub(crate) async fn discover(state: &AppState, provider: &Provider) -> Result<Vec<Model>, String> {
     ProviderKind::from_str(&provider.kind)
         .ok_or_else(|| "Unsupported provider kind".to_string())?
         .discover(state, provider)
@@ -15,7 +15,7 @@ pub(crate) async fn discover_permitted(
     state: &AppState,
     provider: &Provider,
     permissions: &crate::server::settings::Permissions,
-) -> Result<Vec<Value>, String> {
+) -> Result<Vec<Model>, String> {
     ProviderKind::from_str(&provider.kind)
         .ok_or_else(|| "Unsupported provider kind".to_string())?
         .discover_permitted(state, provider, permissions)
@@ -44,7 +44,7 @@ mod tests {
     async fn discovery_uses_instance_key_and_preserves_metadata() {
         let app = Router::new().route("/v1/models", get(|headers: HeaderMap| async move {
             assert_eq!(headers.get(header::AUTHORIZATION).unwrap(), "Bearer instance-secret");
-            Json(json!({"data":[{"id":"model-a","capabilities":{"vision":true},"context_window":1234},{"name":"invalid"}]}))
+            Json(json!({"data":[{"id":"model-a","capabilities":{"vision":true},"context_window":1234},{"id":"model-b","context_window":"unknown"},{"name":"invalid"},{"id":""},{"id":12}]}))
         }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -73,8 +73,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            models,
-            vec![json!({"id":"model-a","capabilities":{"vision":true},"context_window":1234})]
+            serde_json::to_value(models).unwrap(),
+            json!([{"id":"model-a","capabilities":{"vision":true},"context_window":1234}])
         );
         server.abort();
     }

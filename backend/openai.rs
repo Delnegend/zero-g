@@ -316,21 +316,21 @@ pub(crate) struct ModelListResponse {
     /// Wire object type.
     pub object: String,
     /// Available model entries.
-    pub data: Vec<ModelEntry>,
+    pub data: Vec<Model>,
 }
 
 /// Model metadata returned by the listing endpoint.
 #[skip_serializing_none]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ModelEntry {
+#[derive(Debug, Clone, Default, Serialize, Deserialize, utoipa::ToSchema)]
+pub(crate) struct Model {
     /// Model identifier used in requests.
     pub id: String,
     /// Wire object type.
-    pub object: String,
+    pub object: Option<String>,
     /// Creation time as a Unix timestamp.
-    pub created: u64,
+    pub created: Option<u64>,
     /// Model owner identifier.
-    pub owned_by: String,
+    pub owned_by: Option<String>,
     /// Optional model name.
     pub name: Option<String>,
     /// Optional human-readable display name.
@@ -345,4 +345,24 @@ pub(crate) struct ModelEntry {
     pub context_window: Option<u64>,
     /// Maximum output size in tokens.
     pub max_output_tokens: Option<u32>,
+    /// Provider-specific metadata retained across discovery.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+#[cfg(test)]
+mod model_tests {
+    use super::Model;
+    use serde_json::json;
+
+    #[test]
+    fn model_roundtrip_preserves_provider_metadata() {
+        let input = json!({
+            "id": "example",
+            "name": "Example",
+            "provider_metadata": {"nested": [1, true, null]}
+        });
+        let model: Model = serde_json::from_value(input.clone()).unwrap();
+        assert_eq!(serde_json::to_value(model).unwrap(), input);
+    }
 }

@@ -22,9 +22,9 @@ pub(crate) mod registry;
 pub(crate) mod zen;
 
 use self::common::{DashboardProvider, Provider, ProviderDescriptor, QuotaProvider};
+use crate::openai::Model;
 use crate::server::{AppState, settings::SettingsStore};
 use axum::Router;
-use serde_json::Value;
 use std::sync::Arc;
 
 /// Shared clients for providers that maintain client state.
@@ -120,7 +120,7 @@ impl ProviderKind {
         self,
         state: &AppState,
         provider: &registry::Provider,
-    ) -> Result<Vec<Value>, String> {
+    ) -> Result<Vec<Model>, String> {
         match self {
             Self::Antigravity => antigravity::Backend::discover(state, provider).await,
             Self::Codex => codex::Backend::discover(state, provider).await,
@@ -136,17 +136,12 @@ impl ProviderKind {
         state: &AppState,
         provider: &registry::Provider,
         permissions: &crate::server::settings::Permissions,
-    ) -> Result<Vec<Value>, String> {
+    ) -> Result<Vec<Model>, String> {
         if matches!(self, Self::Antigravity) {
             return antigravity::discover_permitted(state, provider, permissions).await;
         }
         let mut models = self.discover(state, provider).await?;
-        models.retain(|model| {
-            model
-                .get("id")
-                .and_then(Value::as_str)
-                .is_some_and(|id| permissions.allows_model(id))
-        });
+        models.retain(|model| permissions.allows_model(&model.id));
         Ok(models)
     }
 

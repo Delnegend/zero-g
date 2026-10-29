@@ -5,10 +5,10 @@ pub(crate) mod proxy;
 /// Scoped identities for upstream session affinity.
 pub(crate) mod session;
 
+use crate::openai::Model;
 use crate::provider::{quota, registry};
 use crate::server::{AppState, settings::SettingsStore};
 use axum::Router;
-use serde_json::Value;
 
 /// Operations implemented by each provider backend.
 pub(crate) trait Provider {
@@ -20,7 +20,7 @@ pub(crate) trait Provider {
     async fn discover(
         state: &AppState,
         provider: &registry::Provider,
-    ) -> Result<Vec<Value>, String>;
+    ) -> Result<Vec<Model>, String>;
 }
 
 /// Provider backend capable of reporting credential quota.

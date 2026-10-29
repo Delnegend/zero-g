@@ -595,14 +595,17 @@ impl super::common::Provider for Backend {
     fn discover(
         _state: &crate::server::AppState,
         _provider: &super::registry::Provider,
-    ) -> impl Future<Output = Result<Vec<Value>, String>> {
-        std::future::ready(
-            models_json()
-                .get("data")
-                .and_then(Value::as_array)
-                .cloned()
-                .ok_or_else(|| "Invalid Zen model list".into()),
-        )
+    ) -> impl Future<Output = Result<Vec<crate::openai::Model>, String>> {
+        std::future::ready(Ok(ZEN_MODELS
+            .iter()
+            .map(|id| crate::openai::Model {
+                id: (*id).to_owned(),
+                object: Some("model".to_owned()),
+                created: Some(0),
+                owned_by: Some("opencode-zen".to_owned()),
+                ..Default::default()
+            })
+            .collect()))
     }
 }
 

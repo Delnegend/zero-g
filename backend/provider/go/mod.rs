@@ -385,7 +385,10 @@ impl super::common::Provider for Backend {
     fn router(settings: &SettingsStore) -> Router<AppState> {
         router(settings)
     }
-    async fn discover(state: &AppState, provider: &Provider) -> Result<Vec<Value>, String> {
+    async fn discover(
+        state: &AppState,
+        provider: &Provider,
+    ) -> Result<Vec<crate::openai::Model>, String> {
         openai::discover::<Self>(&state.settings, provider).await
     }
 }

@@ -42,7 +42,7 @@ const MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
 pub(crate) async fn discover<E: ModelEndpoint>(
     store: &SettingsStore,
     provider: &Provider,
-) -> Result<Vec<Value>, String> {
+) -> Result<Vec<crate::openai::Model>, String> {
     let credentials = crate::provider::credentials::list(store, &provider.id).await?;
     let mut response = None;
     for credential in credentials {
@@ -81,15 +81,11 @@ pub(crate) async fn discover<E: ModelEndpoint>(
         .ok_or("Invalid provider model list")?;
     Ok(models
         .iter()
-        .filter(|model| {
-            model
-                .get("id")
-                .and_then(Value::as_str)
-                .is_some_and(|id| !id.is_empty())
-        })
-        .cloned()
+        .filter_map(|model| serde_json::from_value::<crate::openai::Model>(model.clone()).ok())
+        .filter(|model| !model.id.is_empty())
         .collect())
 }
+
 /// Shared client used for OpenAI-compatible upstream requests.
 static CLIENT: LazyLock<Result<reqwest::Client, reqwest::Error>> = LazyLock::new(|| {
     reqwest::Client::builder()
@@ -180,7 +176,7 @@ impl super::common::Provider for Backend {
     async fn discover(
         state: &crate::server::AppState,
         provider: &Provider,
-    ) -> Result<Vec<Value>, String> {
+    ) -> Result<Vec<crate::openai::Model>, String> {
         discover::<Self>(&state.settings, provider).await
     }
 }

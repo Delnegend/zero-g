@@ -9,7 +9,7 @@ use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use serde_json::Value;
 
-use crate::openai::{ChatCompletionRequest, ModelEntry, ModelListResponse, StreamOptions};
+use crate::openai::{ChatCompletionRequest, Model, ModelListResponse, StreamOptions};
 use crate::provider::antigravity::AntigravityModelInfo;
 use crate::provider::antigravity::chat::ChatStreamSerializer;
 use crate::provider::antigravity::models::{ResolveError, normalize_models};
@@ -268,7 +268,7 @@ async fn models_handler(
 /// Upstream reports the context window as `maxTokens`, separate from
 /// `maxOutputTokens`; callers that only see `max_output_tokens` fall back to
 /// their own defaults, so both are carried through.
-pub(crate) fn to_model_entry(id: String, info: AntigravityModelInfo) -> ModelEntry {
+pub(crate) fn to_model_entry(id: String, info: AntigravityModelInfo) -> Model {
     let reasoning = info.supports_thinking.unwrap_or(false);
     let effort_tier = [("-low", "low"), ("-medium", "medium"), ("-high", "high")]
         .into_iter()
@@ -279,11 +279,38 @@ pub(crate) fn to_model_entry(id: String, info: AntigravityModelInfo) -> ModelEnt
         |effort| Some(vec![effort.clone()]),
     );
 
-    ModelEntry {
+    let mut extra: serde_json::Map<String, serde_json::Value> = info.extra.into_iter().collect();
+    for key in [
+        "id",
+        "object",
+        "created",
+        "owned_by",
+        "name",
+        "display_name",
+        "reasoning",
+        "default_reasoning_effort",
+        "supported_reasoning_efforts",
+        "context_window",
+        "max_output_tokens",
+    ] {
+        extra.remove(key);
+    }
+    extra.insert("displayName".into(), serde_json::json!(info.display_name));
+    extra.insert(
+        "supportsThinking".into(),
+        serde_json::json!(info.supports_thinking),
+    );
+    extra.insert("maxTokens".into(), serde_json::json!(info.max_tokens));
+    extra.insert(
+        "maxOutputTokens".into(),
+        serde_json::json!(info.max_output_tokens),
+    );
+    extra.insert("disabled".into(), serde_json::json!(info.disabled));
+    Model {
         id,
-        object: "model".to_string(),
-        created: 1_700_000_000,
-        owned_by: "google-antigravity".to_string(),
+        object: Some("model".to_string()),
+        created: Some(1_700_000_000),
+        owned_by: Some("google-antigravity".to_string()),
         name: info.display_name.clone(),
         display_name: info.display_name,
         reasoning: if reasoning { Some(true) } else { None },
@@ -291,6 +318,7 @@ pub(crate) fn to_model_entry(id: String, info: AntigravityModelInfo) -> ModelEnt
         supported_reasoning_efforts: supported_efforts,
         context_window: info.max_tokens,
         max_output_tokens: info.max_output_tokens,
+        extra,
     }
 }
 

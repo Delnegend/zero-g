@@ -45,10 +45,10 @@ impl super::common::Provider for Backend {
     async fn discover(
         state: &crate::server::AppState,
         provider: &super::registry::Provider,
-    ) -> Result<Vec<serde_json::Value>, String> {
+    ) -> Result<Vec<crate::openai::Model>, String> {
         models::fetch_catalog_pool(state, provider)
             .await
-            .map(|(_, catalog)| catalog)
+            .map(|response| response.data)
     }
 }
 

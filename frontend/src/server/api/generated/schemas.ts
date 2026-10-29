@@ -89,6 +89,66 @@ export type AntigravityStartResponseOutput = zod.output<
   typeof AntigravityStartResponse
 >;
 
+export const modelContextWindowMin = 0;
+
+export const modelCreatedMin = 0;
+
+export const modelMaxOutputTokensMin = 0;
+
+export const Model = zod
+  .object({
+    context_window: zod
+      .int()
+      .min(modelContextWindowMin)
+      .nullish()
+      .describe("Maximum context size in tokens."),
+    created: zod
+      .int()
+      .min(modelCreatedMin)
+      .nullish()
+      .describe("Creation time as a Unix timestamp."),
+    default_reasoning_effort: zod
+      .string()
+      .nullish()
+      .describe("Default reasoning effort, if specified."),
+    display_name: zod
+      .string()
+      .nullish()
+      .describe("Optional human-readable display name."),
+    id: zod.string().describe("Model identifier used in requests."),
+    max_output_tokens: zod
+      .int()
+      .min(modelMaxOutputTokensMin)
+      .nullish()
+      .describe("Maximum output size in tokens."),
+    name: zod.string().nullish().describe("Optional model name."),
+    object: zod.string().nullish().describe("Wire object type."),
+    owned_by: zod.string().nullish().describe("Model owner identifier."),
+    reasoning: zod
+      .boolean()
+      .nullish()
+      .describe("Whether the model supports reasoning."),
+    supported_reasoning_efforts: zod
+      .array(zod.string())
+      .nullish()
+      .describe("Supported reasoning effort values."),
+  })
+  .catchall(
+    zod
+      .unknown()
+      .describe("Provider-specific metadata retained across discovery."),
+  )
+  .describe("Model metadata returned by the listing endpoint.");
+
+export type Model = zod.input<typeof Model>;
+export type ModelOutput = zod.output<typeof Model>;
+
+export const catalogProviderModelsItemContextWindowMin = 0;
+
+export const catalogProviderModelsItemCreatedMin = 0;
+
+export const catalogProviderModelsItemMaxOutputTokensMin = 0;
+
 export const CatalogProvider = zod
   .object({
     base_url: zod
@@ -102,7 +162,57 @@ export const CatalogProvider = zod
     id: zod.string().describe("Registry identifier."),
     kind: zod.string().describe("Provider implementation kind."),
     models: zod
-      .array(zod.unknown())
+      .array(
+        zod
+          .object({
+            context_window: zod
+              .int()
+              .min(catalogProviderModelsItemContextWindowMin)
+              .nullish()
+              .describe("Maximum context size in tokens."),
+            created: zod
+              .int()
+              .min(catalogProviderModelsItemCreatedMin)
+              .nullish()
+              .describe("Creation time as a Unix timestamp."),
+            default_reasoning_effort: zod
+              .string()
+              .nullish()
+              .describe("Default reasoning effort, if specified."),
+            display_name: zod
+              .string()
+              .nullish()
+              .describe("Optional human-readable display name."),
+            id: zod.string().describe("Model identifier used in requests."),
+            max_output_tokens: zod
+              .int()
+              .min(catalogProviderModelsItemMaxOutputTokensMin)
+              .nullish()
+              .describe("Maximum output size in tokens."),
+            name: zod.string().nullish().describe("Optional model name."),
+            object: zod.string().nullish().describe("Wire object type."),
+            owned_by: zod
+              .string()
+              .nullish()
+              .describe("Model owner identifier."),
+            reasoning: zod
+              .boolean()
+              .nullish()
+              .describe("Whether the model supports reasoning."),
+            supported_reasoning_efforts: zod
+              .array(zod.string())
+              .nullish()
+              .describe("Supported reasoning effort values."),
+          })
+          .catchall(
+            zod
+              .unknown()
+              .describe(
+                "Provider-specific metadata retained across discovery.",
+              ),
+          )
+          .describe("Model metadata returned by the listing endpoint."),
+      )
       .describe("Last successfully discovered model records."),
     name: zod.string().describe("Display name from the registry."),
   })
@@ -294,10 +404,66 @@ export type InferenceDiscoveryErrorOutput = zod.output<
   typeof InferenceDiscoveryError
 >;
 
+export const inferenceModelListDataItemContextWindowMin = 0;
+
+export const inferenceModelListDataItemCreatedMin = 0;
+
+export const inferenceModelListDataItemMaxOutputTokensMin = 0;
+
 export const InferenceModelList = zod
   .object({
     data: zod
-      .array(zod.unknown())
+      .array(
+        zod
+          .object({
+            context_window: zod
+              .int()
+              .min(inferenceModelListDataItemContextWindowMin)
+              .nullish()
+              .describe("Maximum context size in tokens."),
+            created: zod
+              .int()
+              .min(inferenceModelListDataItemCreatedMin)
+              .nullish()
+              .describe("Creation time as a Unix timestamp."),
+            default_reasoning_effort: zod
+              .string()
+              .nullish()
+              .describe("Default reasoning effort, if specified."),
+            display_name: zod
+              .string()
+              .nullish()
+              .describe("Optional human-readable display name."),
+            id: zod.string().describe("Model identifier used in requests."),
+            max_output_tokens: zod
+              .int()
+              .min(inferenceModelListDataItemMaxOutputTokensMin)
+              .nullish()
+              .describe("Maximum output size in tokens."),
+            name: zod.string().nullish().describe("Optional model name."),
+            object: zod.string().nullish().describe("Wire object type."),
+            owned_by: zod
+              .string()
+              .nullish()
+              .describe("Model owner identifier."),
+            reasoning: zod
+              .boolean()
+              .nullish()
+              .describe("Whether the model supports reasoning."),
+            supported_reasoning_efforts: zod
+              .array(zod.string())
+              .nullish()
+              .describe("Supported reasoning effort values."),
+          })
+          .catchall(
+            zod
+              .unknown()
+              .describe(
+                "Provider-specific metadata retained across discovery.",
+              ),
+          )
+          .describe("Model metadata returned by the listing endpoint."),
+      )
       .describe("Provider model records, with qualified IDs."),
     errors: zod
       .array(
@@ -414,6 +580,12 @@ export const LogEntry = zod
 export type LogEntry = zod.input<typeof LogEntry>;
 export type LogEntryOutput = zod.output<typeof LogEntry>;
 
+export const modelCatalogProvidersItemModelsItemContextWindowMin = 0;
+
+export const modelCatalogProvidersItemModelsItemCreatedMin = 0;
+
+export const modelCatalogProvidersItemModelsItemMaxOutputTokensMin = 0;
+
 export const ModelCatalog = zod
   .object({
     providers: zod
@@ -433,7 +605,67 @@ export const ModelCatalog = zod
             id: zod.string().describe("Registry identifier."),
             kind: zod.string().describe("Provider implementation kind."),
             models: zod
-              .array(zod.unknown())
+              .array(
+                zod
+                  .object({
+                    context_window: zod
+                      .int()
+                      .min(modelCatalogProvidersItemModelsItemContextWindowMin)
+                      .nullish()
+                      .describe("Maximum context size in tokens."),
+                    created: zod
+                      .int()
+                      .min(modelCatalogProvidersItemModelsItemCreatedMin)
+                      .nullish()
+                      .describe("Creation time as a Unix timestamp."),
+                    default_reasoning_effort: zod
+                      .string()
+                      .nullish()
+                      .describe("Default reasoning effort, if specified."),
+                    display_name: zod
+                      .string()
+                      .nullish()
+                      .describe("Optional human-readable display name."),
+                    id: zod
+                      .string()
+                      .describe("Model identifier used in requests."),
+                    max_output_tokens: zod
+                      .int()
+                      .min(
+                        modelCatalogProvidersItemModelsItemMaxOutputTokensMin,
+                      )
+                      .nullish()
+                      .describe("Maximum output size in tokens."),
+                    name: zod
+                      .string()
+                      .nullish()
+                      .describe("Optional model name."),
+                    object: zod
+                      .string()
+                      .nullish()
+                      .describe("Wire object type."),
+                    owned_by: zod
+                      .string()
+                      .nullish()
+                      .describe("Model owner identifier."),
+                    reasoning: zod
+                      .boolean()
+                      .nullish()
+                      .describe("Whether the model supports reasoning."),
+                    supported_reasoning_efforts: zod
+                      .array(zod.string())
+                      .nullish()
+                      .describe("Supported reasoning effort values."),
+                  })
+                  .catchall(
+                    zod
+                      .unknown()
+                      .describe(
+                        "Provider-specific metadata retained across discovery.",
+                      ),
+                  )
+                  .describe("Model metadata returned by the listing endpoint."),
+              )
               .describe("Last successfully discovered model records."),
             name: zod.string().describe("Display name from the registry."),
           })

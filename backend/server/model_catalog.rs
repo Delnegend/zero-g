@@ -10,8 +10,8 @@ use axum::{
 };
 use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
+use crate::openai::Model;
 use crate::provider::{catalog::discover, registry};
 use crate::server::{AppState, settings::SettingsStore};
 use crate::storage::Setting;
@@ -34,7 +34,7 @@ struct CatalogProvider {
     #[serde(default)]
     base_url: String,
     /// Last successfully discovered model records.
-    models: Vec<Value>,
+    models: Vec<Model>,
     /// Most recent discovery failure, if any.
     #[schema(required = true)]
     error: Option<String>,
@@ -51,7 +51,7 @@ struct ModelCatalog {
 #[derive(utoipa::OpenApi)]
 #[openapi(
     paths(get_catalog, post_refresh),
-    components(schemas(ModelCatalog, CatalogProvider))
+    components(schemas(ModelCatalog, CatalogProvider, Model))
 )]
 pub(crate) struct Api;
 
@@ -197,6 +197,7 @@ mod tests {
         body::Body,
         http::{Request, header},
     };
+    use serde_json::Value;
     use serde_json::json;
     use tower::ServiceExt;
 
@@ -239,7 +240,8 @@ mod tests {
             StatusCode::CREATED
         );
         let mut catalog = load(&store).await.unwrap();
-        catalog.providers[0].models = vec![json!({"id":"cached", "metadata":42})];
+        catalog.providers[0].models =
+            vec![serde_json::from_value(json!({"id":"cached", "metadata":42})).unwrap()];
         catalog.providers[0].error = Some("offline".into());
         save(&store, &catalog).await.unwrap();
         let reopened = SettingsStore::new(
@@ -249,7 +251,7 @@ mod tests {
         .await
         .unwrap();
         let cached = load(&reopened).await.unwrap();
-        assert_eq!(cached.providers[0].models[0]["metadata"], 42);
+        assert_eq!(cached.providers[0].models[0].extra["metadata"], 42);
         assert_eq!(cached.providers[0].error.as_deref(), Some("offline"));
         assert_eq!(
             registry_request(&store, "POST", "/api/providers", provider("second")).await,
@@ -262,6 +264,6 @@ mod tests {
         let updated = load(&reopened).await.unwrap();
         assert_eq!(updated.providers.len(), 1);
         assert_eq!(updated.providers[0].id, "second");
-        assert_eq!(updated.providers[0].models, Vec::<Value>::new());
+        assert!(updated.providers[0].models.is_empty());
     }
 }

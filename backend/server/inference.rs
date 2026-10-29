@@ -10,6 +10,7 @@ use futures_util::future::join_all;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
+use crate::openai::Model;
 use crate::provider::{self, catalog, registry};
 use crate::server::{AppState, settings::Permissions};
 
@@ -38,7 +39,7 @@ struct InferenceModelList {
     /// List object discriminator.
     object: String,
     /// Provider model records, with qualified IDs.
-    data: Vec<Value>,
+    data: Vec<Model>,
     /// Providers whose discovery failed.
     errors: Vec<InferenceDiscoveryError>,
 }
@@ -47,7 +48,7 @@ struct InferenceModelList {
 #[derive(utoipa::OpenApi)]
 #[openapi(
     paths(models, inference, inference_responses),
-    components(schemas(InferenceRequest, InferenceModelList, InferenceDiscoveryError))
+    components(schemas(InferenceRequest, InferenceModelList, InferenceDiscoveryError, Model))
 )]
 pub(crate) struct Api;
 
@@ -132,14 +133,8 @@ async fn models(State(state): State<AppState>, request: Request) -> Response {
             Ok(Ok(models)) => {
                 succeeded = true;
                 for mut model in models {
-                    let Some(id) = model.get("id").and_then(Value::as_str) else {
-                        continue;
-                    };
-                    let id = format!("{}/{id}", provider.id);
-                    if let Some(object) = model.as_object_mut() {
-                        object.insert("id".into(), Value::String(id));
-                        data.push(model);
-                    }
+                    model.id = format!("{}/{}", provider.id, model.id);
+                    data.push(model);
                 }
             }
             _ => errors.push(InferenceDiscoveryError {
@@ -348,7 +343,7 @@ mod tests {
     async fn upstream() -> (String, tokio::task::JoinHandle<()>) {
         let app = Router::new()
             .route("/v1/models", get(|| async {
-                Json(json!({"data":[{"id":"same","object":"model"},{"id":"org/nested","object":"model"},{"id":"denied","object":"model"}]}))
+                Json(json!({"data":[{"id":"same","object":"model","provider_metadata":{"nested":42}},{"id":"org/nested","object":"model"},{"id":"denied","object":"model"}]}))
             }))
             .route("/v1/chat/completions", post(|Json(body): Json<Value>| async move {
                 if body["stream"] == true {
@@ -478,6 +473,13 @@ mod tests {
             .collect();
         assert!(ids.contains(&"first/same") && ids.contains(&"second/same"));
         assert!(ids.contains(&"first/org/nested"));
+        let first = models["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|model| model["id"] == "first/same")
+            .unwrap();
+        assert_eq!(first["provider_metadata"]["nested"], 42);
         let models = json_body(
             send("GET", "/v1/models", restricted, Value::Null)
                 .await

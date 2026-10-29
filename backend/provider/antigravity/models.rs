@@ -117,7 +117,7 @@ impl ModelFamily {
     pub(crate) fn entry(
         &self,
         permissions: &crate::server::settings::Permissions,
-    ) -> Option<(crate::openai::ModelEntry, &AntigravityModelInfo)> {
+    ) -> Option<(crate::openai::Model, &AntigravityModelInfo)> {
         let available: Vec<_> = self
             .variants
             .iter()

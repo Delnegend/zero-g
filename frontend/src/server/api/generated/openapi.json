@@ -1480,7 +1480,9 @@
           },
           "models": {
             "type": "array",
-            "items": {},
+            "items": {
+              "$ref": "#/components/schemas/Model"
+            },
             "description": "Last successfully discovered model records."
           },
           "name": {
@@ -1742,7 +1744,9 @@
         "properties": {
           "data": {
             "type": "array",
-            "items": {},
+            "items": {
+              "$ref": "#/components/schemas/Model"
+            },
             "description": "Provider model records, with qualified IDs."
           },
           "errors": {
@@ -1892,6 +1896,69 @@
             "format": "int64",
             "description": "HTTP status, or 499 for an incomplete response stream."
           }
+        }
+      },
+      "Model": {
+        "type": "object",
+        "description": "Model metadata returned by the listing endpoint.",
+        "required": ["id"],
+        "properties": {
+          "context_window": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Maximum context size in tokens.",
+            "minimum": 0
+          },
+          "created": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Creation time as a Unix timestamp.",
+            "minimum": 0
+          },
+          "default_reasoning_effort": {
+            "type": ["string", "null"],
+            "description": "Default reasoning effort, if specified."
+          },
+          "display_name": {
+            "type": ["string", "null"],
+            "description": "Optional human-readable display name."
+          },
+          "id": {
+            "type": "string",
+            "description": "Model identifier used in requests."
+          },
+          "max_output_tokens": {
+            "type": ["integer", "null"],
+            "format": "int32",
+            "description": "Maximum output size in tokens.",
+            "minimum": 0
+          },
+          "name": {
+            "type": ["string", "null"],
+            "description": "Optional model name."
+          },
+          "object": {
+            "type": ["string", "null"],
+            "description": "Wire object type."
+          },
+          "owned_by": {
+            "type": ["string", "null"],
+            "description": "Model owner identifier."
+          },
+          "reasoning": {
+            "type": ["boolean", "null"],
+            "description": "Whether the model supports reasoning."
+          },
+          "supported_reasoning_efforts": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "string"
+            },
+            "description": "Supported reasoning effort values."
+          }
+        },
+        "additionalProperties": {
+          "description": "Provider-specific metadata retained across discovery."
         }
       },
       "ModelCatalog": {

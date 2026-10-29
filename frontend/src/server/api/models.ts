@@ -2,42 +2,18 @@ import { queryOptions } from "@tanstack/react-query";
 import * as api from "./generated/client";
 import type {
   CatalogProvider,
-  ModelCatalog,
+  Model,
   ModelData,
   ModelSettings,
 } from "./generated/schemas";
 
-type ModelValue = CatalogProvider["models"][number];
-export type Model = ModelValue & Record<string, unknown> & { id: string };
-export type Provider = Omit<CatalogProvider, "models"> & { models: Model[] };
-export type Catalog = Omit<ModelCatalog, "providers"> & {
-  providers: Provider[];
-};
+export type { Model };
+export type Provider = CatalogProvider;
 export type Datasheets = ModelData;
 export type Settings = ModelSettings;
 
-function hasModelId(value: ModelValue): value is Model {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "id" in value &&
-    typeof value.id === "string" &&
-    value.id.length > 0
-  );
-}
-
-function catalogForDashboard(catalog: ModelCatalog): Catalog {
-  return {
-    ...catalog,
-    providers: catalog.providers.map((provider) => ({
-      ...provider,
-      models: provider.models.filter(hasModelId),
-    })),
-  };
-}
-
 export function getModelCatalog(signal: AbortSignal) {
-  return api.getModelCatalog({ signal }).then(catalogForDashboard);
+  return api.getModelCatalog({ signal });
 }
 
 export function getModelDatasheets(signal: AbortSignal) {
@@ -70,7 +46,7 @@ export function modelSettingsQueryOptions() {
 }
 
 export function refreshModelCatalog() {
-  return api.refreshModelCatalog().then(catalogForDashboard);
+  return api.refreshModelCatalog();
 }
 
 export function getModelSettings(signal: AbortSignal) {
