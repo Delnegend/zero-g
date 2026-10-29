@@ -333,6 +333,10 @@ mod tests {
         http::{Request, header},
         routing::post,
     };
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
 
     /// Read a JSON response body.
     async fn json_body(response: Response) -> Value {
@@ -340,7 +344,7 @@ mod tests {
     }
 
     /// Start a local OpenAI-compatible server that exposes its received request.
-    async fn upstream() -> (String, tokio::task::JoinHandle<()>) {
+    async fn upstream(requests: Arc<AtomicUsize>) -> (String, tokio::task::JoinHandle<()>) {
         let app = Router::new()
             .route("/v1/models", get(|| async {
                 Json(json!({"data":[{"id":"same","object":"model","provider_metadata":{"nested":42}},{"id":"org/nested","object":"model"},{"id":"denied","object":"model"}]}))
@@ -352,7 +356,14 @@ mod tests {
                     ([(header::CONTENT_TYPE, "application/json"), ("x-upstream".parse().unwrap(), "present")], body.to_string()).into_response()
                 }
             }))
-            .route("/v1/responses", post(|Json(body): Json<Value>| async move { Json(body) }));
+            .route("/v1/responses", post(|Json(body): Json<Value>| async move { Json(body) }))
+            .layer(axum::middleware::from_fn(move |request: Request<Body>, next: axum::middleware::Next| {
+                let requests = requests.clone();
+                async move {
+                    requests.fetch_add(1, Ordering::SeqCst);
+                    next.run(request).await
+                }
+            }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/v1", listener.local_addr().unwrap());
         let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -366,9 +377,11 @@ mod tests {
         String,
         tokio::task::JoinHandle<()>,
         tokio::task::JoinHandle<()>,
+        Arc<AtomicUsize>,
     ) {
-        let (first, first_task) = upstream().await;
-        let (second, second_task) = upstream().await;
+        let requests = Arc::new(AtomicUsize::new(0));
+        let (first, first_task) = upstream(requests.clone()).await;
+        let (second, second_task) = upstream(requests.clone()).await;
         let database = Database::open(":memory:").await.unwrap();
         let store = settings::SettingsStore::new(
             database.clone(),
@@ -447,7 +460,7 @@ mod tests {
         let all = make_key(json!([]), json!([])).await;
         let restricted = make_key(json!(["first"]), json!(["org/nested"])).await;
         let app = crate::server::create_router(state);
-        (app, all, restricted, first_task, second_task)
+        (app, all, restricted, first_task, second_task, requests)
     }
 
     /// Check discovery and routing for both inference APIs.
@@ -591,9 +604,77 @@ mod tests {
     /// Exercise routing, filtering, streaming, and removed paths.
     #[tokio::test]
     async fn unified_api_routes_and_enforces_permissions() {
-        let (app, all, restricted, first_task, second_task) = fixture().await;
+        let (app, all, restricted, first_task, second_task, _) = fixture().await;
         check_discovery_and_routing(&app, &all, &restricted).await;
         check_stream_and_denials(&app, &all, &restricted).await;
+        first_task.abort();
+        second_task.abort();
+    }
+
+    /// Reject invalid virtual keys before contacting any provider.
+    #[tokio::test]
+    async fn unified_api_authenticates_before_discovery_or_inference() {
+        let (app, valid_key, _, first_task, second_task, requests) = fixture().await;
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/models")
+                    .header(header::AUTHORIZATION, format!("Bearer {valid_key}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(requests.load(Ordering::SeqCst) > 0);
+        requests.store(0, Ordering::SeqCst);
+
+        for (method, path) in [
+            ("GET", "/v1/models"),
+            ("POST", "/v1/chat/completions"),
+            ("POST", "/v1/responses"),
+        ] {
+            for authorization in [
+                None,
+                Some("Basic malformed"),
+                Some("Bearer unknown-virtual-key"),
+            ] {
+                let mut request = Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .header(header::CONTENT_TYPE, "application/json");
+                if let Some(authorization) = authorization {
+                    request = request.header(header::AUTHORIZATION, authorization);
+                }
+                let response = app
+                    .clone()
+                    .oneshot(
+                        request
+                            .body(Body::from(
+                                json!({"model":"first/same","messages":[],"input":"hello"})
+                                    .to_string(),
+                            ))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    response.status(),
+                    StatusCode::UNAUTHORIZED,
+                    "{method} {path} {authorization:?}"
+                );
+                assert_eq!(
+                    json_body(response).await["error"]["code"],
+                    "invalid_api_key"
+                );
+                assert_eq!(
+                    requests.load(Ordering::SeqCst),
+                    0,
+                    "{method} {path} {authorization:?}"
+                );
+            }
+        }
         first_task.abort();
         second_task.abort();
     }
