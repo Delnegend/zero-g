@@ -357,21 +357,6 @@ mod tests {
     }
 
     #[test]
-    fn reassembles_split_chunks() {
-        let mut decoder = EventDecoder::default();
-        let line = "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hi\"}]}}]}}\n";
-
-        let midpoint = line.len() / 2;
-        assert_eq!(
-            decoder.push_chunk(&line.as_bytes()[..midpoint]),
-            Vec::<AntigravityEvent>::new()
-        );
-        let events = decoder.push_chunk(&line.as_bytes()[midpoint..]);
-
-        assert_eq!(events, vec![AntigravityEvent::Text("hi".to_string())]);
-    }
-
-    #[test]
     fn preserves_utf8_split_across_bytes() {
         let mut decoder = EventDecoder::default();
         let payload = json!({

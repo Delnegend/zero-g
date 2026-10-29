@@ -901,7 +901,8 @@ mod tests {
                         "{\"text\":\"reason\",\"thought\":true,\"thoughtSignature\":\"reason-sig\"},",
                         "{\"text\":\"answer\",\"thoughtSignature\":\"text-sig\"},",
                         "{\"functionCall\":{\"id\":\"call_1\",\"name\":\"lookup\",\"args\":{\"q\":\"x\"}},",
-                        "\"thoughtSignature\":\"opaque\"}]},\"finishReason\":\"STOP\"}]}}\n\n")).into_response()
+                        "\"thoughtSignature\":\"opaque\"}]},\"finishReason\":\"STOP\"}],",
+                        "\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":5,\"totalTokenCount\":15}}}\n\n")).into_response()
                 }
             }
         }));
@@ -1112,6 +1113,99 @@ mod tests {
         .unwrap();
         let message = value["output"][0].clone();
         assert_eq!(message["provider_parts"], provider_parts);
+        let _ = rx.recv().await.unwrap();
+        let streamed_response = app
+            .clone()
+            .oneshot(response_request(json!({
+                "model":"model-high", "input":"hello", "stream":true
+            })))
+            .await
+            .unwrap();
+        assert_eq!(streamed_response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(streamed_response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let output = String::from_utf8(bytes.to_vec()).unwrap();
+        let events: Vec<Value> = output
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .filter(|data| *data != "[DONE]")
+            .map(|data| serde_json::from_str(data).unwrap())
+            .collect();
+        assert!(events.iter().any(
+            |event| event["type"] == "response.output_text.delta" && event["delta"] == "answer"
+        ));
+        let arguments = events
+            .iter()
+            .find(|event| event["type"] == "response.function_call_arguments.done")
+            .unwrap();
+        assert_eq!(arguments["name"], "lookup");
+        assert_eq!(
+            serde_json::from_str::<Value>(arguments["arguments"].as_str().unwrap()).unwrap(),
+            json!({"q":"x"})
+        );
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        assert_eq!(completed["response"]["status"], "completed");
+        assert_eq!(completed["response"]["output_text"], "answer");
+        assert_eq!(completed["response"]["usage"]["input_tokens"], 10);
+        assert_eq!(completed["response"]["usage"]["output_tokens"], 5);
+        assert_eq!(completed["response"]["usage"]["total_tokens"], 15);
+        let tool = completed["response"]["output"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["type"] == "function_call")
+            .unwrap();
+        assert_eq!(tool["call_id"], "call_1");
+        assert_eq!(tool["name"], "lookup");
+        assert_eq!(
+            serde_json::from_str::<Value>(tool["arguments"].as_str().unwrap()).unwrap(),
+            json!({"q":"x"})
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| event["type"] == "response.failed")
+        );
+        let _ = rx.recv().await.unwrap();
+        let truncated_response = app
+            .clone()
+            .oneshot(response_request(json!({
+                "model":"model-high", "input":"truncate", "stream":true
+            })))
+            .await
+            .unwrap();
+        assert_eq!(truncated_response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(truncated_response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let output = String::from_utf8(bytes.to_vec()).unwrap();
+        let events: Vec<Value> = output
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .filter(|data| *data != "[DONE]")
+            .map(|data| serde_json::from_str(data).unwrap())
+            .collect();
+        assert!(
+            events
+                .iter()
+                .any(|event| event["type"] == "response.output_text.delta"
+                    && event["delta"] == "partial")
+        );
+        let failed = events
+            .iter()
+            .find(|event| event["type"] == "response.failed")
+            .unwrap();
+        assert_eq!(failed["response"]["status"], "failed");
+        assert_eq!(failed["response"]["error"]["code"], "bad_gateway");
+        assert!(
+            !events
+                .iter()
+                .any(|event| event["type"] == "response.completed")
+        );
         let _ = rx.recv().await.unwrap();
         let replay = app
             .clone()
