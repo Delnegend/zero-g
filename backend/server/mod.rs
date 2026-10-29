@@ -1,5 +1,7 @@
 /// Dashboard authentication and session handling.
 pub(crate) mod dashboard_auth;
+/// Health probe endpoint.
+mod health;
 /// Unified public inference API.
 pub(crate) mod inference;
 /// Cached provider model discovery.
@@ -8,15 +10,20 @@ pub(crate) mod model_catalog;
 pub(crate) mod model_setting;
 /// Request logging and dashboard metrics.
 pub(crate) mod observability;
+/// `OpenAPI` document endpoint.
+mod openapi;
+/// API reference endpoint.
+mod redoc;
 /// Persistent settings and API keys.
 pub(crate) mod settings;
 /// Embedded dashboard asset serving.
 mod web;
 
 use axum::Router;
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
 use axum::routing::get;
+use health::__path_health_handler;
+use openapi::__path_openapi;
+use redoc::__path_redoc;
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::provider::{self, registry};
@@ -49,8 +56,8 @@ pub(crate) fn create_router(state: AppState) -> Router {
 
     let dashboard = Router::new()
         .route("/", get(web::index))
-        .route("/redoc", get(redoc))
-        .route("/api/openapi.json", get(openapi))
+        .route("/redoc", get(redoc::redoc))
+        .route("/api/openapi.json", get(openapi::openapi))
         .route(
             "/api/observability",
             get(observability::dashboard).with_state(state.logs.clone()),
@@ -79,7 +86,7 @@ pub(crate) fn create_router(state: AppState) -> Router {
     let dashboard = state.dashboard_auth.protect(dashboard);
 
     Router::new()
-        .route("/health", get(health_handler))
+        .route("/health", get(health::health_handler))
         .merge(inference::router(&state))
         .layer(cors)
         .layer(axum::middleware::from_fn_with_state(
@@ -100,31 +107,6 @@ pub(crate) fn create_router(state: AppState) -> Router {
         ))
 }
 
-/// Return a successful health probe response.
-#[utoipa::path(get, path = "/health", operation_id = "health",
-    responses((status = 200, description = "The server is running")))]
-async fn health_handler() -> impl IntoResponse {
-    StatusCode::OK
-}
-
-/// Serve the API reference using the locally bundled `ReDoc` script.
-#[utoipa::path(get, path = "/redoc", operation_id = "apiReference",
-    responses((status = 200, description = "ReDoc HTML", body = String, content_type = "text/html"),
-        (status = 401, description = "Dashboard authentication required")))]
-async fn redoc() -> axum::response::Html<&'static str> {
-    axum::response::Html(
-        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Zero-G API</title></head><body style="margin:0"><redoc spec-url="/api/openapi.json"></redoc><script src="/redoc.standalone.js"></script></body></html>"#,
-    )
-}
-
-/// Serve the same `OpenAPI` contract used to generate the frontend client.
-#[utoipa::path(get, path = "/api/openapi.json", operation_id = "getOpenApi",
-    responses((status = 200, description = "OpenAPI document", body = serde_json::Value),
-        (status = 401, description = "Dashboard authentication required")))]
-async fn openapi() -> axum::Json<utoipa::openapi::OpenApi> {
-    axum::Json(crate::contract::openapi())
-}
-
 /// Construct an OpenAI-compatible error object.
 pub(crate) fn error_body(message: &str, error_type: &str, code: Option<&str>) -> serde_json::Value {
     serde_json::json!({
@@ -143,7 +125,7 @@ pub(crate) fn error_body(message: &str, error_type: &str, code: Option<&str>) ->
 mod tests {
     use super::*;
     use axum::body::{Body, to_bytes};
-    use axum::http::{Request, header};
+    use axum::http::{Request, StatusCode, header};
     use tower::ServiceExt;
 
     /// The reference and its contract require dashboard authentication.
