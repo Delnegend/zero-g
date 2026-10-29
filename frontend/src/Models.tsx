@@ -1,7 +1,7 @@
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
-import { Info } from "lucide-react";
+import { Fragment, useMemo, useState } from "react";
+import { ChevronLeft, ChevronRight, Info } from "lucide-react";
 import { antigravityReferencePrice } from "./modelPricing";
 import { message } from "./server/api/client";
 import {
@@ -24,6 +24,12 @@ import { Button } from "./components/ui/button";
 import { Card } from "./components/ui/card";
 import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
+import { Separator } from "./components/ui/separator";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+} from "./components/ui/pagination";
 import {
   Popover,
   PopoverContent,
@@ -40,6 +46,7 @@ import {
 const pageClass =
   "mx-auto w-full min-w-0 max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-12";
 const inputClass = "mt-1 w-full";
+const modelsPerPage = 12;
 
 function lookup(
   sheet: Record<string, unknown> | undefined,
@@ -193,41 +200,66 @@ function ModelCard({
 
 function ProviderModels({
   provider,
-  search,
+  models,
   data,
 }: {
   provider: Provider;
-  search: string;
+  models: Model[];
   data?: Datasheets;
 }) {
-  const [limit, setLimit] = useState(50);
-  const needle = search.trim().toLowerCase();
-  const providerMatches = `${provider.name} ${provider.id} ${provider.kind}`
-    .toLowerCase()
-    .includes(needle);
-  const models = provider.models.filter(
-    (model) =>
-      providerMatches ||
-      [
-        `${provider.id}/${model.id}`,
-        model.id,
-        model.name,
-        model.display_name,
-        model.default_reasoning_effort,
-      ].some(
-        (value) =>
-          typeof value === "string" && value.toLowerCase().includes(needle),
-      ),
-  );
-  if (needle && !providerMatches && models.length === 0 && !provider.error)
-    return null;
+  const [page, setPage] = useState(0);
+  const total = models.length;
+  const pageCount = Math.ceil(total / modelsPerPage);
+  const currentPage = Math.min(page, Math.max(0, pageCount - 1));
+  const first = currentPage * modelsPerPage;
+  const pagination = (position: "top" | "bottom") =>
+    pageCount > 1 && (
+      <Pagination
+        aria-label={`${provider.name} model pages (${position})`}
+        className="m-0 w-auto flex-wrap items-center justify-between gap-3"
+      >
+        <p
+          aria-live={position === "bottom" ? "polite" : "off"}
+          className="text-sm text-muted-foreground"
+        >
+          {first + 1}–{Math.min(first + modelsPerPage, total)} of {total} models
+        </p>
+        <PaginationContent>
+          <PaginationItem>
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label="Go to previous page"
+              disabled={currentPage === 0}
+              onClick={() => setPage(currentPage - 1)}
+            >
+              <ChevronLeft aria-hidden="true" /> Previous
+            </Button>
+          </PaginationItem>
+          <PaginationItem>
+            <span className="px-2 text-sm" aria-current="page">
+              {currentPage + 1} / {pageCount}
+            </span>
+          </PaginationItem>
+          <PaginationItem>
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label="Go to next page"
+              disabled={currentPage + 1 >= pageCount}
+              onClick={() => setPage(currentPage + 1)}
+            >
+              Next <ChevronRight aria-hidden="true" />
+            </Button>
+          </PaginationItem>
+        </PaginationContent>
+      </Pagination>
+    );
   return (
     <section>
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-lg font-semibold">{provider.name}</h2>
-        <span className="text-sm text-muted-foreground">
-          {provider.id} · {provider.kind} · {models.length} models
-        </span>
+        {pagination("top")}
       </div>
       {provider.error && (
         <Alert variant="destructive" className="mt-3">
@@ -238,7 +270,7 @@ function ProviderModels({
         <p className="mt-3 text-sm text-muted-foreground">No models found.</p>
       ) : (
         <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {models.slice(0, limit).map((model, index) => (
+          {models.slice(first, first + modelsPerPage).map((model, index) => (
             <ModelCard
               key={`${model.id}-${index}`}
               model={model}
@@ -248,16 +280,7 @@ function ProviderModels({
           ))}
         </div>
       )}
-      {models.length > limit && (
-        <Button
-          type="button"
-          variant="outline"
-          className="mt-3"
-          onClick={() => setLimit((current) => current + 50)}
-        >
-          Show more ({models.length - limit} remaining)
-        </Button>
-      )}
+      {pageCount > 1 && <div className="mt-5">{pagination("bottom")}</div>}
     </section>
   );
 }
@@ -280,13 +303,37 @@ export function ModelCatalogPage() {
       });
     },
   });
-  const providers = useMemo(
-    () =>
-      (catalog.data?.providers ?? []).filter(
-        (provider) => !providerFilter || provider.id === providerFilter,
-      ),
-    [catalog.data, providerFilter],
-  );
+  const groups = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return (catalog.data?.providers ?? [])
+      .filter((provider) => !providerFilter || provider.id === providerFilter)
+      .map((provider) => {
+        const matchesProvider =
+          `${provider.name} ${provider.id} ${provider.kind}`
+            .toLowerCase()
+            .includes(needle);
+        const models = provider.models.filter(
+          (model) =>
+            matchesProvider ||
+            [
+              `${provider.id}/${model.id}`,
+              model.id,
+              model.name,
+              model.display_name,
+              model.default_reasoning_effort,
+            ].some(
+              (value) =>
+                typeof value === "string" &&
+                value.toLowerCase().includes(needle),
+            ),
+        );
+        return { provider, models, matchesProvider };
+      })
+      .filter(
+        ({ provider, models, matchesProvider }) =>
+          !needle || matchesProvider || models.length > 0 || provider.error,
+      );
+  }, [catalog.data, providerFilter, search]);
   return (
     <main className={pageClass}>
       <style>{requestBodyTheme}</style>
@@ -367,14 +414,23 @@ export function ModelCatalogPage() {
           discover models.
         </p>
       )}
+      {catalog.data &&
+        catalog.data.providers.length > 0 &&
+        groups.length === 0 && (
+          <p className="mt-6 text-sm text-muted-foreground">
+            No models match your search.
+          </p>
+        )}
       <div className="mt-6 grid gap-4">
-        {providers.map((provider) => (
-          <ProviderModels
-            key={provider.id}
-            provider={provider}
-            search={search}
-            data={data.data}
-          />
+        {groups.map(({ provider, models }, index) => (
+          <Fragment key={`${provider.id}:${search}`}>
+            {index > 0 && <Separator />}
+            <ProviderModels
+              provider={provider}
+              models={models}
+              data={data.data}
+            />
+          </Fragment>
         ))}
       </div>
     </main>
