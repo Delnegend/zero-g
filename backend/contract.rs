@@ -12,7 +12,7 @@ pub(crate) fn openapi() -> utoipa::openapi::OpenApi {
     document.merge(crate::server::settings::Api::openapi());
     document.merge(crate::server::observability::Api::openapi());
     document.merge(crate::server::model_catalog::Api::openapi());
-    document.merge(crate::server::model_settings::Api::openapi());
+    document.merge(crate::server::model_setting::Api::openapi());
     document.merge(crate::server::inference::Api::openapi());
     document.merge(crate::provider::registry::Api::openapi());
     document.merge(crate::provider::credentials::Api::openapi());

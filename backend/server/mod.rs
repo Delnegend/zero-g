@@ -5,7 +5,7 @@ pub(crate) mod inference;
 /// Cached provider model discovery.
 pub(crate) mod model_catalog;
 /// Model metadata settings and synchronization.
-pub(crate) mod model_settings;
+pub(crate) mod model_setting;
 /// Request logging and dashboard metrics.
 pub(crate) mod observability;
 /// Persistent settings and API keys.
@@ -74,7 +74,7 @@ pub(crate) fn create_router(state: AppState) -> Router {
         .merge(registry::router(state.settings.clone()))
         .merge(provider::dashboard_router(&state))
         .merge(model_catalog::router(state.clone()))
-        .merge(model_settings::router(state.clone()))
+        .merge(model_setting::router(state.clone()))
         .fallback(get(web::fallback));
     let dashboard = state.dashboard_auth.protect(dashboard);
 

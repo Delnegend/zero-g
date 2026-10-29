@@ -170,7 +170,7 @@ async fn run_server(settings: SettingsStore, logs: LogStore) -> Result<(), Serve
         .unwrap_or_else(|| "127.0.0.1:8080".into());
     let addr = bind.parse().map_err(ServerError::InvalidBindAddress)?;
     let state = init_state(settings, logs).await?;
-    tokio::spawn(crate::server::model_settings::run_background(state.clone()));
+    tokio::spawn(crate::server::model_setting::run_background(state.clone()));
     log_endpoints(addr);
     let app = create_router(state);
     bind_and_serve(addr, app).await

@@ -312,7 +312,7 @@ fn normalize_pricing(kind: &str, price: &Value) -> CatalogPricing {
 fn normalize_model(
     provider: &CachedProvider,
     model: Model,
-    data: &super::model_settings::ModelData,
+    data: &super::model_setting::ModelData,
 ) -> CatalogModel {
     let zen = (provider.kind == "zen")
         .then(|| {
@@ -392,7 +392,7 @@ fn normalize_model(
 
 /// Enrich a raw snapshot from the latest cached sheets without altering persistence.
 async fn normalize_catalog(store: &SettingsStore, catalog: CachedCatalog) -> ModelCatalog {
-    let models = super::model_settings::CatalogModels::from_entries(
+    let models = super::model_setting::CatalogModels::from_entries(
         catalog.providers.iter().flat_map(|provider| {
             provider.models.iter().map(|model| {
                 (
@@ -403,12 +403,12 @@ async fn normalize_catalog(store: &SettingsStore, catalog: CachedCatalog) -> Mod
             })
         }),
     );
-    let (data, datasheets_error) = match super::model_settings::catalog_data(store, &models).await {
+    let (data, datasheets_error) = match super::model_setting::catalog_data(store, &models).await {
         Ok(data) => (data, None),
         Err(error) => {
             tracing::warn!("Unable to load cached model datasheets: {error}");
             (
-                super::model_settings::ModelData::default(),
+                super::model_setting::ModelData::default(),
                 Some("Unable to load cached datasheets".to_owned()),
             )
         }
@@ -419,7 +419,7 @@ async fn normalize_catalog(store: &SettingsStore, catalog: CachedCatalog) -> Mod
 }
 
 /// Build the dashboard view from a discovery snapshot and its filtered datasheets.
-fn enrich_catalog(catalog: CachedCatalog, data: &super::model_settings::ModelData) -> ModelCatalog {
+fn enrich_catalog(catalog: CachedCatalog, data: &super::model_setting::ModelData) -> ModelCatalog {
     ModelCatalog {
         datasheets_error: None,
         providers: catalog
@@ -518,8 +518,8 @@ mod tests {
         }
     }
 
-    fn sample_data(pricing: Value, parameters: Value) -> super::super::model_settings::ModelData {
-        super::super::model_settings::ModelData {
+    fn sample_data(pricing: Value, parameters: Value) -> super::super::model_setting::ModelData {
+        super::super::model_setting::ModelData {
             pricing,
             parameters,
         }
