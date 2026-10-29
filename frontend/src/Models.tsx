@@ -15,6 +15,7 @@ import {
   type Settings,
 } from "./server/api/models";
 import { CardsSkeleton, FormSkeleton } from "./components/Loading";
+import { RequestBody, requestBodyTheme } from "./RequestBody";
 import { RefreshButton } from "./components/RefreshButton";
 import { Alert, AlertDescription } from "./components/ui/alert";
 import { Button } from "./components/ui/button";
@@ -55,13 +56,19 @@ function lookup(
 }
 
 function JsonDetails({ title, value }: { title: string; value: unknown }) {
+  const [open, setOpen] = useState(false);
   if (value === undefined || value === null) return null;
   return (
-    <details className="mt-2 text-sm">
+    <details
+      className="mt-2 text-sm"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
       <summary className="cursor-pointer font-medium">{title}</summary>
-      <pre className="mt-2 max-h-80 overflow-auto rounded-md bg-muted p-3 text-xs whitespace-pre-wrap break-all">
-        {JSON.stringify(value, null, 2)}
-      </pre>
+      {open && (
+        <div className="mt-2">
+          <RequestBody body={JSON.stringify(value)} />
+        </div>
+      )}
     </details>
   );
 }
@@ -252,6 +259,7 @@ export function ModelCatalogPage() {
   );
   return (
     <main className={pageClass}>
+      <style>{requestBodyTheme}</style>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Models</h1>
