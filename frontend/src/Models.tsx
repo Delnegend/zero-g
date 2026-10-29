@@ -1,6 +1,8 @@
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
+import { Info } from "lucide-react";
+import { antigravityReferencePrice } from "./modelPricing";
 import { message } from "./server/api/client";
 import {
   modelCatalogQueryOptions,
@@ -22,6 +24,11 @@ import { Button } from "./components/ui/button";
 import { Card } from "./components/ui/card";
 import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "./components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -90,7 +97,11 @@ function ModelCard({
   provider: Provider;
   data?: Datasheets;
 }) {
-  const price = lookup(data?.pricing, provider, model.id);
+  const price =
+    lookup(data?.pricing, provider, model.id) ??
+    (provider.kind === "agy"
+      ? antigravityReferencePrice(data?.pricing, model.id)
+      : undefined);
   const parameters = lookup(data?.parameters, provider, model.id);
   const pricing =
     price && typeof price === "object" && !Array.isArray(price)
@@ -147,7 +158,26 @@ function ModelCard({
         )}
         {rows.map(([label, value]) => (
           <div key={label} className="flex justify-between gap-4 py-2">
-            <dt className="shrink-0 text-muted-foreground">{label}</dt>
+            <dt className="flex shrink-0 items-center gap-1 text-muted-foreground">
+              {label}
+              {provider.kind === "agy" &&
+                label === "Input price / 1M tokens" && (
+                  <Popover>
+                    <PopoverTrigger
+                      aria-label="About Antigravity reference pricing"
+                      className="rounded-sm hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2"
+                    >
+                      <Info className="size-3.5" />
+                    </PopoverTrigger>
+                    <PopoverContent>
+                      These reference API prices come from the configured
+                      pricing datasheet and are informational only. They are not
+                      Antigravity charges; actual costs depend on your plan and
+                      any credit overages.
+                    </PopoverContent>
+                  </Popover>
+                )}
+            </dt>
             <dd className="min-w-0 break-all text-right">{value}</dd>
           </div>
         ))}
