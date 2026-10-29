@@ -1,18 +1,26 @@
+use crate::openai::Model;
+use crate::provider;
+use crate::server::{AppState, settings::Permissions};
 use axum::{
     Json, Router,
-    body::{Body, to_bytes},
-    extract::{Request, State},
     http::{StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use futures_util::future::join_all;
-use serde_json::{Value, json};
-use tower::ServiceExt;
+use serde_json::Value;
 
-use crate::openai::Model;
-use crate::provider::{self, catalog, registry};
-use crate::server::{AppState, settings::Permissions};
+/// Chat Completions endpoint.
+mod chat_completions;
+/// Shared request validation and provider dispatch.
+mod dispatch;
+/// Model discovery endpoint.
+mod models;
+/// Responses endpoint.
+mod responses;
+
+use chat_completions::{__path_inference, inference};
+use models::{__path_models, models};
+use responses::{__path_inference_responses, inference_responses};
 
 /// Inference request with provider-qualified model and provider-specific fields.
 #[derive(serde::Deserialize, serde::Serialize, utoipa::ToSchema)]
@@ -93,223 +101,6 @@ async fn permissions(
     }
 }
 
-/// Aggregate permitted model records, without exposing upstream errors.
-#[utoipa::path(get, path = "/v1/models", operation_id = "listInferenceModels",
-    params(("Authorization" = String, Header, description = "Bearer virtual key")),
-    responses((status = 200, body = InferenceModelList),
-        (status = 401, description = "Missing or invalid virtual key", body = Value),
-        (status = 500, description = "Registry or permissions error", body = Value),
-        (status = 502, description = "All provider discoveries failed", body = Value)))]
-async fn models(State(state): State<AppState>, request: Request) -> Response {
-    let permissions = match permissions(&state, request.headers()).await {
-        Ok(p) => p,
-        Err(e) => return e.into_response(),
-    };
-    let Ok(providers) = registry::list(&state.settings.database).await else {
-        return error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to load providers",
-            "server_error",
-            "internal_error",
-        );
-    };
-    let providers: Vec<_> = providers
-        .into_iter()
-        .filter(|p| permissions.providers.is_empty() || permissions.providers.contains(&p.id))
-        .collect();
-    let results = join_all(providers.iter().map(|provider| async {
-        tokio::time::timeout(
-            std::time::Duration::from_secs(30),
-            catalog::discover_permitted(&state, provider, &permissions),
-        )
-        .await
-    }))
-    .await;
-    let mut data = Vec::new();
-    let mut errors = Vec::new();
-    let mut succeeded = false;
-    for (provider, result) in providers.iter().zip(results) {
-        match result {
-            Ok(Ok(models)) => {
-                succeeded = true;
-                for mut model in models {
-                    model.id = format!("{}/{}", provider.id, model.id);
-                    data.push(model);
-                }
-            }
-            _ => errors.push(InferenceDiscoveryError {
-                provider: provider.id.clone(),
-                message: "Model discovery failed".into(),
-            }),
-        }
-    }
-    if !succeeded && !errors.is_empty() {
-        let mut body = super::error_body(
-            "Model discovery failed",
-            "upstream_error",
-            Some("discovery_failed"),
-        );
-        if let Some(object) = body.as_object_mut() {
-            object.insert("errors".into(), json!(errors));
-        }
-        return (StatusCode::BAD_GATEWAY, Json(body)).into_response();
-    }
-    Json(InferenceModelList {
-        object: "list".into(),
-        data,
-        errors,
-    })
-    .into_response()
-}
-
-/// Decode and validate the provider-qualified model without changing request fields.
-fn parse_inference(
-    body: &[u8],
-) -> Result<(String, String, InferenceRequest), crate::provider::common::proxy::ProxyError> {
-    let value: Value = serde_json::from_slice(body).map_err(|_| {
-        crate::provider::common::proxy::error(
-            StatusCode::BAD_REQUEST,
-            "Invalid JSON request",
-            "invalid_request_error",
-            "invalid_request",
-        )
-    })?;
-    let invalid_model = || {
-        crate::provider::common::proxy::error(
-            StatusCode::BAD_REQUEST,
-            "Model must be provider/model",
-            "invalid_request_error",
-            "invalid_model",
-        )
-    };
-    let (id, model) = value
-        .get("model")
-        .and_then(Value::as_str)
-        .and_then(|m| m.split_once('/'))
-        .filter(|(id, model)| !id.is_empty() && !model.is_empty())
-        .ok_or_else(invalid_model)?;
-    let id = id.to_owned();
-    let model = model.to_owned();
-    let value = serde_json::from_value(value).map_err(|_| invalid_model())?;
-    Ok((id, model, value))
-}
-
-/// Rewrite only the model and dispatch to the existing private provider router.
-#[utoipa::path(post, path = "/v1/chat/completions", operation_id = "createChatCompletion",
-    params(("Authorization" = String, Header, description = "Bearer virtual key")),
-    request_body = InferenceRequest,
-    responses((status = 200, description = "Provider JSON or server-sent event stream",
-        content((Value = "application/json"), (String = "text/event-stream"))),
-        (status = 400, description = "Invalid request", body = Value),
-        (status = 401, description = "Missing or invalid virtual key", body = Value),
-        (status = 403, description = "Key does not permit provider or model", body = Value),
-        (status = 404, description = "Provider not found", body = Value),
-        (status = 413, description = "Request body too large", body = Value),
-        (status = 500, description = "Gateway error", body = Value),
-        (status = 502, description = "Provider error", body = Value)))]
-async fn inference(
-    State(state): State<AppState>,
-    axum::Extension(router): axum::Extension<Router>,
-    request: Request,
-) -> Response {
-    let permissions = match permissions(&state, request.headers()).await {
-        Ok(p) => p,
-        Err(e) => return e.into_response(),
-    };
-    let (mut parts, body) = request.into_parts();
-    let Ok(body) = to_bytes(body, 2 * 1024 * 1024).await else {
-        return error(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "Request body too large",
-            "invalid_request_error",
-            "body_too_large",
-        );
-    };
-    let (id, model, mut value) = match parse_inference(&body) {
-        Ok(value) => value,
-        Err(err) => return err.into_response(),
-    };
-    if !permissions.providers.is_empty() && !permissions.providers.contains(&id) {
-        return error(
-            StatusCode::FORBIDDEN,
-            "Virtual key does not permit this provider",
-            "permission_error",
-            "provider_not_allowed",
-        );
-    }
-    let provider = match registry::get(&state.settings.database, &id).await {
-        Ok(Some(provider)) => provider,
-        Ok(None) => {
-            return error(
-                StatusCode::NOT_FOUND,
-                "Provider not found",
-                "invalid_request_error",
-                "provider_not_found",
-            );
-        }
-        Err(_) => {
-            return error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to load provider",
-                "server_error",
-                "internal_error",
-            );
-        }
-    };
-    value.model = model;
-    let path = parts
-        .uri
-        .path_and_query()
-        .map_or("/v1/chat/completions", |p| p.as_str());
-    let uri = format!("/{}/{id}{path}", provider.kind);
-    let Ok(uri) = uri.parse() else {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "Invalid request URL",
-            "invalid_request_error",
-            "invalid_request",
-        );
-    };
-    parts.uri = uri;
-    parts.headers.remove(header::CONTENT_LENGTH);
-    let Ok(body) = serde_json::to_vec(&value) else {
-        return error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to serialize request",
-            "server_error",
-            "internal_error",
-        );
-    };
-    match router
-        .oneshot(Request::from_parts(parts, Body::from(body)))
-        .await
-    {
-        Ok(response) => response,
-        Err(never) => match never {},
-    }
-}
-
-/// Dispatch a unified Responses API request through the same inference handler.
-#[utoipa::path(post, path = "/v1/responses", operation_id = "createResponse",
-    params(("Authorization" = String, Header, description = "Bearer virtual key")),
-    request_body = InferenceRequest,
-    responses((status = 200, description = "Provider JSON or server-sent event stream",
-        content((Value = "application/json"), (String = "text/event-stream"))),
-        (status = 400, description = "Invalid request", body = Value),
-        (status = 401, description = "Missing or invalid virtual key", body = Value),
-        (status = 403, description = "Key does not permit provider or model", body = Value),
-        (status = 404, description = "Provider not found", body = Value),
-        (status = 413, description = "Request body too large", body = Value),
-        (status = 500, description = "Gateway error", body = Value),
-        (status = 502, description = "Provider error", body = Value)))]
-async fn inference_responses(
-    state: State<AppState>,
-    router: axum::Extension<Router>,
-    request: Request,
-) -> Response {
-    inference(state, router, request).await
-}
-
 /// The sole public inference API.
 pub(super) fn router(state: &AppState) -> Router<AppState> {
     let internal: Router = provider::router(&state.settings).with_state(state.clone());
@@ -324,19 +115,23 @@ pub(super) fn router(state: &AppState) -> Router<AppState> {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::provider::registry;
     use crate::{
         database::Database,
         server::{observability::LogStore, settings},
     };
+    use axum::body::Body;
     use axum::{
         body::to_bytes,
         http::{Request, header},
         routing::post,
     };
+    use serde_json::json;
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
+    use tower::ServiceExt;
 
     /// Read a JSON response body.
     async fn json_body(response: Response) -> Value {
