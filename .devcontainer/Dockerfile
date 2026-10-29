@@ -1,5 +1,8 @@
 FROM debian:13-slim
 
+# Use the official, versioned Bun image instead of executing a remote installer.
+COPY --from=oven/bun:1.4.4 /usr/local/bin/bun /usr/local/bin/bun
+
 ARG MOLD_VERSION=2.42.0
 
 ENV LANG=C.UTF-8

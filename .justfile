@@ -44,8 +44,23 @@ api-check:
     bun fmt --no-script "$tmp/frontend/src/server/api/generated"
     diff -ru frontend/src/server/api/generated "$tmp/frontend/src/server/api/generated" || { echo "API contracts are stale; run just api-generate" >&2; exit 1; }
 
+# Keep the OSV exception limited to the unused Toasty MySQL dependency.
+check-dependencies:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tree="$(cargo tree --locked --target all --all-features --prefix none --format '{p}')"
+    while IFS= read -r package; do
+        case "$package" in
+            "rsa v0.10.0-rc.19"|"rsa v0.10.0-rc.19 (*)")
+                echo "rsa 0.10.0-rc.19 is now used; remove the OSV exception and reassess it" >&2
+                exit 1
+                ;;
+        esac
+    done <<< "$tree"
+
 # Single gate CI verification
 check:
+    just check-dependencies
     bun fmt --check --no-script frontend assets/zen_shim.ts
     just lint
     just frontend-build

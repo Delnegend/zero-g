@@ -25,11 +25,15 @@ function dashboardAuth(): Plugin {
           return;
         }
 
-        const headers: http.OutgoingHttpHeaders = {};
-        for (const name of ["host", "authorization", "cookie"] as const) {
-          if (req.headers[name] !== undefined)
-            headers[name] = req.headers[name];
-        }
+        const headers: http.OutgoingHttpHeaders = {
+          ...(req.headers.host !== undefined && { host: req.headers.host }),
+          ...(req.headers.authorization !== undefined && {
+            authorization: req.headers.authorization,
+          }),
+          ...(req.headers.cookie !== undefined && {
+            cookie: req.headers.cookie,
+          }),
+        };
         const check = http.request(
           `http://127.0.0.1:8080${["/", "/llm-logs", "/settings", "/keys", "/models/catalog", "/models/providers", "/models/settings"].includes(pathname) ? pathname + url.search : "/"}`,
           {

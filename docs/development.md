@@ -8,6 +8,8 @@
 
 Install frontend dependencies with `(cd frontend && bun install --frozen-lockfile)`. Build the frontend with `just frontend-build` before invoking `cargo build` directly; its files are embedded into the binary. `just build`, `just test`, and `just check` build it automatically.
 
+The development container provides Bun 1.4.4 from the official Bun image. Its post-install hook installs the locked frontend dependencies and builds the frontend; it does not download or execute an installer script.
+
 For live frontend reload, start the Rust backend and Vite together:
 
 ```bash
@@ -46,6 +48,10 @@ just fmt
 # Compile release binary
 just build
 ```
+
+`just check-dependencies` ensures the OSV exception for `rsa 0.10.0-rc.19` remains limited to Toasty's unused MySQL driver. If that version enters the build, remove the exception in `osv-scanner.toml` and reassess its security advisory.
+
+`osv-scanner.toml` contains temporary, version-specific OIDC and shadcn tooling dependency exceptions through 2026-11-28. Each suppresses all OSV findings for that exact package version, not only the named advisory; review raw findings and dependency usage before renewing. For `block-buffer 0.10.4`, the source advisory lists versions starting at 0.11.0 while the OSV record starts at 0; recheck both before renewal. `deepmerge` is used by shadcn's development tool and is not included in the built dashboard.
 
 Rust follows the [Namtao strict Clippy configuration](https://www.namtao.com/rust/#strict-lints): pedantic and nursery lints, plus explicit panic, indexing, arithmetic, conversion, and process-exit checks. `clippy.toml` permits the guide's test-only exceptions. Visibility follows actual usage: keep items private when possible and expose them only to the modules that need them. The `redundant_pub_crate` lint is disabled because it recommends broader visibility in binary crates; individual exceptions document cohesive long functions or JSON object insertion.
 

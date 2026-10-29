@@ -12,7 +12,7 @@ test("highlights JSON without interpreting its contents as HTML", () => {
   assert.match(html, /data-token="property"/);
   assert.match(html, /data-token="number"/);
   assert.ok(html.includes("&lt;script&gt;alert(1)&lt;/script&gt;"));
-  assert.ok(!html.includes("<script>"));
+  assert.doesNotMatch(html, /<script\b/i);
 });
 
 test("keeps streamed or non-JSON responses as plain text", () => {
