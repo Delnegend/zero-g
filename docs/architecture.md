@@ -32,7 +32,7 @@ flowchart TD
 - **Account usage (`backend/provider/quota.rs`):** Dispatches to provider-owned quota implementations; Zen balance uses a separately encrypted Console session and workspace ID. The dashboard caches responses for five minutes.
 - **Codex tool history:** Function-call arguments are sent upstream as JSON strings, including when a Responses request supplies an object.
 - **Stream Parsers (`backend/provider/antigravity/stream.rs`, `backend/provider/codex/client.rs`):** Decode upstream SSE streams into standard OpenAI chat completion chunks or Responses API lifecycle events.
-- **Storage (`backend/database.rs`, `backend/storage.rs`):** A shared Toasty connection pool serves providers, settings, encrypted secrets, virtual keys and request logs. Related changes use database transactions; write conflicts are retried for up to five seconds. Dashboard summaries use a consistent read snapshot. Embedded migrations run at startup.
+- **Storage (`backend/database.rs`, `backend/storage.rs`):** A shared Toasty connection pool serves providers, settings, encrypted secrets, virtual keys and request logs. The settings store holds its validated 32-byte encryption key as an `EncryptionKey` type. Related changes use database transactions; write conflicts are retried for up to five seconds. Dashboard summaries use a consistent read snapshot. Embedded migrations run at startup.
 ## Invariants & Guarantees
 
 - **Token Freshness:** Any request dispatched with a token expiring within 60 seconds triggers a refresh before the upstream connection opens.

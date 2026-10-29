@@ -20,13 +20,27 @@ const SENTINEL: &str = "__zero_g_encryption_key_check";
 /// Expected plaintext of the encryption-key sentinel.
 const CHECK: &str = "zero-g encryption key check v1";
 
+/// Validated AES-256-GCM key for encrypting stored secrets.
+#[derive(Clone)]
+struct EncryptionKey([u8; 32]);
+
+impl EncryptionKey {
+    /// Decodes the configured base64 key and requires exactly 32 bytes.
+    fn parse(value: &str) -> Result<Self, String> {
+        let invalid = || "ZERO_G_ENCRYPTION_KEY must be base64-encoded 32 bytes".to_string();
+        let bytes = STANDARD.decode(value.trim()).map_err(|_| invalid())?;
+        let key = bytes.try_into().map_err(|_| invalid())?;
+        Ok(Self(key))
+    }
+}
+
 /// Database-backed settings and secret encryption context.
 #[derive(Clone)]
 pub(crate) struct SettingsStore {
     /// Database used for settings, secrets, and virtual keys.
     pub(crate) database: Database,
     /// AES-256-GCM key used to protect stored secrets.
-    encryption_key: [u8; 32],
+    encryption_key: EncryptionKey,
 }
 
 /// Provider and model restrictions associated with a virtual key.
@@ -76,12 +90,7 @@ pub(super) struct CreateKey {
 impl SettingsStore {
     /// Initializes the store, validates its encryption key, and migrates legacy data.
     pub(crate) async fn new(database: Database, encryption_key: &str) -> Result<Self, String> {
-        let key = STANDARD
-            .decode(encryption_key.trim())
-            .map_err(|_| "ZERO_G_ENCRYPTION_KEY must be base64-encoded 32 bytes".to_string())?;
-        let encryption_key: [u8; 32] = key
-            .try_into()
-            .map_err(|_| "ZERO_G_ENCRYPTION_KEY must be base64-encoded 32 bytes".to_string())?;
+        let encryption_key = EncryptionKey::parse(encryption_key)?;
         let store = Self {
             database,
             encryption_key,
@@ -158,7 +167,7 @@ impl SettingsStore {
         let nonce: [u8; 12] = nonce.try_into().map_err(|_| "Invalid nonce")?;
         let mut ciphertext = ciphertext.to_vec();
         let key = aead::LessSafeKey::new(
-            aead::UnboundKey::new(&aead::AES_256_GCM, &self.encryption_key)
+            aead::UnboundKey::new(&aead::AES_256_GCM, &self.encryption_key.0)
                 .map_err(|_| "Invalid encryption key")?,
         );
         let plaintext = key
@@ -178,7 +187,7 @@ impl SettingsStore {
             .fill(&mut nonce)
             .map_err(|_| "Secure randomness unavailable")?;
         let key = aead::LessSafeKey::new(
-            aead::UnboundKey::new(&aead::AES_256_GCM, &self.encryption_key)
+            aead::UnboundKey::new(&aead::AES_256_GCM, &self.encryption_key.0)
                 .map_err(|_| "Invalid encryption key")?,
         );
         let mut encrypted = value.as_bytes().to_vec();
