@@ -91,6 +91,26 @@ mod tests {
     use super::Database;
     use crate::storage::Setting;
 
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Owns a private directory for a file-backed test database and its sidecars.
+    struct TestDirectory(std::path::PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            let path =
+                std::env::temp_dir().join(format!("zero-g-db-test-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
     /// Dropped transactions roll back while committed writes remain visible.
     #[tokio::test]
     async fn transaction_commits_only_when_requested() {
@@ -126,5 +146,95 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(row.value, "saved");
+    }
+
+    /// A snapshot invalidated by a competing commit is retried from a fresh transaction.
+    #[tokio::test]
+    async fn transaction_retries_a_real_write_conflict() {
+        let directory = TestDirectory::new();
+        let path = directory.0.join("database.db");
+        let database = Database::open(path.to_str().unwrap()).await.unwrap();
+        Setting::upsert_by_name("counter")
+            .value("initial")
+            .exec(&mut (*database.db).clone())
+            .await
+            .unwrap();
+
+        let snapshot_read = tokio::sync::Notify::new();
+        let competitor_committed = tokio::sync::Notify::new();
+        let attempts = AtomicUsize::new(0);
+        let conflicts = AtomicUsize::new(0);
+
+        let update = async {
+            let result = transaction_with_retry!(database, |mut tx| {
+                let attempt = attempts.fetch_add(1, Ordering::SeqCst);
+                let row = Setting::filter_by_name("counter")
+                    .first()
+                    .exec(&mut tx)
+                    .await?
+                    .unwrap();
+                if attempt == 0 {
+                    assert_eq!(row.value, "initial");
+                    snapshot_read.notify_one();
+                    competitor_committed.notified().await;
+                } else {
+                    assert_eq!(row.value, "competitor");
+                }
+
+                let value = format!("{}+local", row.value);
+                let result = async {
+                    Setting::upsert_by_name("counter")
+                        .value(value.as_str())
+                        .exec(&mut tx)
+                        .await?;
+                    Setting::upsert_by_name("companion")
+                        .value(value.as_str())
+                        .exec(&mut tx)
+                        .await?;
+                    tx.commit().await?;
+                    Ok::<_, toasty::Error>(value)
+                }
+                .await;
+                if result
+                    .as_ref()
+                    .is_err_and(toasty::Error::is_serialization_failure)
+                {
+                    conflicts.fetch_add(1, Ordering::SeqCst);
+                }
+                result
+            });
+            assert_eq!(result.unwrap(), "competitor+local");
+        };
+
+        let competitor = async {
+            snapshot_read.notified().await;
+            let mut db = (*database.db).clone();
+            let mut tx = db.transaction().await.unwrap();
+            Setting::upsert_by_name("counter")
+                .value("competitor")
+                .exec(&mut tx)
+                .await
+                .unwrap();
+            tx.commit().await.unwrap();
+            competitor_committed.notify_one();
+        };
+
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            tokio::join!(update, competitor);
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(conflicts.load(Ordering::SeqCst), 1);
+        for name in ["counter", "companion"] {
+            let row = Setting::filter_by_name(name)
+                .first()
+                .exec(&mut (*database.db).clone())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(row.value, "competitor+local");
+        }
     }
 }
