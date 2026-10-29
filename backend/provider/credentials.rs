@@ -7,7 +7,6 @@ use axum::{
 };
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 use crate::{
     provider::registry,
@@ -16,7 +15,7 @@ use crate::{
 };
 
 /// Credential metadata exposed without the underlying secret.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct Credential {
     /// Stable credential identifier.
     pub(crate) id: String,
@@ -154,9 +153,9 @@ pub(crate) async fn save_oauth(
 }
 
 /// Credential creation or update request.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
-struct Input {
+struct CredentialInput {
     /// User-facing credential name.
     name: String,
     /// Positive relative selection weight.
@@ -168,7 +167,7 @@ struct Input {
 }
 
 /// Rejects empty names and nonpositive weights.
-fn validate(input: &Input) -> Result<(), &'static str> {
+fn validate(input: &CredentialInput) -> Result<(), &'static str> {
     if input.name.trim().is_empty() {
         return Err("Credential name must not be empty");
     }
@@ -188,23 +187,40 @@ fn internal(error: &str) -> Response {
         .into_response()
 }
 
+/// Credential listing.
+#[derive(Serialize, utoipa::ToSchema)]
+struct CredentialsResponse {
+    /// Credential metadata without secrets.
+    credentials: Vec<Credential>,
+}
+
+/// Credential management API.
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(list_endpoint, create, update, delete),
+    components(schemas(Credential, CredentialInput, CredentialsResponse))
+)]
+pub(crate) struct Api;
+
 /// Lists a provider's credentials over HTTP.
+#[utoipa::path(get, path = "/api/providers/{id}/credentials", operation_id = "listCredentials", params(("id" = String, Path)), responses((status = 200, body = CredentialsResponse)))]
 async fn list_endpoint(
     State(store): State<SettingsStore>,
     Path(provider_id): Path<String>,
 ) -> Response {
     match all(&store, &provider_id).await {
-        Ok(Some(credentials)) => Json(json!({"credentials": credentials})).into_response(),
+        Ok(Some(credentials)) => Json(CredentialsResponse { credentials }).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "Provider not found").into_response(),
         Err(e) => internal(&e),
     }
 }
 
 /// Creates a credential and stores any supplied secret.
+#[utoipa::path(post, path = "/api/providers/{id}/credentials", operation_id = "createCredential", params(("id" = String, Path)), request_body = CredentialInput, responses((status = 201, body = Credential)))]
 async fn create(
     State(store): State<SettingsStore>,
     Path(provider_id): Path<String>,
-    Json(input): Json<Input>,
+    Json(input): Json<CredentialInput>,
 ) -> Response {
     if let Err(e) = validate(&input) {
         return (StatusCode::BAD_REQUEST, e).into_response();
@@ -282,10 +298,11 @@ async fn create(
 }
 
 /// Updates credential metadata and an optional API key.
+#[utoipa::path(put, path = "/api/providers/{id}/credentials/{credential_id}", operation_id = "updateCredential", params(("id" = String, Path), ("credential_id" = String, Path)), request_body = CredentialInput, responses((status = 200, body = Credential)))]
 async fn update(
     State(store): State<SettingsStore>,
     Path((provider_id, id)): Path<(String, String)>,
-    Json(input): Json<Input>,
+    Json(input): Json<CredentialInput>,
 ) -> Response {
     if let Err(e) = validate(&input) {
         return (StatusCode::BAD_REQUEST, e).into_response();
@@ -366,6 +383,7 @@ async fn update(
 }
 
 /// Deletes a provider credential and its associated state.
+#[utoipa::path(delete, path = "/api/providers/{id}/credentials/{credential_id}", operation_id = "deleteCredential", params(("id" = String, Path), ("credential_id" = String, Path)), responses((status = 204)))]
 async fn delete(
     State(store): State<SettingsStore>,
     Path((provider_id, id)): Path<(String, String)>,

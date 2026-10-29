@@ -6,17 +6,18 @@ use axum::{
     routing::get as route_get,
 };
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use serde_json::json;
 
 use crate::{
     database::Database,
-    provider::{PROVIDER_KINDS, credentials},
+    provider::{PROVIDER_KINDS, common::ProviderDescriptor, credentials},
     server::settings::SettingsStore,
     storage::{ProviderCredential, ProviderRecord, Secret, Setting, VirtualKey},
 };
 
 /// Active configured provider instance exposed by the registry.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct Provider {
     /// Stable instance identifier.
     pub(crate) id: String,
@@ -63,7 +64,7 @@ pub(crate) async fn list(database: &Database) -> Result<Vec<Provider>, String> {
 }
 
 /// Request to create a provider instance.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 struct CreateProvider {
     /// Requested instance identifier for non-fixed kinds.
@@ -78,7 +79,7 @@ struct CreateProvider {
 }
 
 /// Mutable provider instance properties.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 struct UpdateProvider {
     /// Replacement display name, if supplied.
@@ -147,21 +148,61 @@ fn internal_error(error: &str) -> Response {
     (StatusCode::INTERNAL_SERVER_ERROR, "Provider registry error").into_response()
 }
 
+/// Provider kind listing.
+#[derive(Serialize, utoipa::ToSchema)]
+struct ProviderKindsResponse {
+    /// Available kinds.
+    kinds: &'static [ProviderDescriptor],
+}
+
+/// Provider instance listing.
+#[derive(Serialize, utoipa::ToSchema)]
+struct ProvidersResponse {
+    /// Active providers.
+    providers: Vec<Provider>,
+}
+
+/// Provider registry API.
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(
+        list_provider_kinds,
+        list_providers,
+        create_provider,
+        update_provider,
+        delete_provider
+    ),
+    components(schemas(
+        Provider,
+        ProviderDescriptor,
+        ProviderKindsResponse,
+        ProvidersResponse,
+        CreateProvider,
+        UpdateProvider
+    ))
+)]
+pub(crate) struct Api;
+
 /// Returns the supported provider kind descriptors.
+#[utoipa::path(get, path = "/api/provider-kinds", operation_id = "listProviderKinds", responses((status = 200, body = ProviderKindsResponse)))]
 async fn list_provider_kinds() -> impl IntoResponse {
-    Json(json!({"kinds": PROVIDER_KINDS}))
+    Json(ProviderKindsResponse {
+        kinds: PROVIDER_KINDS,
+    })
 }
 
 /// Returns the active provider instances.
+#[utoipa::path(get, path = "/api/providers", operation_id = "listProviders", responses((status = 200, body = ProvidersResponse)))]
 async fn list_providers(State(store): State<SettingsStore>) -> Response {
     let providers = match list(&store.database).await {
         Ok(providers) => providers,
         Err(e) => return internal_error(&e),
     };
-    Json(json!({"providers": providers})).into_response()
+    Json(ProvidersResponse { providers }).into_response()
 }
 
 /// Creates a provider after validating identity and uniqueness.
+#[utoipa::path(post, path = "/api/providers", operation_id = "createProvider", request_body = CreateProvider, responses((status = 201, body = Provider)))]
 async fn create_provider(
     State(store): State<SettingsStore>,
     Json(input): Json<CreateProvider>,
@@ -259,6 +300,7 @@ async fn create_provider(
 }
 
 /// Updates a provider's mutable properties.
+#[utoipa::path(put, path = "/api/providers/{id}", operation_id = "updateProvider", params(("id" = String, Path)), request_body = UpdateProvider, responses((status = 200, body = Provider)))]
 async fn update_provider(
     State(store): State<SettingsStore>,
     Path(id): Path<String>,
@@ -327,6 +369,7 @@ async fn update_provider(
 }
 
 /// Deletes a provider and its associated credentials and state.
+#[utoipa::path(delete, path = "/api/providers/{id}", operation_id = "deleteProvider", params(("id" = String, Path)), responses((status = 204)))]
 async fn delete_provider(State(store): State<SettingsStore>, Path(id): Path<String>) -> Response {
     let provider_lock = crate::provider::login::credential_lock(&format!("provider:{id}")).await;
     let _provider_guard = provider_lock.lock().await;

@@ -21,25 +21,28 @@ frontend-build:
 lint:
     cd frontend && bun run oxlint src scripts
 
-# Regenerate the settings API contract and validators
+# Regenerate the consolidated OpenAPI and dashboard client contracts
 api-generate:
     ZERO_G_OPENAPI_OUTPUT="$PWD/frontend/src/server/api/generated/openapi.json" cargo test --quiet --bin zero-g contract::tests::settings_contract_exposes_operations_and_u32_bounds -- --exact
     bun fmt --no-script frontend/src/server/api/generated/openapi.json
     cd frontend && bun run orval --config orval.config.ts
-    bun fmt --no-script frontend/src/server/api/generated/settings.ts
+    bun fmt --no-script frontend/src/server/api/generated
 
-# Detect stale generated settings contracts without changing project files
+# Detect stale generated contracts without changing project files
 api-check:
     #!/usr/bin/env bash
     set -euo pipefail
     tmp="$(mktemp -d)"
     trap 'rm -rf "$tmp"' EXIT
-    ZERO_G_OPENAPI_OUTPUT="$tmp/openapi.json" cargo test --quiet --bin zero-g contract::tests::settings_contract_exposes_operations_and_u32_bounds -- --exact
-    bun fmt --no-script "$tmp/openapi.json"
-    cmp "$tmp/openapi.json" frontend/src/server/api/generated/openapi.json || { echo "OpenAPI is stale; run just api-generate" >&2; exit 1; }
-    (cd frontend && ZERO_G_OPENAPI_INPUT="$tmp/openapi.json" ZERO_G_CONTRACT_OUTPUT="$tmp/settings.ts" bun run orval --config orval.config.ts)
-    bun fmt --no-script "$tmp/settings.ts"
-    cmp "$tmp/settings.ts" frontend/src/server/api/generated/settings.ts || { echo "Zod validators are stale; run just api-generate" >&2; exit 1; }
+    mkdir -p "$tmp/frontend/src/server/api/generated"
+    cp frontend/orval.config.ts "$tmp/frontend/"
+    cp frontend/src/server/api/client.ts "$tmp/frontend/src/server/api/"
+    ln -s "$PWD/frontend/node_modules" "$tmp/frontend/node_modules"
+    ZERO_G_OPENAPI_OUTPUT="$tmp/frontend/src/server/api/generated/openapi.json" cargo test --quiet --bin zero-g contract::tests::settings_contract_exposes_operations_and_u32_bounds -- --exact
+    bun fmt --no-script "$tmp/frontend/src/server/api/generated/openapi.json"
+    (cd "$tmp/frontend" && bun run orval --config orval.config.ts)
+    bun fmt --no-script "$tmp/frontend/src/server/api/generated"
+    diff -ru frontend/src/server/api/generated "$tmp/frontend/src/server/api/generated" || { echo "API contracts are stale; run just api-generate" >&2; exit 1; }
 
 # Single gate CI verification
 check:

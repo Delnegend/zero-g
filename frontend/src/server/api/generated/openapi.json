@@ -10,9 +10,954 @@
     "version": "0.5.8"
   },
   "paths": {
+    "/api/keys": {
+      "get": {
+        "tags": [],
+        "summary": "Lists virtual key metadata without exposing key tokens.",
+        "operationId": "listKeys",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeyList"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Settings store error"
+          }
+        }
+      },
+      "post": {
+        "tags": [],
+        "summary": "Creates a virtual key and returns its token once.",
+        "operationId": "createKey",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateKey"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedKey"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid key",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Settings store error"
+          }
+        }
+      }
+    },
+    "/api/keys/{id}": {
+      "delete": {
+        "tags": [],
+        "summary": "Deletes a virtual key by ID.",
+        "operationId": "revokeKey",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Virtual key ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Key revoked"
+          },
+          "404": {
+            "description": "Key not found"
+          },
+          "500": {
+            "description": "Settings store error"
+          }
+        }
+      }
+    },
+    "/api/model-catalog": {
+      "get": {
+        "tags": [],
+        "summary": "Return the current reconciled catalog.",
+        "operationId": "getModelCatalog",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelCatalog"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Catalog load failed",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/model-catalog/refresh": {
+      "post": {
+        "tags": [],
+        "summary": "Refresh the catalog on demand and return the result.",
+        "operationId": "refreshModelCatalog",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelCatalog"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Catalog refresh failed",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/model-settings": {
+      "get": {
+        "tags": [],
+        "summary": "Return the current model synchronization settings.",
+        "operationId": "getModelSettings",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelSettings"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelSettingsError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [],
+        "summary": "Validate and persist model synchronization settings.",
+        "operationId": "updateModelSettings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelSettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelSettingsError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelSettingsError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/model-settings/data": {
+      "get": {
+        "tags": [],
+        "summary": "Return cached pricing and parameters for discovered models.",
+        "operationId": "getModelData",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelData"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelSettingsError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/model-settings/sync": {
+      "post": {
+        "tags": [],
+        "summary": "Handle an on-demand datasheet synchronization.",
+        "operationId": "syncModelSettings",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelSyncResult"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelSettingsError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelSettingsError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/observability": {
+      "get": {
+        "tags": [],
+        "summary": "Serve dashboard metrics and recent request logs.",
+        "operationId": "getObservability",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Inclusive lower Unix timestamp",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "description": "Inclusive upper Unix timestamp",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObservabilityResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query"
+          },
+          "500": {
+            "description": "Log query failed"
+          }
+        }
+      }
+    },
+    "/api/openapi.json": {
+      "get": {
+        "tags": [],
+        "summary": "Serve the same `OpenAPI` contract used to generate the frontend client.",
+        "operationId": "getOpenApi",
+        "responses": {
+          "200": {
+            "description": "OpenAPI document",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Dashboard authentication required"
+          }
+        }
+      }
+    },
+    "/api/provider-kinds": {
+      "get": {
+        "tags": [],
+        "summary": "Returns the supported provider kind descriptors.",
+        "operationId": "listProviderKinds",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderKindsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/providers": {
+      "get": {
+        "tags": [],
+        "summary": "Returns the active provider instances.",
+        "operationId": "listProviders",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProvidersResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [],
+        "summary": "Creates a provider after validating identity and uniqueness.",
+        "operationId": "createProvider",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProvider"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Provider"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/providers/{id}": {
+      "put": {
+        "tags": [],
+        "summary": "Updates a provider's mutable properties.",
+        "operationId": "updateProvider",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProvider"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Provider"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [],
+        "summary": "Deletes a provider and its associated credentials and state.",
+        "operationId": "deleteProvider",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/api/providers/{id}/credentials": {
+      "get": {
+        "tags": [],
+        "summary": "Lists a provider's credentials over HTTP.",
+        "operationId": "listCredentials",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialsResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [],
+        "summary": "Creates a credential and stores any supplied secret.",
+        "operationId": "createCredential",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CredentialInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Credential"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/providers/{id}/credentials/{credential_id}": {
+      "put": {
+        "tags": [],
+        "summary": "Updates credential metadata and an optional API key.",
+        "operationId": "updateCredential",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CredentialInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Credential"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [],
+        "summary": "Deletes a provider credential and its associated state.",
+        "operationId": "deleteCredential",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/api/providers/{id}/credentials/{credential_id}/agy/finish": {
+      "post": {
+        "tags": [],
+        "summary": "Validates and completes a pending Google OAuth callback.",
+        "operationId": "finishAntigravityLogin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AntigravityFinishInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntigravityFinishResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/providers/{id}/credentials/{credential_id}/agy/poll": {
+      "post": {
+        "tags": [],
+        "summary": "Returns pending status or consumes the completed result for a flow.",
+        "operationId": "pollAntigravityLogin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AntigravityPollInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntigravityPollResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/providers/{id}/credentials/{credential_id}/agy/start": {
+      "post": {
+        "tags": [],
+        "summary": "Starts a Google OAuth flow and optionally serves its local callback.",
+        "operationId": "startAntigravityLogin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntigravityStartResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/providers/{id}/credentials/{credential_id}/codex/poll": {
+      "post": {
+        "tags": [],
+        "summary": "Polls a pending device flow and saves credentials after authorization.",
+        "operationId": "pollCodexLogin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CodexPollInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodexPollResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/providers/{id}/credentials/{credential_id}/codex/start": {
+      "post": {
+        "tags": [],
+        "summary": "Starts a device authorization flow for a Codex credential.",
+        "operationId": "startCodexLogin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodexStartResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/providers/{id}/credentials/{credential_id}/console": {
+      "put": {
+        "tags": [],
+        "summary": "Save a Console connection from the dashboard.",
+        "operationId": "saveZenConsole",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsoleConnection"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        }
+      },
+      "delete": {
+        "tags": [],
+        "summary": "Remove a Console connection from the dashboard.",
+        "operationId": "deleteZenConsole",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/api/providers/{id}/credentials/{credential_id}/usage": {
+      "get": {
+        "tags": [],
+        "summary": "Returns usage for an existing provider credential when supported.",
+        "operationId": "getCredentialUsage",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuotaSnapshot"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/settings": {
       "get": {
-        "tags": ["crate::server::settings"],
+        "tags": [],
         "summary": "Returns current settings and whether an OAuth secret is configured.",
         "operationId": "getSettings",
         "responses": {
@@ -32,7 +977,7 @@
         }
       },
       "put": {
-        "tags": ["crate::server::settings"],
+        "tags": [],
         "summary": "Validates and atomically applies supplied settings.",
         "operationId": "updateSettings",
         "requestBody": {
@@ -71,10 +1016,1219 @@
           }
         }
       }
+    },
+    "/auth/callback": {
+      "get": {
+        "tags": [],
+        "summary": "Consumes OIDC callback state and creates a session after successful verification.",
+        "operationId": "dashboardOidcCallback",
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "description": "OIDC state",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "code",
+            "in": "query",
+            "description": "Authorization code",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "description": "Identity provider error",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "Signed in; redirects to the dashboard"
+          },
+          "400": {
+            "description": "Invalid or expired login state"
+          },
+          "401": {
+            "description": "Authentication rejected"
+          },
+          "404": {
+            "description": "OIDC is not enabled"
+          },
+          "500": {
+            "description": "Session could not be created"
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [],
+        "summary": "Return a successful health probe response.",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "The server is running"
+          }
+        }
+      }
+    },
+    "/redoc": {
+      "get": {
+        "tags": [],
+        "summary": "Serve the API reference using the locally bundled `ReDoc` script.",
+        "operationId": "apiReference",
+        "responses": {
+          "200": {
+            "description": "ReDoc HTML",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Dashboard authentication required"
+          }
+        }
+      }
+    },
+    "/v1/chat/completions": {
+      "post": {
+        "tags": [],
+        "summary": "Rewrite only the model and dispatch to the existing private provider router.",
+        "operationId": "createChatCompletion",
+        "parameters": [
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "Bearer virtual key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InferenceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Provider JSON or server-sent event stream",
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid virtual key",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Key does not permit provider or model",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Provider not found",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "413": {
+            "description": "Request body too large",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "500": {
+            "description": "Gateway error",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "502": {
+            "description": "Provider error",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/models": {
+      "get": {
+        "tags": [],
+        "summary": "Aggregate permitted model records, without exposing upstream errors.",
+        "operationId": "listInferenceModels",
+        "parameters": [
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "Bearer virtual key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InferenceModelList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid virtual key",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "500": {
+            "description": "Registry or permissions error",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "502": {
+            "description": "All provider discoveries failed",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/responses": {
+      "post": {
+        "tags": [],
+        "summary": "Dispatch a unified Responses API request through the same inference handler.",
+        "operationId": "createResponse",
+        "parameters": [
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "Bearer virtual key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InferenceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Provider JSON or server-sent event stream",
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid virtual key",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Key does not permit provider or model",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Provider not found",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "413": {
+            "description": "Request body too large",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "500": {
+            "description": "Gateway error",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "502": {
+            "description": "Provider error",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "AntigravityFinishInput": {
+        "type": "object",
+        "description": "Dashboard request containing the Google redirect URL.",
+        "required": ["callback_url"],
+        "properties": {
+          "callback_url": {
+            "type": "string",
+            "description": "Full callback URL containing the OAuth state and authorization code."
+          }
+        }
+      },
+      "AntigravityFinishResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["status"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["complete"]
+              }
+            }
+          }
+        ],
+        "description": "Google OAuth flow completion response."
+      },
+      "AntigravityPollInput": {
+        "type": "object",
+        "description": "Dashboard request to poll a Google OAuth flow.",
+        "required": ["id"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "OAuth state identifying the flow."
+          }
+        }
+      },
+      "AntigravityPollResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Authorization has not completed.",
+            "required": ["status"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["pending"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Credentials were saved.",
+            "required": ["status"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["complete"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Authorization failed.",
+            "required": ["error", "status"],
+            "properties": {
+              "error": {
+                "type": "string",
+                "description": "Error reported by the flow."
+              },
+              "status": {
+                "type": "string",
+                "enum": ["failed"]
+              }
+            }
+          }
+        ],
+        "description": "Google OAuth polling result."
+      },
+      "AntigravityStartResponse": {
+        "type": "object",
+        "description": "Successful Google OAuth flow creation.",
+        "required": ["id", "url", "local_callback"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "OAuth flow identifier."
+          },
+          "local_callback": {
+            "type": "boolean",
+            "description": "Whether the local callback listener is active."
+          },
+          "url": {
+            "type": "string",
+            "description": "Authorization URL."
+          }
+        }
+      },
+      "CatalogProvider": {
+        "type": "object",
+        "description": "Discovered models and the latest discovery error for a provider.",
+        "required": ["id", "name", "kind", "models", "error"],
+        "properties": {
+          "base_url": {
+            "type": "string",
+            "description": "Endpoint used to decide whether cached results remain valid."
+          },
+          "error": {
+            "type": ["string", "null"],
+            "description": "Most recent discovery failure, if any."
+          },
+          "id": {
+            "type": "string",
+            "description": "Registry identifier."
+          },
+          "kind": {
+            "type": "string",
+            "description": "Provider implementation kind."
+          },
+          "models": {
+            "type": "array",
+            "items": {},
+            "description": "Last successfully discovered model records."
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name from the registry."
+          }
+        }
+      },
+      "CodexPollInput": {
+        "type": "object",
+        "description": "Dashboard request identifying a pending device flow.",
+        "required": ["id"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Dashboard-facing flow identifier."
+          }
+        }
+      },
+      "CodexPollResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["status"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["pending"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["status"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["complete"]
+              }
+            }
+          }
+        ],
+        "description": "Device authorization polling result."
+      },
+      "CodexStartResponse": {
+        "type": "object",
+        "description": "Successful device authorization flow creation.",
+        "required": ["id", "url", "user_code", "interval"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Device flow identifier."
+          },
+          "interval": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Minimum polling interval in seconds.",
+            "minimum": 0
+          },
+          "url": {
+            "type": "string",
+            "description": "Authorization URL."
+          },
+          "user_code": {
+            "type": "string",
+            "description": "Code to enter on the authorization page."
+          }
+        }
+      },
+      "ConsoleConnection": {
+        "type": "object",
+        "description": "`OpenCode` Console credentials used to retrieve a workspace balance.",
+        "required": ["workspace_id", "session"],
+        "properties": {
+          "session": {
+            "type": "string",
+            "description": "Console session cookie value."
+          },
+          "workspace_id": {
+            "type": "string",
+            "description": "Console workspace identifier sent as the organization header."
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateKey": {
+        "type": "object",
+        "description": "Request to create a named virtual key with optional restrictions.",
+        "required": ["name"],
+        "properties": {
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Allowed model IDs; empty permits every model."
+          },
+          "name": {
+            "type": "string",
+            "description": "User-assigned name for the new key."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Allowed provider IDs; empty permits every provider."
+          }
+        }
+      },
+      "CreateProvider": {
+        "type": "object",
+        "description": "Request to create a provider instance.",
+        "required": ["kind"],
+        "properties": {
+          "base_url": {
+            "type": "string",
+            "description": "Upstream base URL, empty when the backend supplies a default."
+          },
+          "id": {
+            "type": ["string", "null"],
+            "description": "Requested instance identifier for non-fixed kinds."
+          },
+          "kind": {
+            "type": "string",
+            "description": "Backend kind identifier."
+          },
+          "name": {
+            "type": ["string", "null"],
+            "description": "Requested instance name for non-fixed kinds."
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreatedKey": {
+        "type": "object",
+        "description": "Newly created key including its one-time token.",
+        "required": ["id", "name", "providers", "models", "created_at", "key"],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Creation time in Unix seconds."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable identifier."
+          },
+          "key": {
+            "type": "string",
+            "description": "Secret token, returned only on creation."
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Allowed model IDs."
+          },
+          "name": {
+            "type": "string",
+            "description": "User-assigned name."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Allowed provider IDs."
+          }
+        }
+      },
+      "Credential": {
+        "type": "object",
+        "description": "Credential metadata exposed without the underlying secret.",
+        "required": ["id", "name", "weight", "enabled", "connected"],
+        "properties": {
+          "connected": {
+            "type": "boolean",
+            "description": "Whether its provider-specific secret exists."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the credential is enabled."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable credential identifier."
+          },
+          "name": {
+            "type": "string",
+            "description": "User-facing credential name."
+          },
+          "weight": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Relative selection weight."
+          }
+        }
+      },
+      "CredentialInput": {
+        "type": "object",
+        "description": "Credential creation or update request.",
+        "required": ["name", "weight", "enabled"],
+        "properties": {
+          "api_key": {
+            "type": ["string", "null"],
+            "description": "API key to store, when supplied."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the credential can be selected."
+          },
+          "name": {
+            "type": "string",
+            "description": "User-facing credential name."
+          },
+          "weight": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Positive relative selection weight."
+          }
+        },
+        "additionalProperties": false
+      },
+      "CredentialsResponse": {
+        "type": "object",
+        "description": "Credential listing.",
+        "required": ["credentials"],
+        "properties": {
+          "credentials": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Credential"
+            },
+            "description": "Credential metadata without secrets."
+          }
+        }
+      },
+      "InferenceDiscoveryError": {
+        "type": "object",
+        "description": "Discovery failure for an individual provider.",
+        "required": ["provider", "message"],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Discovery failure message."
+          },
+          "provider": {
+            "type": "string",
+            "description": "Provider identifier."
+          }
+        }
+      },
+      "InferenceModelList": {
+        "type": "object",
+        "description": "OpenAI-compatible model list with per-provider discovery errors.",
+        "required": ["object", "data", "errors"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {},
+            "description": "Provider model records, with qualified IDs."
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InferenceDiscoveryError"
+            },
+            "description": "Providers whose discovery failed."
+          },
+          "object": {
+            "type": "string",
+            "description": "List object discriminator."
+          }
+        }
+      },
+      "InferenceRequest": {
+        "type": "object",
+        "description": "Inference request with provider-qualified model and provider-specific fields.",
+        "required": ["model"],
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "Model identifier in `provider/model` form."
+          }
+        },
+        "additionalProperties": {
+          "description": "Remaining OpenAI-compatible request fields are passed through."
+        }
+      },
+      "Interval": {
+        "type": "string",
+        "description": "Calendar granularity used for dashboard request buckets.",
+        "enum": ["hour", "day", "month", "year"]
+      },
+      "KeyInfo": {
+        "type": "object",
+        "description": "Public metadata for a virtual key, excluding its secret token.",
+        "required": ["id", "name", "providers", "models", "created_at"],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Creation time in Unix seconds."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable identifier used to revoke the key."
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Model IDs allowed by the key."
+          },
+          "name": {
+            "type": "string",
+            "description": "User-assigned key name."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Provider IDs allowed by the key."
+          }
+        }
+      },
+      "KeyList": {
+        "type": "object",
+        "description": "Virtual keys returned without their tokens.",
+        "required": ["keys"],
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KeyInfo"
+            },
+            "description": "Registered keys."
+          }
+        }
+      },
+      "LogEntry": {
+        "type": "object",
+        "description": "Serialized request log returned by the dashboard.",
+        "required": [
+          "id",
+          "created_at",
+          "provider",
+          "model",
+          "path",
+          "status",
+          "latency_ms",
+          "input_tokens",
+          "output_tokens",
+          "request_body",
+          "response_body"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Completion time in Unix seconds."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Database record identifier."
+          },
+          "input_tokens": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Reported input token count, when available."
+          },
+          "latency_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Elapsed request time in milliseconds."
+          },
+          "model": {
+            "type": "string",
+            "description": "Model named in the request body."
+          },
+          "output_tokens": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Reported output token count, when available."
+          },
+          "path": {
+            "type": "string",
+            "description": "Request URI path."
+          },
+          "provider": {
+            "type": "string",
+            "description": "Provider extracted from the request path."
+          },
+          "request_body": {
+            "type": "string",
+            "description": "Captured request body."
+          },
+          "response_body": {
+            "type": "string",
+            "description": "Captured response body."
+          },
+          "status": {
+            "type": "integer",
+            "format": "int64",
+            "description": "HTTP status, or 499 for an incomplete response stream."
+          }
+        }
+      },
+      "ModelCatalog": {
+        "type": "object",
+        "description": "Persisted snapshot of provider discovery results.",
+        "required": ["providers"],
+        "properties": {
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogProvider"
+            },
+            "description": "Providers reconciled with the registry on load."
+          }
+        }
+      },
+      "ModelData": {
+        "type": "object",
+        "description": "Cached datasheet entries indexed by their source keys.",
+        "required": ["pricing", "parameters"],
+        "properties": {
+          "parameters": {
+            "type": "object",
+            "description": "Model parameter records.",
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "pricing": {
+            "type": "object",
+            "description": "Pricing records.",
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ModelSettings": {
+        "type": "object",
+        "description": "URLs and intervals governing model metadata refreshes.",
+        "required": [
+          "pricing_url",
+          "parameters_url",
+          "pricing_interval_hours",
+          "discovery_interval_minutes"
+        ],
+        "properties": {
+          "discovery_interval_minutes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Provider discovery interval in minutes; zero disables discovery.",
+            "minimum": 0
+          },
+          "parameters_url": {
+            "type": "string",
+            "description": "Model parameters datasheet URL."
+          },
+          "pricing_interval_hours": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Datasheet refresh interval in hours; zero disables refresh.",
+            "minimum": 0
+          },
+          "pricing_url": {
+            "type": "string",
+            "description": "Pricing datasheet URL."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ModelSettingsError": {
+        "type": "object",
+        "description": "Model settings API error.",
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Error message."
+          }
+        }
+      },
+      "ModelSyncResult": {
+        "type": "object",
+        "description": "Successful datasheet synchronization.",
+        "required": ["ok"],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "description": "Whether synchronization succeeded."
+          }
+        }
+      },
+      "ObservabilityBucket": {
+        "type": "object",
+        "description": "Request count for a UTC time bucket.",
+        "required": ["start", "requests"],
+        "properties": {
+          "requests": {
+            "type": "integer",
+            "description": "Number of requests in the bucket.",
+            "minimum": 0
+          },
+          "start": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bucket start in Unix seconds."
+          }
+        }
+      },
+      "ObservabilityResponse": {
+        "type": "object",
+        "description": "Dashboard metrics and recent request logs.",
+        "required": ["summary", "logs", "interval", "buckets"],
+        "properties": {
+          "buckets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ObservabilityBucket"
+            },
+            "description": "Request counts by time bucket."
+          },
+          "interval": {
+            "$ref": "#/components/schemas/Interval",
+            "description": "Bucket granularity."
+          },
+          "logs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LogEntry"
+            },
+            "description": "Up to 200 recent log entries."
+          },
+          "summary": {
+            "$ref": "#/components/schemas/ObservabilitySummary",
+            "description": "Aggregate metrics."
+          }
+        }
+      },
+      "ObservabilitySummary": {
+        "type": "object",
+        "description": "Aggregate statistics for the selected range.",
+        "required": [
+          "requests",
+          "successes",
+          "errors",
+          "input_tokens",
+          "output_tokens",
+          "avg_latency_ms"
+        ],
+        "properties": {
+          "avg_latency_ms": {
+            "type": "number",
+            "format": "double",
+            "description": "Mean latency in milliseconds."
+          },
+          "errors": {
+            "type": "integer",
+            "description": "Number of responses with status at least 400.",
+            "minimum": 0
+          },
+          "input_tokens": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Sum of available input token counts."
+          },
+          "output_tokens": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Sum of available output token counts."
+          },
+          "requests": {
+            "type": "integer",
+            "description": "Number of requests.",
+            "minimum": 0
+          },
+          "successes": {
+            "type": "integer",
+            "description": "Number of responses with status 200 through 399.",
+            "minimum": 0
+          }
+        }
+      },
+      "Provider": {
+        "type": "object",
+        "description": "Active configured provider instance exposed by the registry.",
+        "required": ["id", "name", "kind", "base_url"],
+        "properties": {
+          "base_url": {
+            "type": "string",
+            "description": "Configured upstream base URL."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable instance identifier."
+          },
+          "kind": {
+            "type": "string",
+            "description": "Backend kind identifier."
+          },
+          "name": {
+            "type": "string",
+            "description": "User-facing instance name."
+          }
+        }
+      },
+      "ProviderDescriptor": {
+        "type": "object",
+        "description": "Provider identity, authentication options, and migration policy.",
+        "required": [
+          "value",
+          "label",
+          "oauth",
+          "api_key",
+          "fixed_id",
+          "fixed_name"
+        ],
+        "properties": {
+          "api_key": {
+            "type": "boolean",
+            "description": "Whether API key credentials are supported."
+          },
+          "fixed_id": {
+            "type": ["string", "null"],
+            "description": "Fixed provider instance identifier, when applicable."
+          },
+          "fixed_name": {
+            "type": ["string", "null"],
+            "description": "Fixed provider instance name, when applicable."
+          },
+          "label": {
+            "type": "string",
+            "description": "Display name for the provider kind."
+          },
+          "oauth": {
+            "type": "boolean",
+            "description": "Whether OAuth credentials are supported."
+          },
+          "value": {
+            "type": "string",
+            "description": "Stable provider kind identifier."
+          }
+        }
+      },
+      "ProviderKindsResponse": {
+        "type": "object",
+        "description": "Provider kind listing.",
+        "required": ["kinds"],
+        "properties": {
+          "kinds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderDescriptor"
+            },
+            "description": "Available kinds."
+          }
+        }
+      },
+      "ProvidersResponse": {
+        "type": "object",
+        "description": "Provider instance listing.",
+        "required": ["providers"],
+        "properties": {
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Provider"
+            },
+            "description": "Active providers."
+          }
+        }
+      },
+      "QuotaSnapshot": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Time-windowed quota measurements.",
+            "required": ["windows", "kind"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["quota"]
+              },
+              "windows": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/QuotaWindow"
+                },
+                "description": "Individual windows reported by the provider."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Monetary account balance.",
+            "required": ["amount", "currency", "kind"],
+            "properties": {
+              "amount": {
+                "type": "number",
+                "format": "double",
+                "description": "Balance in the indicated currency."
+              },
+              "currency": {
+                "type": "string",
+                "description": "Currency identifier."
+              },
+              "kind": {
+                "type": "string",
+                "enum": ["balance"]
+              }
+            }
+          }
+        ],
+        "description": "Provider usage represented as quota windows or a monetary balance."
+      },
+      "QuotaWindow": {
+        "type": "object",
+        "description": "Usage remaining within a provider-defined time window.",
+        "required": ["label", "remaining_percent", "reset_at"],
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "Display label for the window."
+          },
+          "remaining_percent": {
+            "type": ["number", "null"],
+            "format": "double",
+            "description": "Remaining quota as a percentage, when available."
+          },
+          "reset_at": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Reset timestamp, when provided by the upstream."
+          }
+        }
+      },
       "SettingsResponse": {
         "type": "object",
         "description": "Dashboard-visible settings without the OAuth client secret.",
@@ -100,6 +2254,21 @@
             "description": "Whether an OAuth client secret is stored."
           }
         }
+      },
+      "UpdateProvider": {
+        "type": "object",
+        "description": "Mutable provider instance properties.",
+        "properties": {
+          "base_url": {
+            "type": ["string", "null"],
+            "description": "Replacement upstream base URL, if supplied."
+          },
+          "name": {
+            "type": ["string", "null"],
+            "description": "Replacement display name, if supplied."
+          }
+        },
+        "additionalProperties": false
       },
       "UpdateSettings": {
         "type": "object",

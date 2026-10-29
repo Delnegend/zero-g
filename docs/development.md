@@ -51,11 +51,9 @@ Rust follows the [Namtao strict Clippy configuration](https://www.namtao.com/rus
 
 Clippy also requires documentation comments on private Rust items, including fields and variants. Describe their purpose or constraints with `///`; `just check` treats missing documentation as an error.
 
-## Settings API contract
+## API contract
 
-The Rust settings request and response types define the settings API. After changing them, run `just api-generate` and commit `frontend/src/server/api/generated/openapi.json` and `frontend/src/server/api/generated/settings.ts`; Orval generates the Zod validators used by the settings client in `frontend/src/server/api/settings.ts`. TanStack Query manages the dashboard's server state, and TanStack Form manages editable form values. `just check` verifies that both generated files match the Rust contract and runs the frontend client tests.
-
-This is a pilot for `/api/settings`; the other dashboard endpoints still use their existing handwritten types and fetch calls.
+Rust handlers and their request and response types define the OpenAPI document. After changing a dashboard or inference contract, run `just api-generate` and commit the generated files in `frontend/src/server/api/generated/`. Orval generates the dashboard request functions and Zod response validators from that document; `just check` detects stale generated files and runs the frontend client tests.
 
 ## Database migrations
 

@@ -1,36 +1,28 @@
-import { z } from "zod";
-import {
-  GetSettingsResponse,
-  UpdateSettingsBody,
-  UpdateSettingsResponse,
-} from "./generated/settings";
+import { queryOptions } from "@tanstack/react-query";
+import * as api from "./generated/client";
+import type { SettingsResponse, UpdateSettings } from "./generated/schemas";
 
-export type Settings = z.output<typeof GetSettingsResponse>;
-export type SettingsUpdate = z.input<typeof UpdateSettingsBody>;
-
-async function settingsRequest<T>(
-  schema: z.ZodType<T>,
-  options: RequestInit,
-): Promise<T> {
-  const response = await fetch("/api/settings", options);
-  if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || `Request failed (${response.status})`);
-  }
-  const result = schema.safeParse(await response.json());
-  if (!result.success) throw new Error("Invalid settings response from server");
-  return result.data;
-}
+export type Settings = SettingsResponse;
+export type SettingsUpdate = UpdateSettings;
 
 export function getSettings(signal: AbortSignal) {
-  return settingsRequest(GetSettingsResponse, { signal });
+  return api.getSettings({
+    signal,
+    invalidMessage: "Invalid settings response from server",
+  });
+}
+
+export function settingsOptions() {
+  return queryOptions({
+    queryKey: ["settings"],
+    retry: false,
+    queryFn: ({ signal }) => getSettings(signal),
+  });
 }
 
 export function updateSettings(body: SettingsUpdate, signal: AbortSignal) {
-  return settingsRequest(UpdateSettingsResponse, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+  return api.updateSettings(body, {
     signal,
+    invalidMessage: "Invalid settings response from server",
   });
 }

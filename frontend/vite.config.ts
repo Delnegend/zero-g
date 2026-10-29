@@ -1,6 +1,7 @@
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import http from "node:http";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { defineConfig, type Plugin } from "vite";
 
@@ -65,9 +66,27 @@ function dashboardAuth(): Plugin {
   };
 }
 
+function redocBundle(): Plugin {
+  return {
+    name: "redoc-bundle",
+    generateBundle() {
+      this.emitFile({
+        type: "asset",
+        fileName: "redoc.standalone.js",
+        source: readFileSync(
+          path.resolve(
+            import.meta.dirname,
+            "node_modules/redoc/bundles/redoc.standalone.js",
+          ),
+        ),
+      });
+    },
+  };
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [dashboardAuth(), react(), tailwindcss()],
+  plugins: [dashboardAuth(), redocBundle(), react(), tailwindcss()],
   server: {
     host: "127.0.0.1",
     port: 5173,
@@ -78,6 +97,7 @@ export default defineConfig({
       "/zen": { target: "http://127.0.0.1:8080", changeOrigin: false },
       "/go": { target: "http://127.0.0.1:8080", changeOrigin: false },
       "/openai": { target: "http://127.0.0.1:8080", changeOrigin: false },
+      "/redoc": { target: "http://127.0.0.1:8080", changeOrigin: false },
       "/api": { target: "http://127.0.0.1:8080", changeOrigin: false },
       "/auth/callback": {
         target: "http://127.0.0.1:8080",

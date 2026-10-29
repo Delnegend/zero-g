@@ -25,7 +25,7 @@ use serde::Deserialize;
 use std::time::Duration;
 
 /// `OpenCode` Console credentials used to retrieve a workspace balance.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ConsoleConnection {
     /// Console workspace identifier sent as the organization header.
@@ -120,7 +120,16 @@ pub(crate) async fn connection(
     }
 }
 
+/// Zen Console connection API.
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(save_console, delete_console),
+    components(schemas(ConsoleConnection))
+)]
+pub(crate) struct Api;
+
 /// Save a Console connection from the dashboard.
+#[utoipa::path(put, path = "/api/providers/{id}/credentials/{credential_id}/console", operation_id = "saveZenConsole", params(("id" = String, Path), ("credential_id" = String, Path)), request_body = ConsoleConnection, responses((status = 204)))]
 async fn save_console(
     State(store): State<SettingsStore>,
     Path((provider, credential)): Path<(String, String)>,
@@ -130,6 +139,7 @@ async fn save_console(
 }
 
 /// Remove a Console connection from the dashboard.
+#[utoipa::path(delete, path = "/api/providers/{id}/credentials/{credential_id}/console", operation_id = "deleteZenConsole", params(("id" = String, Path), ("credential_id" = String, Path)), responses((status = 204)))]
 async fn delete_console(
     State(store): State<SettingsStore>,
     Path((provider, credential)): Path<(String, String)>,

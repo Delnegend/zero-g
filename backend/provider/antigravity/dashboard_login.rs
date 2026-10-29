@@ -8,7 +8,8 @@ use axum::response::Html;
 use axum::routing::post;
 use axum::{Json, Router};
 use openidconnect::PkceCodeChallenge;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use serde_json::json;
 use uuid::Uuid;
 
@@ -95,14 +96,63 @@ pub(crate) fn router(app: AppState) -> Router {
         .with_state((app.settings, OAuthFlows::default()))
 }
 
+/// Successful Google OAuth flow creation.
+#[derive(Serialize, utoipa::ToSchema)]
+struct AntigravityStartResponse {
+    /// OAuth flow identifier.
+    id: String,
+    /// Authorization URL.
+    url: String,
+    /// Whether the local callback listener is active.
+    local_callback: bool,
+}
+
+/// Google OAuth flow completion response.
+#[derive(Serialize, utoipa::ToSchema)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum AntigravityFinishResponse {
+    /// Credentials were saved.
+    Complete,
+}
+
+/// Google OAuth polling result.
+#[derive(Serialize, utoipa::ToSchema)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum AntigravityPollResponse {
+    /// Authorization has not completed.
+    Pending,
+    /// Credentials were saved.
+    Complete,
+    /// Authorization failed.
+    Failed {
+        /// Error reported by the flow.
+        error: String,
+    },
+}
+
+/// Google OAuth dashboard API.
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(agy_start, agy_finish, agy_poll),
+    components(schemas(
+        AntigravityStartResponse,
+        AntigravityFinishResponse,
+        AntigravityPollResponse,
+        AntigravityFinishInput,
+        AntigravityPollInput
+    ))
+)]
+pub(crate) struct Api;
+
 /// Starts a Google OAuth flow and optionally serves its local callback.
 // Keep the OAuth listener setup and its cleanup together.
+#[utoipa::path(post, path = "/api/providers/{id}/credentials/{credential_id}/agy/start", operation_id = "startAntigravityLogin", params(("id" = String, Path), ("credential_id" = String, Path)), responses((status = 200, body = AntigravityStartResponse)))]
 #[allow(clippy::too_many_lines)]
 async fn agy_start(
     State((settings, flows)): State<LoginState>,
     Path((provider_id, credential_id)): Path<(String, String)>,
     headers: HeaderMap,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+) -> Result<Json<AntigravityStartResponse>, (StatusCode, String)> {
     same_origin(&headers)?;
     require_credential(&settings, &provider_id, &credential_id, "agy").await?;
     let client_id = agy::oauth_client_id(&settings).await.map_err(error)?;
@@ -173,7 +223,7 @@ async fn agy_start(
                             State((settings, flows.clone())),
                             Path((provider_id, credential_id)),
                             headers,
-                            Json(GoogleFinish {
+                            Json(AntigravityFinishInput {
                                 callback_url: callback.to_string(),
                             }),
                         )
@@ -208,14 +258,16 @@ async fn agy_start(
         urlencode(&state),
         urlencode(challenge.as_str())
     );
-    Ok(Json(
-        json!({"id": state, "url": url, "local_callback": local_callback}),
-    ))
+    Ok(Json(AntigravityStartResponse {
+        id: state,
+        url,
+        local_callback,
+    }))
 }
 
 /// Dashboard request containing the Google redirect URL.
-#[derive(Deserialize)]
-struct GoogleFinish {
+#[derive(Deserialize, utoipa::ToSchema)]
+struct AntigravityFinishInput {
     /// Full callback URL containing the OAuth state and authorization code.
     callback_url: String,
 }
@@ -265,12 +317,13 @@ fn parse_google_callback(callback_url: &str) -> Result<(String, String), (Status
 }
 
 /// Validates and completes a pending Google OAuth callback.
+#[utoipa::path(post, path = "/api/providers/{id}/credentials/{credential_id}/agy/finish", operation_id = "finishAntigravityLogin", params(("id" = String, Path), ("credential_id" = String, Path)), request_body = AntigravityFinishInput, responses((status = 200, body = AntigravityFinishResponse)))]
 async fn agy_finish(
     State((settings, flows)): State<LoginState>,
     Path((provider_id, credential_id)): Path<(String, String)>,
     headers: HeaderMap,
-    Json(input): Json<GoogleFinish>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    Json(input): Json<AntigravityFinishInput>,
+) -> Result<Json<AntigravityFinishResponse>, (StatusCode, String)> {
     same_origin(&headers)?;
     require_credential(&settings, &provider_id, &credential_id, "agy").await?;
     let (state, code) = parse_google_callback(&input.callback_url)?;
@@ -324,7 +377,7 @@ async fn finish_google_exchange(
     credential_id: &str,
     code: &str,
     verifier: &str,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+) -> Result<Json<AntigravityFinishResponse>, (StatusCode, String)> {
     let client_id = agy::oauth_client_id(settings).await.map_err(error)?;
     let client_secret = agy::oauth_client_secret(settings).await.map_err(error)?;
     let client = reqwest::Client::builder()
@@ -405,7 +458,7 @@ async fn finish_google_exchange(
     AuthManager::save(settings, provider_id, credential_id, &creds)
         .await
         .map_err(error)?;
-    Ok(Json(json!({"status":"complete"})))
+    Ok(Json(AntigravityFinishResponse::Complete))
 }
 
 /// Moves a pending flow to completed results and signals listener shutdown.
@@ -427,19 +480,20 @@ async fn complete_google(flows: &OAuthFlows, state: &str, result: Result<(), Str
 }
 
 /// Dashboard request to poll a Google OAuth flow.
-#[derive(Deserialize)]
-struct GooglePoll {
+#[derive(Deserialize, utoipa::ToSchema)]
+struct AntigravityPollInput {
     /// OAuth state identifying the flow.
     id: String,
 }
 
 /// Returns pending status or consumes the completed result for a flow.
+#[utoipa::path(post, path = "/api/providers/{id}/credentials/{credential_id}/agy/poll", operation_id = "pollAntigravityLogin", params(("id" = String, Path), ("credential_id" = String, Path)), request_body = AntigravityPollInput, responses((status = 200, body = AntigravityPollResponse)))]
 async fn agy_poll(
     State((settings, flows)): State<LoginState>,
     Path((provider_id, credential_id)): Path<(String, String)>,
     headers: HeaderMap,
-    Json(input): Json<GooglePoll>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    Json(input): Json<AntigravityPollInput>,
+) -> Result<Json<AntigravityPollResponse>, (StatusCode, String)> {
     same_origin(&headers)?;
     require_credential(&settings, &provider_id, &credential_id, "agy").await?;
     let pending = flows.pending.lock().await;
@@ -453,8 +507,8 @@ async fn agy_poll(
             return Err(error("OAuth flow is invalid or expired"));
         };
         return Ok(Json(match result {
-            Ok(()) => json!({"status":"complete"}),
-            Err(message) => json!({"status":"failed", "error":message}),
+            Ok(()) => AntigravityPollResponse::Complete,
+            Err(error) => AntigravityPollResponse::Failed { error },
         }));
     }
     drop(results);
@@ -468,7 +522,7 @@ async fn agy_poll(
             && credential == &credential_id
             && created.elapsed() < Duration::from_secs(600) =>
         {
-            Ok(Json(json!({"status":"pending"})))
+            Ok(Json(AntigravityPollResponse::Pending))
         }
         _ => Err(error("OAuth flow is invalid or expired")),
     }

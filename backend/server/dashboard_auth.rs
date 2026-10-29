@@ -193,6 +193,11 @@ struct Callback {
     error: Option<String>,
 }
 
+/// Dashboard sign-in callback operation.
+#[derive(utoipa::OpenApi)]
+#[openapi(paths(callback))]
+pub(crate) struct Api;
+
 /// Reads a required nonblank environment variable.
 fn required(name: &str) -> Result<String, String> {
     std::env::var(name)
@@ -561,6 +566,15 @@ async fn authenticate_inner(auth: DashboardAuth, req: Request, next: Next) -> Re
 }
 
 /// Consumes OIDC callback state and creates a session after successful verification.
+#[utoipa::path(get, path = "/auth/callback", operation_id = "dashboardOidcCallback",
+    params(("state" = Option<String>, Query, description = "OIDC state"),
+        ("code" = Option<String>, Query, description = "Authorization code"),
+        ("error" = Option<String>, Query, description = "Identity provider error")),
+    responses((status = 303, description = "Signed in; redirects to the dashboard"),
+        (status = 400, description = "Invalid or expired login state"),
+        (status = 401, description = "Authentication rejected"),
+        (status = 404, description = "OIDC is not enabled"),
+        (status = 500, description = "Session could not be created")))]
 async fn callback(
     State(auth): State<DashboardAuth>,
     headers: HeaderMap,

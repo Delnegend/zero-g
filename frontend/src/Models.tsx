@@ -1,7 +1,19 @@
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { message, request } from "./server/api/client";
+import { message } from "./server/api/client";
+import {
+  getModelCatalog,
+  getModelDatasheets,
+  getModelSettings,
+  refreshModelCatalog,
+  saveModelSettings,
+  syncModelSettings,
+  type Datasheets,
+  type Model,
+  type Provider,
+  type Settings,
+} from "./server/api/models";
 import { CardsSkeleton, FormSkeleton } from "./components/Loading";
 import { RefreshButton } from "./components/RefreshButton";
 import { Alert, AlertDescription } from "./components/ui/alert";
@@ -16,26 +28,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./components/ui/select";
-
-type Model = { id: string; [key: string]: unknown };
-type Provider = {
-  id: string;
-  name: string;
-  kind: string;
-  models: Model[];
-  error: string | null;
-};
-type Catalog = { providers: Provider[] };
-type Datasheets = {
-  pricing: Record<string, unknown>;
-  parameters: Record<string, unknown>;
-};
-type Settings = {
-  pricing_url: string;
-  parameters_url: string;
-  pricing_interval_hours: number;
-  discovery_interval_minutes: number;
-};
 
 const pageClass =
   "mx-auto w-full min-w-0 max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-12";
@@ -240,20 +232,20 @@ export function ModelCatalogPage() {
   const catalog = useQuery({
     queryKey: ["model-catalog"],
     retry: false,
-    queryFn: ({ signal }) => request<Catalog>("/api/model-catalog", { signal }),
+    queryFn: ({ signal }) => getModelCatalog(signal),
   });
   const data = useQuery({
     queryKey: ["model-settings-data"],
     retry: false,
     staleTime: 30_000,
-    queryFn: ({ signal }) =>
-      request<Datasheets>("/api/model-settings/data", { signal }),
+    queryFn: ({ signal }) => getModelDatasheets(signal),
   });
   const refresh = useMutation({
-    mutationFn: () =>
-      request<Catalog>("/api/model-catalog/refresh", { method: "POST" }),
+    mutationFn: refreshModelCatalog,
     onSuccess: async (result) => {
-      await queryClient.cancelQueries({ queryKey: ["model-catalog"] });
+      await queryClient.cancelQueries({
+        queryKey: ["model-catalog"],
+      });
       queryClient.setQueryData(["model-catalog"], result);
       await queryClient.invalidateQueries({
         queryKey: ["model-settings-data"],
@@ -365,16 +357,10 @@ function SettingsForm({ initial }: { initial: Settings }) {
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const save = useMutation({
-    mutationFn: (value: Settings) =>
-      request<Settings>("/api/model-settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(value),
-      }),
+    mutationFn: saveModelSettings,
   });
   const sync = useMutation({
-    mutationFn: () =>
-      request<unknown>("/api/model-settings/sync", { method: "POST" }),
+    mutationFn: syncModelSettings,
   });
   const form = useForm({
     defaultValues: initial,
@@ -391,7 +377,9 @@ function SettingsForm({ initial }: { initial: Settings }) {
       }
       try {
         const updated = await save.mutateAsync(value);
-        await queryClient.cancelQueries({ queryKey: ["model-settings"] });
+        await queryClient.cancelQueries({
+          queryKey: ["model-settings"],
+        });
         if (form.state.values.pricing_url === value.pricing_url) {
           form.setFieldValue("pricing_url", updated.pricing_url);
         }
@@ -551,8 +539,7 @@ export function ModelSettingsPage() {
   const settings = useQuery({
     queryKey: ["model-settings"],
     retry: false,
-    queryFn: ({ signal }) =>
-      request<Settings>("/api/model-settings", { signal }),
+    queryFn: ({ signal }) => getModelSettings(signal),
   });
   return (
     <main className={pageClass}>

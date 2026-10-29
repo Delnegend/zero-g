@@ -3,6 +3,7 @@ import { format } from "date-fns";
 import { CalendarDays } from "lucide-react";
 import type { DateRange } from "react-day-picker";
 import { useIsMobile } from "../hooks/use-mobile";
+import { rangeStart, type DashboardRange } from "../server/api/observability";
 import { Button } from "./ui/button";
 import { Calendar } from "./ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
@@ -14,29 +15,6 @@ const presets = [
   { value: "6m", label: "Last 6 months" },
   { value: "1y", label: "Last 1 year" },
 ] as const;
-type Preset = (typeof presets)[number]["value"];
-export type DashboardRange =
-  | { kind: "preset"; value: Preset }
-  | { kind: "custom"; from: number; until: number };
-
-export function rangeStart(range: Preset): number {
-  const date = new Date();
-  if (range === "24h" || range === "7d") {
-    return Math.floor(
-      (date.getTime() - (range === "24h" ? 24 : 7 * 24) * 3600_000) / 1000,
-    );
-  }
-  const day = date.getUTCDate();
-  date.setUTCDate(1);
-  date.setUTCMonth(
-    date.getUTCMonth() - (range === "1m" ? 1 : range === "6m" ? 6 : 12),
-  );
-  const lastDay = new Date(
-    Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0),
-  ).getUTCDate();
-  date.setUTCDate(Math.min(day, lastDay));
-  return Math.floor(date.getTime() / 1000);
-}
 
 function datesFor(range: DashboardRange): DateRange {
   return range.kind === "preset"

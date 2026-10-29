@@ -22,7 +22,7 @@ const CACHE_KEY: &str = "model_catalog";
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Discovered models and the latest discovery error for a provider.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, utoipa::ToSchema)]
 struct CatalogProvider {
     /// Registry identifier.
     id: String,
@@ -36,23 +36,32 @@ struct CatalogProvider {
     /// Last successfully discovered model records.
     models: Vec<Value>,
     /// Most recent discovery failure, if any.
+    #[schema(required = true)]
     error: Option<String>,
 }
 
 /// Persisted snapshot of provider discovery results.
-#[derive(Default, Serialize, Deserialize)]
-struct Catalog {
+#[derive(Default, Serialize, Deserialize, utoipa::ToSchema)]
+struct ModelCatalog {
     /// Providers reconciled with the registry on load.
     providers: Vec<CatalogProvider>,
 }
 
+/// Model discovery dashboard operations.
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(get_catalog, post_refresh),
+    components(schemas(ModelCatalog, CatalogProvider))
+)]
+pub(crate) struct Api;
+
 /// Load the snapshot and reconcile it against the current registry.
 // Reconcile with the registry on every read: new providers appear immediately and
 // deleted providers never leak out of an old persisted snapshot.
-async fn load(store: &SettingsStore) -> Result<Catalog, String> {
+async fn load(store: &SettingsStore) -> Result<ModelCatalog, String> {
     let cached = match store.setting_get(CACHE_KEY).await? {
-        Some(value) => serde_json::from_str::<Catalog>(&value).map_err(|e| e.to_string())?,
-        None => Catalog::default(),
+        Some(value) => serde_json::from_str::<ModelCatalog>(&value).map_err(|e| e.to_string())?,
+        None => ModelCatalog::default(),
     };
     let mut cached: HashMap<_, _> = cached
         .providers
@@ -76,11 +85,11 @@ async fn load(store: &SettingsStore) -> Result<Catalog, String> {
             }
         })
         .collect();
-    Ok(Catalog { providers })
+    Ok(ModelCatalog { providers })
 }
 
 /// Persist a catalog snapshot transactionally.
-async fn save(store: &SettingsStore, catalog: &Catalog) -> Result<(), String> {
+async fn save(store: &SettingsStore, catalog: &ModelCatalog) -> Result<(), String> {
     let value = serde_json::to_string(catalog).map_err(|e| e.to_string())?;
     store
         .database
@@ -99,7 +108,7 @@ async fn save(store: &SettingsStore, catalog: &Catalog) -> Result<(), String> {
 }
 
 /// Discover providers concurrently and retain last successful models on failure.
-async fn refresh_catalog(state: &AppState) -> Result<Catalog, String> {
+async fn refresh_catalog(state: &AppState) -> Result<ModelCatalog, String> {
     let current = registry::list(&state.settings.database).await?;
     let mut catalog = load(&state.settings).await?;
     let results = join_all(current.iter().map(|provider| async move {
@@ -137,6 +146,9 @@ pub(crate) async fn refresh(state: &AppState) {
 }
 
 /// Return the current reconciled catalog.
+#[utoipa::path(get, path = "/api/model-catalog", operation_id = "getModelCatalog",
+    responses((status = 200, body = ModelCatalog),
+        (status = 500, description = "Catalog load failed", body = String, content_type = "text/plain")))]
 async fn get_catalog(State(state): State<AppState>) -> Response {
     load(&state.settings).await.map_or_else(
         |_| {
@@ -151,6 +163,9 @@ async fn get_catalog(State(state): State<AppState>) -> Response {
 }
 
 /// Refresh the catalog on demand and return the result.
+#[utoipa::path(post, path = "/api/model-catalog/refresh", operation_id = "refreshModelCatalog",
+    responses((status = 200, body = ModelCatalog),
+        (status = 500, description = "Catalog refresh failed", body = String, content_type = "text/plain")))]
 async fn post_refresh(State(state): State<AppState>) -> Response {
     refresh_catalog(&state).await.map_or_else(
         |_| {

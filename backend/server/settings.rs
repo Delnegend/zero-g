@@ -9,7 +9,6 @@ use ring::{
     rand::{SecureRandom, SystemRandom},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
 use utoipa::ToSchema;
 
@@ -60,7 +59,7 @@ impl Permissions {
 }
 
 /// Public metadata for a virtual key, excluding its secret token.
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct KeyInfo {
     /// Stable identifier used to revoke the key.
     id: String,
@@ -75,7 +74,7 @@ struct KeyInfo {
 }
 
 /// Request to create a named virtual key with optional restrictions.
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub(super) struct CreateKey {
     /// User-assigned name for the new key.
     name: String,
@@ -86,6 +85,45 @@ pub(super) struct CreateKey {
     #[serde(default)]
     models: Vec<String>,
 }
+
+/// Virtual keys returned without their tokens.
+#[derive(Serialize, ToSchema)]
+struct KeyList {
+    /// Registered keys.
+    keys: Vec<KeyInfo>,
+}
+
+/// Newly created key including its one-time token.
+#[derive(Serialize, ToSchema)]
+struct CreatedKey {
+    /// Stable identifier.
+    id: String,
+    /// User-assigned name.
+    name: String,
+    /// Allowed provider IDs.
+    providers: Vec<String>,
+    /// Allowed model IDs.
+    models: Vec<String>,
+    /// Creation time in Unix seconds.
+    created_at: i64,
+    /// Secret token, returned only on creation.
+    key: String,
+}
+
+/// Settings and virtual key dashboard operations.
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(get_settings, put_settings, list_keys, create_key, revoke_key),
+    components(schemas(
+        SettingsResponse,
+        UpdateSettings,
+        KeyInfo,
+        CreateKey,
+        KeyList,
+        CreatedKey
+    ))
+)]
+pub(crate) struct Api;
 
 impl SettingsStore {
     /// Initializes the store, validates its encryption key, and migrates legacy data.
@@ -396,6 +434,8 @@ pub(crate) async fn put_settings(
 }
 
 /// Lists virtual key metadata without exposing key tokens.
+#[utoipa::path(get, path = "/api/keys", operation_id = "listKeys",
+    responses((status = 200, body = KeyList), (status = 500, description = "Settings store error")))]
 pub(super) async fn list_keys(State(store): State<SettingsStore>) -> Response {
     /// Loads and decodes stored virtual key metadata.
     async fn list(store: &SettingsStore) -> Result<Vec<KeyInfo>, String> {
@@ -420,12 +460,17 @@ pub(super) async fn list_keys(State(store): State<SettingsStore>) -> Response {
         Ok(keys)
     }
     match list(&store).await {
-        Ok(keys) => Json(json!({"keys":keys})).into_response(),
+        Ok(keys) => Json(KeyList { keys }).into_response(),
         Err(err) => internal_error(&err),
     }
 }
 
 /// Creates a virtual key and returns its token once.
+#[utoipa::path(post, path = "/api/keys", operation_id = "createKey",
+    request_body = CreateKey,
+    responses((status = 201, body = CreatedKey),
+        (status = 400, description = "Invalid key", body = String, content_type = "text/plain"),
+        (status = 500, description = "Settings store error")))]
 pub(super) async fn create_key(
     State(store): State<SettingsStore>,
     Json(input): Json<CreateKey>,
@@ -487,13 +532,28 @@ pub(super) async fn create_key(
         })
         .await;
     match result {
-        Ok(true) => (StatusCode::CREATED, Json(json!({"id":id,"name":input.name,"providers":input.providers,"models":input.models,"created_at":created_at,"key":token}))).into_response(),
+        Ok(true) => (
+            StatusCode::CREATED,
+            Json(CreatedKey {
+                id,
+                name: input.name,
+                providers: input.providers,
+                models: input.models,
+                created_at,
+                key: token,
+            }),
+        )
+            .into_response(),
         Ok(false) => (StatusCode::BAD_REQUEST, "Invalid key provider").into_response(),
         Err(err) => internal_error(&err.to_string()),
     }
 }
 
 /// Deletes a virtual key by ID.
+#[utoipa::path(delete, path = "/api/keys/{id}", operation_id = "revokeKey",
+    params(("id" = String, Path, description = "Virtual key ID")),
+    responses((status = 204, description = "Key revoked"),
+        (status = 404, description = "Key not found"), (status = 500, description = "Settings store error")))]
 pub(super) async fn revoke_key(
     State(store): State<SettingsStore>,
     Path(id): Path<String>,
@@ -610,7 +670,7 @@ mod tests {
         body::{Body, to_bytes},
         routing::{get, post},
     };
-    use serde_json::Value;
+    use serde_json::{Value, json};
     use tower::ServiceExt;
 
     /// Generates a unique temporary database path.

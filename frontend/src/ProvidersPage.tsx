@@ -1,13 +1,33 @@
-import { useCallback, useEffect, useState } from "react";
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { message } from "./server/api/client";
+import {
+  deleteCredential,
+  deleteProvider as deleteProviderRequest,
+  finishGoogleSignIn,
+  getCredentials,
+  getProviderKinds,
+  getProviders,
+  pollSignIn,
+  saveCredential,
+  saveProvider,
+  startCodexSignIn,
+  startGoogleSignIn,
+  type CredentialUpdate,
+  type DeviceFlow,
+  type GoogleFlow,
+  type Provider,
+  type ProviderCredential,
+  type ProviderKind,
+} from "./server/api/providers";
+import { CredentialUsage } from "./components/CredentialUsage";
+import { CardsSkeleton, RowsSkeleton } from "./components/Loading";
 import { Alert, AlertDescription } from "./components/ui/alert";
 import { Button } from "./components/ui/button";
 import { Card } from "./components/ui/card";
 import { Checkbox } from "./components/ui/checkbox";
-import { CardsSkeleton, RowsSkeleton } from "./components/Loading";
-import { CredentialUsage } from "./components/CredentialUsage";
 import {
   Dialog,
   DialogContent,
@@ -24,17 +44,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./components/ui/select";
-import { message, request } from "./server/api/client";
-import {
-  getProviderKinds,
-  getCredentials,
-  credentialsPath,
-  getProviders,
-  providerPath,
-  type Provider,
-  type ProviderKind,
-  type ProviderCredential,
-} from "./server/api/providers";
 
 const inputClass =
   "mt-1 h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
@@ -56,14 +65,7 @@ function ProviderForm({
   const save = useMutation({
     gcTime: 0,
     mutationFn: (body: Record<string, string>) =>
-      request<Provider>(
-        provider ? providerPath(provider.id) : "/api/providers",
-        {
-          method: provider ? "PUT" : "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        },
-      ),
+      saveProvider(provider?.id, body),
   });
   const form = useForm({
     defaultValues: {
@@ -90,7 +92,9 @@ function ProviderForm({
       setBusy(true);
       try {
         const updated = await save.mutateAsync(body);
-        await queryClient.cancelQueries({ queryKey: ["providers"] });
+        await queryClient.cancelQueries({
+          queryKey: ["providers"],
+        });
         queryClient.setQueryData<{ providers: Provider[] }>(
           ["providers"],
           (current) => ({
@@ -102,7 +106,9 @@ function ProviderForm({
             ],
           }),
         );
-        await queryClient.invalidateQueries({ queryKey: ["providers"] });
+        await queryClient.invalidateQueries({
+          queryKey: ["providers"],
+        });
         onDone();
       } catch (err) {
         setError(message(err));
@@ -323,12 +329,7 @@ function Credentials({
       }
       setBusy(true);
       setError("");
-      const body: {
-        name: string;
-        weight: number;
-        enabled: boolean;
-        api_key?: string;
-      } = {
+      const body: CredentialUpdate = {
         name: value.name,
         weight: parsedWeight,
         enabled: value.enabled,
@@ -340,16 +341,10 @@ function Credentials({
         body.api_key = value.clearKey ? "" : value.apiKey;
       }
       try {
-        await request(
-          credentialsPath(
-            provider.id,
-            editing === "new" ? undefined : editing.id,
-          ),
-          {
-            method: editing === "new" ? "POST" : "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-          },
+        await saveCredential(
+          provider.id,
+          editing === "new" ? undefined : editing.id,
+          body,
         );
         form.reset();
         setEditing(null);
@@ -388,9 +383,7 @@ function Credentials({
     setBusy(true);
     setError("");
     try {
-      await request(credentialsPath(provider.id, deleteTarget.id), {
-        method: "DELETE",
-      });
+      await deleteCredential(provider.id, deleteTarget.id);
       setDeleteTarget(null);
       await queryClient.invalidateQueries({ queryKey: key });
     } catch (err) {
@@ -682,14 +675,6 @@ function Credentials({
   );
 }
 
-type GoogleFlow = { id: string; url: string; local_callback: boolean };
-type DeviceFlow = {
-  id: string;
-  url: string;
-  user_code: string;
-  interval: number;
-};
-
 function ProviderCard({
   provider,
   kind,
@@ -711,7 +696,7 @@ function ProviderCard({
   const [notice, setNotice] = useState("");
   const [loginCredential, setLoginCredential] =
     useState<ProviderCredential | null>(null);
-  const path = credentialsPath(provider.id, loginCredential?.id);
+  const credentialId = loginCredential?.id;
   const refresh = useCallback(() => {
     void queryClient
       .invalidateQueries({
@@ -729,11 +714,7 @@ function ProviderCard({
       setBusy(true);
       setError("");
       try {
-        await request(`${path}/agy/finish`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ callback_url: value.callback }),
-        });
+        await finishGoogleSignIn(provider.id, credentialId, value.callback);
         setGoogle(null);
         callbackForm.setFieldValue("callback", "");
         refresh();
@@ -755,14 +736,12 @@ function ProviderCard({
     let timer: number;
     const poll = async () => {
       try {
-        const result = await request<{ status: string; error?: string }>(
-          `${path}/${kind}/poll`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id: flow.id }),
-            signal: controller.signal,
-          },
+        const result = await pollSignIn(
+          provider.id,
+          credentialId,
+          kind,
+          flow.id,
+          controller.signal,
         );
         if (controller.signal.aborted) return;
         if (result.status === "complete") {
@@ -791,11 +770,10 @@ function ProviderCard({
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [google, device, busy, path, refresh, callbackForm]);
+  }, [google, device, busy, provider.id, credentialId, refresh, callbackForm]);
 
   async function start(credential: ProviderCredential) {
     setLoginCredential(credential);
-    const credentialPath = credentialsPath(provider.id, credential.id);
     setBusy(true);
     setError("");
     setNotice("");
@@ -804,23 +782,13 @@ function ProviderCard({
     callbackForm.setFieldValue("callback", "");
     try {
       if (provider.kind === "agy") {
-        const result = await request<GoogleFlow>(
-          `${credentialPath}/agy/start`,
-          {
-            method: "POST",
-          },
-        );
+        const result = await startGoogleSignIn(provider.id, credential.id);
         const url = new URL(result.url);
         if (url.protocol !== "https:" || url.hostname !== "accounts.google.com")
           throw new Error("Invalid Google authorization URL.");
         setGoogle({ ...result, url: url.href });
       } else if (provider.kind === "codex") {
-        const result = await request<DeviceFlow>(
-          `${credentialPath}/codex/start`,
-          {
-            method: "POST",
-          },
-        );
+        const result = await startCodexSignIn(provider.id, credential.id);
         const url = new URL(result.url);
         if (url.protocol !== "https:" || url.hostname !== "auth.openai.com")
           throw new Error("Invalid Codex authorization URL.");
@@ -1001,7 +969,7 @@ export function ProvidersPage() {
     queryFn: ({ signal }) => getProviderKinds(signal),
   });
   const remove = useMutation({
-    mutationFn: (id: string) => request(providerPath(id), { method: "DELETE" }),
+    mutationFn: deleteProviderRequest,
   });
   const [editing, setEditing] = useState<Provider | "new" | null>(null);
   const [error, setError] = useState("");
@@ -1021,7 +989,9 @@ export function ProvidersPage() {
     setDeleting(provider.id);
     try {
       await remove.mutateAsync(provider.id);
-      await queryClient.cancelQueries({ queryKey: ["providers"] });
+      await queryClient.cancelQueries({
+        queryKey: ["providers"],
+      });
       queryClient.setQueryData<{ providers: Provider[] }>(
         ["providers"],
         (current) =>
@@ -1032,7 +1002,9 @@ export function ProvidersPage() {
           },
       );
       if (editing !== "new" && editing?.id === provider.id) setEditing(null);
-      await queryClient.invalidateQueries({ queryKey: ["providers"] });
+      await queryClient.invalidateQueries({
+        queryKey: ["providers"],
+      });
       setDeleteTarget(null);
     } catch (err) {
       setError(message(err));

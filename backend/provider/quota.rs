@@ -13,18 +13,20 @@ use crate::{
 };
 
 /// Usage remaining within a provider-defined time window.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct QuotaWindow {
     /// Display label for the window.
     pub(crate) label: String,
     /// Remaining quota as a percentage, when available.
+    #[schema(required = true)]
     pub(crate) remaining_percent: Option<f64>,
     /// Reset timestamp, when provided by the upstream.
+    #[schema(required = true)]
     pub(crate) reset_at: Option<i64>,
 }
 
 /// Provider usage represented as quota windows or a monetary balance.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum QuotaSnapshot {
     /// Time-windowed quota measurements.
@@ -41,7 +43,13 @@ pub(crate) enum QuotaSnapshot {
     },
 }
 
+/// Credential usage API.
+#[derive(utoipa::OpenApi)]
+#[openapi(paths(usage), components(schemas(QuotaWindow, QuotaSnapshot)))]
+pub(crate) struct Api;
+
 /// Returns usage for an existing provider credential when supported.
+#[utoipa::path(get, path = "/api/providers/{id}/credentials/{credential_id}/usage", operation_id = "getCredentialUsage", params(("id" = String, Path), ("credential_id" = String, Path)), responses((status = 200, body = QuotaSnapshot)))]
 async fn usage(
     State(store): State<SettingsStore>,
     Path((provider_id, credential_id)): Path<(String, String)>,

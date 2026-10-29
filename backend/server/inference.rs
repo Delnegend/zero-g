@@ -14,7 +14,7 @@ use crate::provider::{self, catalog, registry};
 use crate::server::{AppState, settings::Permissions};
 
 /// Inference request with provider-qualified model and provider-specific fields.
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(serde::Deserialize, serde::Serialize, utoipa::ToSchema)]
 struct InferenceRequest {
     /// Model identifier in `provider/model` form.
     model: String,
@@ -24,7 +24,7 @@ struct InferenceRequest {
 }
 
 /// Discovery failure for an individual provider.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, utoipa::ToSchema)]
 struct InferenceDiscoveryError {
     /// Provider identifier.
     provider: String,
@@ -33,7 +33,7 @@ struct InferenceDiscoveryError {
 }
 
 /// OpenAI-compatible model list with per-provider discovery errors.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, utoipa::ToSchema)]
 struct InferenceModelList {
     /// List object discriminator.
     object: String,
@@ -42,6 +42,14 @@ struct InferenceModelList {
     /// Providers whose discovery failed.
     errors: Vec<InferenceDiscoveryError>,
 }
+
+/// Public unified inference operations.
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(models, inference, inference_responses),
+    components(schemas(InferenceRequest, InferenceModelList, InferenceDiscoveryError))
+)]
+pub(crate) struct Api;
 
 /// Return a consistent OpenAI-compatible error.
 fn error(status: StatusCode, message: &str, kind: &str, code: &str) -> Response {
@@ -85,6 +93,12 @@ async fn permissions(
 }
 
 /// Aggregate permitted model records, without exposing upstream errors.
+#[utoipa::path(get, path = "/v1/models", operation_id = "listInferenceModels",
+    params(("Authorization" = String, Header, description = "Bearer virtual key")),
+    responses((status = 200, body = InferenceModelList),
+        (status = 401, description = "Missing or invalid virtual key", body = Value),
+        (status = 500, description = "Registry or permissions error", body = Value),
+        (status = 502, description = "All provider discoveries failed", body = Value)))]
 async fn models(State(state): State<AppState>, request: Request) -> Response {
     let permissions = match permissions(&state, request.headers()).await {
         Ok(p) => p,
@@ -186,6 +200,18 @@ fn parse_inference(
 }
 
 /// Rewrite only the model and dispatch to the existing private provider router.
+#[utoipa::path(post, path = "/v1/chat/completions", operation_id = "createChatCompletion",
+    params(("Authorization" = String, Header, description = "Bearer virtual key")),
+    request_body = InferenceRequest,
+    responses((status = 200, description = "Provider JSON or server-sent event stream",
+        content((Value = "application/json"), (String = "text/event-stream"))),
+        (status = 400, description = "Invalid request", body = Value),
+        (status = 401, description = "Missing or invalid virtual key", body = Value),
+        (status = 403, description = "Key does not permit provider or model", body = Value),
+        (status = 404, description = "Provider not found", body = Value),
+        (status = 413, description = "Request body too large", body = Value),
+        (status = 500, description = "Gateway error", body = Value),
+        (status = 502, description = "Provider error", body = Value)))]
 async fn inference(
     State(state): State<AppState>,
     axum::Extension(router): axum::Extension<Router>,
@@ -269,6 +295,18 @@ async fn inference(
 }
 
 /// Dispatch a unified Responses API request through the same inference handler.
+#[utoipa::path(post, path = "/v1/responses", operation_id = "createResponse",
+    params(("Authorization" = String, Header, description = "Bearer virtual key")),
+    request_body = InferenceRequest,
+    responses((status = 200, description = "Provider JSON or server-sent event stream",
+        content((Value = "application/json"), (String = "text/event-stream"))),
+        (status = 400, description = "Invalid request", body = Value),
+        (status = 401, description = "Missing or invalid virtual key", body = Value),
+        (status = 403, description = "Key does not permit provider or model", body = Value),
+        (status = 404, description = "Provider not found", body = Value),
+        (status = 413, description = "Request body too large", body = Value),
+        (status = 500, description = "Gateway error", body = Value),
+        (status = 502, description = "Provider error", body = Value)))]
 async fn inference_responses(
     state: State<AppState>,
     router: axum::Extension<Router>,

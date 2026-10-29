@@ -10,7 +10,9 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Json, Response};
 use chrono::{DateTime, Datelike, Months, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 use tracing::error;
 
 /// Persistent request logs and their retention policy.
@@ -87,7 +89,11 @@ impl LogStore {
     }
 
     /// Aggregate request statistics and recent logs for the requested range.
-    async fn dashboard(&self, since: Option<i64>, until: Option<i64>) -> Result<Value, String> {
+    async fn dashboard(
+        &self,
+        since: Option<i64>,
+        until: Option<i64>,
+    ) -> Result<ObservabilityResponse, String> {
         let upper = until.or_else(|| since.map(|_| now()));
         let interval = interval(since, upper)?;
         let (rows, logs) = self
@@ -141,16 +147,23 @@ impl LogStore {
         } else {
             rows.iter().map(|r| r.1 as f64).sum::<f64>() / count as f64
         };
-        let summary = json!({"requests": count, "successes": successes, "errors": errors, "input_tokens": input_tokens, "output_tokens": output_tokens, "avg_latency_ms": avg_latency_ms});
+        let summary = ObservabilitySummary {
+            requests: count,
+            successes,
+            errors,
+            input_tokens,
+            output_tokens,
+            avg_latency_ms,
+        };
         let mut counts = BTreeMap::<i64, usize>::new();
         for row in &rows {
             let start = bucket_start(row.4, interval)?;
             let requests = counts.entry(start).or_default();
             *requests = requests.saturating_add(1);
         }
-        let buckets: Vec<Value> = counts
+        let buckets: Vec<ObservabilityBucket> = counts
             .into_iter()
-            .map(|(start, requests)| json!({"start": start, "requests": requests}))
+            .map(|(start, requests)| ObservabilityBucket { start, requests })
             .collect();
         let logs: Vec<LogEntry> = logs
             .into_iter()
@@ -168,12 +181,17 @@ impl LogStore {
                 response_body: r.response_body,
             })
             .collect();
-        Ok(json!({"summary": summary, "logs": logs, "interval": interval, "buckets": buckets}))
+        Ok(ObservabilityResponse {
+            summary,
+            logs,
+            interval,
+            buckets,
+        })
     }
 }
 
 /// Calendar granularity used for dashboard request buckets.
-#[derive(Clone, Copy, Serialize)]
+#[derive(Clone, Copy, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 enum Interval {
     /// Hourly buckets.
@@ -232,7 +250,7 @@ fn bucket_start(timestamp: i64, interval: Interval) -> Result<i64, String> {
 }
 
 /// Serialized request log returned by the dashboard.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct LogEntry {
     /// Database record identifier.
     id: i64,
@@ -249,14 +267,71 @@ struct LogEntry {
     /// Elapsed request time in milliseconds.
     latency_ms: i64,
     /// Reported input token count, when available.
+    #[schema(required = true)]
     input_tokens: Option<i64>,
     /// Reported output token count, when available.
+    #[schema(required = true)]
     output_tokens: Option<i64>,
     /// Captured request body.
     request_body: String,
     /// Captured response body.
     response_body: String,
 }
+
+/// Aggregate statistics for the selected range.
+#[derive(Serialize, utoipa::ToSchema)]
+struct ObservabilitySummary {
+    /// Number of requests.
+    requests: usize,
+    /// Number of responses with status 200 through 399.
+    successes: usize,
+    /// Number of responses with status at least 400.
+    errors: usize,
+    /// Sum of available input token counts.
+    #[schema(required = true)]
+    input_tokens: Option<i64>,
+    /// Sum of available output token counts.
+    #[schema(required = true)]
+    output_tokens: Option<i64>,
+    /// Mean latency in milliseconds.
+    avg_latency_ms: f64,
+}
+
+/// Request count for a UTC time bucket.
+#[derive(Serialize, utoipa::ToSchema)]
+struct ObservabilityBucket {
+    /// Bucket start in Unix seconds.
+    start: i64,
+    /// Number of requests in the bucket.
+    requests: usize,
+}
+
+/// Dashboard metrics and recent request logs.
+#[derive(Serialize, utoipa::ToSchema)]
+struct ObservabilityResponse {
+    /// Aggregate metrics.
+    summary: ObservabilitySummary,
+    /// Up to 200 recent log entries.
+    logs: Vec<LogEntry>,
+    /// Bucket granularity.
+    interval: Interval,
+    /// Request counts by time bucket.
+    buckets: Vec<ObservabilityBucket>,
+}
+
+/// Request observability dashboard operation.
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(dashboard),
+    components(schemas(
+        ObservabilityResponse,
+        ObservabilitySummary,
+        ObservabilityBucket,
+        Interval,
+        LogEntry
+    ))
+)]
+pub(crate) struct Api;
 
 /// Return the current Unix timestamp in seconds.
 fn now() -> i64 {
@@ -275,6 +350,12 @@ pub(super) struct DashboardQuery {
 }
 
 /// Serve dashboard metrics and recent request logs.
+#[utoipa::path(get, path = "/api/observability", operation_id = "getObservability",
+    params(("since" = Option<i64>, Query, description = "Inclusive lower Unix timestamp"),
+        ("until" = Option<i64>, Query, description = "Inclusive upper Unix timestamp")),
+    responses((status = 200, body = ObservabilityResponse),
+        (status = 400, description = "Invalid query"),
+        (status = 500, description = "Log query failed")))]
 pub(super) async fn dashboard(
     State(store): State<LogStore>,
     Query(query): Query<DashboardQuery>,
@@ -445,7 +526,7 @@ mod tests {
             .await
             .unwrap();
         store.insert(entry(now())).await.unwrap();
-        let result = store.dashboard(None, None).await.unwrap();
+        let result = serde_json::to_value(store.dashboard(None, None).await.unwrap()).unwrap();
         assert_eq!(result["summary"]["requests"], 1);
         assert_eq!(result["summary"]["input_tokens"], 10);
         assert_eq!(result["logs"][0]["request_body"], "private prompt");
@@ -478,7 +559,7 @@ mod tests {
             tokio::join!(store.insert(entry("first")), store.insert(entry("second")));
         first.unwrap();
         second.unwrap();
-        let result = store.dashboard(None, None).await.unwrap();
+        let result = serde_json::to_value(store.dashboard(None, None).await.unwrap()).unwrap();
         assert_eq!(result["summary"]["requests"], 2);
         let logs = result["logs"].as_array().unwrap();
         assert_eq!(
@@ -638,7 +719,8 @@ mod tests {
                 {"start": 0, "requests": 1}
             ])
         );
-        let hourly = store.dashboard(Some(-86400), Some(0)).await.unwrap();
+        let hourly =
+            serde_json::to_value(store.dashboard(Some(-86400), Some(0)).await.unwrap()).unwrap();
         assert_eq!(hourly["interval"], "hour");
         assert_eq!(hourly["summary"]["requests"], 203);
         assert_eq!(hourly["logs"].as_array().unwrap().len(), 200);

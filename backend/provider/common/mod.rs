@@ -40,7 +40,7 @@ pub(crate) trait DashboardProvider {
 }
 
 /// Provider identity, authentication options, and migration policy.
-#[derive(Clone, Copy, serde::Serialize)]
+#[derive(Clone, Copy, serde::Serialize, utoipa::ToSchema)]
 pub(crate) struct ProviderDescriptor {
     /// Stable provider kind identifier.
     pub(crate) value: &'static str,
@@ -51,8 +51,10 @@ pub(crate) struct ProviderDescriptor {
     /// Whether API key credentials are supported.
     pub(crate) api_key: bool,
     /// Fixed provider instance identifier, when applicable.
+    #[schema(required = true)]
     pub(crate) fixed_id: Option<&'static str>,
     /// Fixed provider instance name, when applicable.
+    #[schema(required = true)]
     pub(crate) fixed_name: Option<&'static str>,
     /// Whether requests can be sent without credentials.
     #[serde(skip)]

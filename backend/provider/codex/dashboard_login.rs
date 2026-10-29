@@ -79,12 +79,44 @@ struct DeviceStart {
     interval: Option<serde_json::Value>,
 }
 
+/// Successful device authorization flow creation.
+#[derive(serde::Serialize, utoipa::ToSchema)]
+struct CodexStartResponse {
+    /// Device flow identifier.
+    id: String,
+    /// Authorization URL.
+    url: &'static str,
+    /// Code to enter on the authorization page.
+    user_code: String,
+    /// Minimum polling interval in seconds.
+    interval: u64,
+}
+
+/// Device authorization polling result.
+#[derive(serde::Serialize, utoipa::ToSchema)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum CodexPollResponse {
+    /// Authorization has not completed.
+    Pending,
+    /// Credentials were saved.
+    Complete,
+}
+
+/// Codex device authorization dashboard API.
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(codex_start, codex_poll),
+    components(schemas(CodexStartResponse, CodexPollInput, CodexPollResponse))
+)]
+pub(crate) struct Api;
+
 /// Starts a device authorization flow for a Codex credential.
+#[utoipa::path(post, path = "/api/providers/{id}/credentials/{credential_id}/codex/start", operation_id = "startCodexLogin", params(("id" = String, Path), ("credential_id" = String, Path)), responses((status = 200, body = CodexStartResponse)))]
 async fn codex_start(
     State((app, flows)): State<LoginState>,
     Path((provider_id, credential_id)): Path<(String, String)>,
     headers: HeaderMap,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+) -> Result<Json<CodexStartResponse>, (StatusCode, String)> {
     same_origin(&headers)?;
     require_credential(&app.settings, &provider_id, &credential_id, "codex").await?;
     let response = reqwest::Client::new()
@@ -133,14 +165,17 @@ async fn codex_start(
         },
     );
     drop(pending);
-    Ok(Json(
-        json!({"id":id,"url":CODEX_DEVICE_AUTH_URL,"user_code":user_code,"interval":seconds}),
-    ))
+    Ok(Json(CodexStartResponse {
+        id,
+        url: CODEX_DEVICE_AUTH_URL,
+        user_code,
+        interval: seconds,
+    }))
 }
 
 /// Dashboard request identifying a pending device flow.
-#[derive(Deserialize)]
-struct CodexPoll {
+#[derive(Deserialize, utoipa::ToSchema)]
+struct CodexPollInput {
     /// Dashboard-facing flow identifier.
     id: String,
 }
@@ -155,13 +190,14 @@ struct DeviceToken {
 
 /// Polls a pending device flow and saves credentials after authorization.
 // Keep the device polling state transition and token exchange together.
+#[utoipa::path(post, path = "/api/providers/{id}/credentials/{credential_id}/codex/poll", operation_id = "pollCodexLogin", params(("id" = String, Path), ("credential_id" = String, Path)), request_body = CodexPollInput, responses((status = 200, body = CodexPollResponse)))]
 #[allow(clippy::too_many_lines)]
 async fn codex_poll(
     State((app, flows)): State<LoginState>,
     Path((provider_id, credential_id)): Path<(String, String)>,
     headers: HeaderMap,
-    Json(input): Json<CodexPoll>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    Json(input): Json<CodexPollInput>,
+) -> Result<Json<CodexPollResponse>, (StatusCode, String)> {
     same_origin(&headers)?;
     require_credential(&app.settings, &provider_id, &credential_id, "codex").await?;
     let settings = &app.settings;
@@ -190,7 +226,7 @@ async fn codex_poll(
             return Err(error("Device flow expired"));
         }
         if *in_flight || Instant::now() < *next_poll {
-            return Ok(Json(json!({"status":"pending"})));
+            return Ok(Json(CodexPollResponse::Pending));
         }
         let next = Instant::now()
             .checked_add(*interval)
@@ -228,7 +264,7 @@ async fn codex_poll(
         if let Some(Flow { in_flight, .. }) = flows.pending.lock().await.get_mut(&input.id) {
             *in_flight = false;
         }
-        return Ok(Json(json!({"status":"pending"})));
+        return Ok(Json(CodexPollResponse::Pending));
     }
     flows.pending.lock().await.remove(&input.id);
     if !response.status().is_success() {
@@ -256,7 +292,7 @@ async fn codex_poll(
     CodexAuthManager::save(settings, &provider_id, &credential_id, &creds)
         .await
         .map_err(error)?;
-    Ok(Json(json!({"status":"complete"})))
+    Ok(Json(CodexPollResponse::Complete))
 }
 
 #[cfg(test)]

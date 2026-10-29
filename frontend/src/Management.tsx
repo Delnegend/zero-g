@@ -21,17 +21,15 @@ import {
   updateSettings,
   type SettingsUpdate,
 } from "./server/api/settings";
-import { message, request } from "./server/api/client";
+import { message } from "./server/api/client";
+import {
+  createKey,
+  getKeys,
+  revokeKey as revokeKeyRequest,
+  type VirtualKey,
+} from "./server/api/keys";
 import { getProviders } from "./server/api/providers";
 import { ProvidersPage } from "./ProvidersPage";
-
-type VirtualKey = {
-  id: string;
-  name: string;
-  providers: string[];
-  models: string[];
-  created_at: number;
-};
 
 const inputClass =
   "mt-1 h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
@@ -260,8 +258,7 @@ function KeysPage() {
   const keysQuery = useQuery({
     queryKey: ["virtual-keys"],
     retry: false,
-    queryFn: ({ signal }) =>
-      request<{ keys: VirtualKey[] }>("/api/keys", { signal }),
+    queryFn: ({ signal }) => getKeys(signal),
   });
   const providersQuery = useQuery({
     queryKey: ["providers"],
@@ -271,20 +268,10 @@ function KeysPage() {
   const keys = keysQuery.data?.keys ?? [];
   const createMutation = useMutation({
     gcTime: 0,
-    mutationFn: (body: {
-      name: string;
-      providers: string[];
-      models: string[];
-    }) =>
-      request<VirtualKey & { key: string }>("/api/keys", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      }),
+    mutationFn: createKey,
   });
   const revokeMutation = useMutation({
-    mutationFn: (id: string) =>
-      request(`/api/keys/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    mutationFn: revokeKeyRequest,
   });
   const [newKey, setNewKey] = useState("");
   const [error, setError] = useState("");
@@ -518,7 +505,8 @@ function KeysPage() {
                   <Label className="block text-sm font-medium">
                     Models{" "}
                     <span className="font-normal text-muted-foreground">
-                      (comma or newline separated; blank allows all)
+                      (upstream model IDs, comma or newline separated; blank
+                      allows all)
                     </span>
                     <Textarea
                       className={`${inputClass} h-24 py-2`}

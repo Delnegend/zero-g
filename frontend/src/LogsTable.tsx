@@ -18,7 +18,7 @@ import {
 } from "@tanstack/react-table";
 import { formatDistanceToNow } from "date-fns";
 import { ArrowUpDown, ChevronLeft, ChevronRight, Search } from "lucide-react";
-import type { Log } from "./App";
+import type { Log } from "./server/api/observability";
 import { Button } from "./components/ui/button";
 import { Card } from "./components/ui/card";
 import { Input } from "./components/ui/input";

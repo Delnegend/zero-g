@@ -39,7 +39,7 @@ const SETTINGS_CHANGED: &str =
 static SYNC_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// URLs and intervals governing model metadata refreshes.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 struct ModelSettings {
     /// Pricing datasheet URL.
@@ -51,6 +51,39 @@ struct ModelSettings {
     /// Provider discovery interval in minutes; zero disables discovery.
     discovery_interval_minutes: u64,
 }
+
+/// Cached datasheet entries indexed by their source keys.
+#[derive(Serialize, utoipa::ToSchema)]
+struct ModelData {
+    /// Pricing records.
+    #[schema(value_type = std::collections::HashMap<String, Value>)]
+    pricing: Value,
+    /// Model parameter records.
+    #[schema(value_type = std::collections::HashMap<String, Value>)]
+    parameters: Value,
+}
+
+/// Model settings API error.
+#[derive(Serialize, utoipa::ToSchema)]
+struct ModelSettingsError {
+    /// Error message.
+    error: String,
+}
+
+/// Successful datasheet synchronization.
+#[derive(Serialize, utoipa::ToSchema)]
+struct ModelSyncResult {
+    /// Whether synchronization succeeded.
+    ok: bool,
+}
+
+/// Model synchronization and cached datasheet operations.
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(get_settings, put_settings, sync, get_data),
+    components(schemas(ModelSettings, ModelData, ModelSettingsError, ModelSyncResult))
+)]
+pub(crate) struct Api;
 
 impl Default for ModelSettings {
     fn default() -> Self {
@@ -108,6 +141,8 @@ async fn load_settings(store: &SettingsStore) -> Result<ModelSettings, String> {
 }
 
 /// Return the current model synchronization settings.
+#[utoipa::path(get, path = "/api/model-settings", operation_id = "getModelSettings",
+    responses((status = 200, body = ModelSettings), (status = 500, body = ModelSettingsError)))]
 async fn get_settings(State(state): State<AppState>) -> Response {
     load_settings(&state.settings).await.map_or_else(
         |_| {
@@ -121,6 +156,10 @@ async fn get_settings(State(state): State<AppState>) -> Response {
 }
 
 /// Validate and persist model synchronization settings.
+#[utoipa::path(put, path = "/api/model-settings", operation_id = "updateModelSettings",
+    request_body = ModelSettings,
+    responses((status = 200, body = ModelSettings), (status = 400, body = ModelSettingsError),
+        (status = 500, body = ModelSettingsError)))]
 async fn put_settings(
     State(state): State<AppState>,
     Json(mut settings): Json<ModelSettings>,
@@ -166,7 +205,13 @@ async fn put_settings(
 
 /// Construct a JSON error response.
 fn error(status: StatusCode, message: &str) -> Response {
-    (status, Json(json!({"error": message}))).into_response()
+    (
+        status,
+        Json(ModelSettingsError {
+            error: message.to_owned(),
+        }),
+    )
+        .into_response()
 }
 
 /// Download a datasheet within the configured timeout.
@@ -280,9 +325,12 @@ async fn save_datasheets(
 }
 
 /// Handle an on-demand datasheet synchronization.
+#[utoipa::path(post, path = "/api/model-settings/sync", operation_id = "syncModelSettings",
+    responses((status = 200, body = ModelSyncResult), (status = 409, body = ModelSettingsError),
+        (status = 502, body = ModelSettingsError)))]
 async fn sync(State(state): State<AppState>) -> Response {
     match sync_datasheets(&state.settings).await {
-        Ok(()) => Json(json!({"ok": true})).into_response(),
+        Ok(()) => Json(ModelSyncResult { ok: true }).into_response(),
         Err(message) if message == SETTINGS_CHANGED => error(StatusCode::CONFLICT, &message),
         Err(message) => error(StatusCode::BAD_GATEWAY, &message),
     }
@@ -384,6 +432,8 @@ fn filter_datasheet(sheet: &str, models: &CatalogModels) -> Result<Value, String
 }
 
 /// Return cached pricing and parameters for discovered models.
+#[utoipa::path(get, path = "/api/model-settings/data", operation_id = "getModelData",
+    responses((status = 200, body = ModelData), (status = 500, body = ModelSettingsError)))]
 async fn get_data(State(state): State<AppState>) -> Response {
     async fn read(
         store: &SettingsStore,
@@ -417,9 +467,11 @@ async fn get_data(State(state): State<AppState>) -> Response {
     let pricing = read(&state.settings, PRICING_KEY, &models).await;
     let parameters = read(&state.settings, PARAMETERS_KEY, &models).await;
     match (pricing, parameters) {
-        (Ok(pricing), Ok(parameters)) => {
-            Json(json!({"pricing": pricing, "parameters": parameters})).into_response()
-        }
+        (Ok(pricing), Ok(parameters)) => Json(ModelData {
+            pricing,
+            parameters,
+        })
+        .into_response(),
         _ => error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "Unable to load cached datasheets",

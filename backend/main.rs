@@ -1,5 +1,4 @@
-/// Settings API contract tests.
-#[cfg(test)]
+/// `OpenAPI` contract for the public and dashboard APIs.
 mod contract;
 /// Database connection and transaction retry support.
 mod database;

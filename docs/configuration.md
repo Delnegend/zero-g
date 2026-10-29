@@ -66,4 +66,6 @@ Create an Antigravity provider under **Models → Providers**, add a credential,
 
 Run `zero-g` to start the server. Use the dashboard **Models → Providers** page for provider sign-in and status. Provider credentials and OAuth settings are read from the database; they are not imported from environment variables or plaintext credential files. Discover models through the authenticated `/v1/models` endpoint.
 
+The API reference at `/redoc` and its OpenAPI document at `/api/openapi.json` require dashboard authentication. ReDoc's JavaScript is bundled with zero-g; it does not require a third-party CDN.
+
 The database contains sensitive full request and response bodies as well as settings and encrypted secrets. Restrict filesystem access, protect backups, and use TLS for dashboard access. Token counts are recorded only when the provider includes usage in its response.

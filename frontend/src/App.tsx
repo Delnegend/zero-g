@@ -29,12 +29,14 @@ import { Card } from "./components/ui/card";
 import { LogsTable } from "./LogsTable";
 import { ObservabilityCharts } from "./ObservabilityCharts";
 import { RequestBody, requestBodyTheme } from "./RequestBody";
-import { Alert, AlertDescription } from "./components/ui/alert";
 import {
-  DateRangePicker,
+  getObservability,
   rangeStart,
   type DashboardRange,
-} from "./components/DateRangePicker";
+  type Log,
+} from "./server/api/observability";
+import { Alert, AlertDescription } from "./components/ui/alert";
+import { DateRangePicker } from "./components/DateRangePicker";
 import {
   Drawer,
   DrawerClose,
@@ -61,34 +63,6 @@ import {
   useSidebar,
 } from "./components/ui/sidebar";
 
-export type Log = {
-  id: string | number;
-  created_at: number;
-  provider: string;
-  model: string;
-  path: string;
-  status: number;
-  latency_ms: number;
-  input_tokens: number | null;
-  output_tokens: number | null;
-  request_body: unknown;
-  response_body: unknown;
-};
-
-type Observability = {
-  summary: {
-    requests: number;
-    successes: number;
-    errors: number;
-    input_tokens: number | null;
-    output_tokens: number | null;
-    avg_latency_ms: number;
-  };
-  interval: "hour" | "day" | "month" | "year";
-  buckets: { start: number; requests: number }[];
-  logs: Log[];
-};
-
 const number = new Intl.NumberFormat();
 
 function formatTokens(value: number | null): string {
@@ -112,23 +86,20 @@ function ObservabilityPage({ logsOnly = false }: { logsOnly?: boolean }) {
     refetch,
   } = useQuery({
     queryKey: ["observability", logsOnly ? "all" : range],
-    queryFn: async ({ signal }): Promise<Observability> => {
-      let url = "/api/observability";
-      if (!logsOnly) {
-        if (range.kind === "preset") {
-          const until = Math.floor(Date.now() / 1000);
-          const since =
-            range.value === "24h"
-              ? until - 24 * 60 * 60
-              : rangeStart(range.value);
-          url += `?since=${since}&until=${until}`;
-        } else {
-          url += `?since=${range.from}&until=${range.until}`;
-        }
+    queryFn: ({ signal }) => {
+      if (logsOnly) return getObservability(signal);
+      if (range.kind === "preset") {
+        const until = Math.floor(Date.now() / 1000);
+        const since =
+          range.value === "24h"
+            ? until - 24 * 60 * 60
+            : rangeStart(range.value);
+        return getObservability(signal, { since, until });
       }
-      const response = await fetch(url, { signal });
-      if (!response.ok) throw new Error(`Request failed (${response.status})`);
-      return response.json();
+      return getObservability(signal, {
+        since: range.from,
+        until: range.until,
+      });
     },
     placeholderData: logsOnly ? undefined : keepPreviousData,
     retry: false,
