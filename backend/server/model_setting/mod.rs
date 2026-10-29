@@ -1,6 +1,5 @@
 use axum::{
     Json, Router,
-    extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -8,16 +7,23 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::server::{AppState, settings::SettingsStore};
-use crate::storage::Setting;
 
 /// Datasheet synchronization and catalog filtering.
 mod datasheet;
+/// Read model settings.
+mod get;
 /// Background model refresh scheduling.
 mod schedule;
+/// Synchronize model datasheets.
+mod sync;
+/// Update model settings.
+mod update;
 
 pub(super) use datasheet::{CatalogModels, ModelData, catalog_data};
-use datasheet::{SETTINGS_CHANGED, sync_datasheets};
+use get::__path_get_settings;
 pub(crate) use schedule::run_background;
+use sync::__path_sync;
+use update::__path_put_settings;
 
 /// Settings key for model synchronization configuration.
 const CONFIG_KEY: &str = "model_settings";
@@ -113,69 +119,6 @@ async fn load_settings(store: &SettingsStore) -> Result<ModelSettings, String> {
         )
 }
 
-/// Return the current model synchronization settings.
-#[utoipa::path(get, path = "/api/model-settings", operation_id = "getModelSettings",
-    responses((status = 200, body = ModelSettings), (status = 500, body = ModelSettingsError)))]
-async fn get_settings(State(state): State<AppState>) -> Response {
-    load_settings(&state.settings).await.map_or_else(
-        |_| {
-            error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Unable to load model settings",
-            )
-        },
-        |settings| Json(settings).into_response(),
-    )
-}
-
-/// Validate and persist model synchronization settings.
-#[utoipa::path(put, path = "/api/model-settings", operation_id = "updateModelSettings",
-    request_body = ModelSettings,
-    responses((status = 200, body = ModelSettings), (status = 400, body = ModelSettingsError),
-        (status = 500, body = ModelSettingsError)))]
-async fn put_settings(
-    State(state): State<AppState>,
-    Json(mut settings): Json<ModelSettings>,
-) -> Response {
-    let defaults = ModelSettings::default();
-    if settings.pricing_url.trim().is_empty() {
-        settings.pricing_url = defaults.pricing_url;
-    }
-    if settings.parameters_url.trim().is_empty() {
-        settings.parameters_url = defaults.parameters_url;
-    }
-    if let Err(message) = settings.validate() {
-        return error(StatusCode::BAD_REQUEST, message);
-    }
-    let Ok(value) = serde_json::to_string(&settings) else {
-        return error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Unable to serialize model settings",
-        );
-    };
-    let result = state
-        .settings
-        .database
-        .retry(|| async {
-            let mut db = (*state.settings.database.db).clone();
-            let mut tx = db.transaction().await?;
-            Setting::upsert_by_name(CONFIG_KEY)
-                .value(value.as_str())
-                .exec(&mut tx)
-                .await?;
-            tx.commit().await?;
-            Ok(())
-        })
-        .await;
-    if result.is_err() {
-        return error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Unable to save model settings",
-        );
-    }
-    Json(settings).into_response()
-}
-
 /// Construct a JSON error response.
 fn error(status: StatusCode, message: &str) -> Response {
     (
@@ -187,45 +130,43 @@ fn error(status: StatusCode, message: &str) -> Response {
         .into_response()
 }
 
-/// Handle an on-demand datasheet synchronization.
-#[utoipa::path(post, path = "/api/model-settings/sync", operation_id = "syncModelSettings",
-    responses((status = 200, body = ModelSyncResult), (status = 409, body = ModelSettingsError),
-        (status = 502, body = ModelSettingsError)))]
-async fn sync(State(state): State<AppState>) -> Response {
-    match sync_datasheets(&state.settings).await {
-        Ok(()) => Json(ModelSyncResult { ok: true }).into_response(),
-        Err(message) if message == SETTINGS_CHANGED => error(StatusCode::CONFLICT, &message),
-        Err(message) => error(StatusCode::BAD_GATEWAY, &message),
-    }
-}
-
 /// Build routes for model configuration and metadata.
 pub(crate) fn router(state: AppState) -> Router {
     Router::new()
-        .route("/api/model-settings", get(get_settings).put(put_settings))
-        .route("/api/model-settings/sync", post(sync))
+        .route(
+            "/api/model-settings",
+            get(get::get_settings).put(update::put_settings),
+        )
+        .route("/api/model-settings/sync", post(sync::sync))
         .with_state(state)
 }
 
+/// Shared in-memory gateway for endpoint behavior tests.
 #[cfg(test)]
-mod tests {
-    use super::*;
+mod test_support {
+    use crate::{
+        database::Database,
+        provider::Providers,
+        server::{
+            AppState, dashboard_auth::DashboardAuth, observability::LogStore,
+            settings::SettingsStore,
+        },
+    };
 
-    /// Reject invalid URLs and overflowing refresh intervals.
-    #[test]
-    fn validates_urls_and_intervals() {
-        let mut settings = ModelSettings::default();
-        assert!(settings.validate().is_ok());
-        settings.pricing_url = "http://127.0.0.1/data".into();
-        assert!(settings.validate().is_ok());
-        settings.pricing_url = "ftp://example.com/data".into();
-        assert!(settings.validate().is_err());
-        settings.pricing_url = "https://user:secret@example.com/data".into();
-        assert!(settings.validate().is_err());
-        settings.pricing_url = "https://example.com/data#fragment".into();
-        assert!(settings.validate().is_err());
-        settings.pricing_url = "https://example.com/data".into();
-        settings.pricing_interval_hours = u64::MAX;
-        assert!(settings.validate().is_err());
+    /// Create an isolated gateway state.
+    pub(super) async fn state() -> AppState {
+        let database = Database::open(":memory:").await.unwrap();
+        let settings = SettingsStore::new(
+            database.clone(),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )
+        .await
+        .unwrap();
+        AppState {
+            providers: Providers::new(),
+            settings,
+            logs: LogStore::new(database),
+            dashboard_auth: DashboardAuth::test().unwrap(),
+        }
     }
 }
