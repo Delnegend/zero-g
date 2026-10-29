@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
+use crate::server::{AppState, settings::SettingsStore};
+use crate::storage::Setting;
 use axum::{
     Json, Router,
     extract::State,
@@ -15,11 +17,9 @@ use serde::{
 };
 use serde_json::{Value, json};
 
-use crate::server::{AppState, settings::SettingsStore};
-use crate::storage::Setting;
-
 /// Settings key for model synchronization configuration.
 const CONFIG_KEY: &str = "model_settings";
+
 /// Settings key for the cached pricing sheet.
 const PRICING_KEY: &str = "model_pricing_datasheet";
 /// Settings key for the cached model parameters sheet.
@@ -30,13 +30,15 @@ const PARAMETERS_KEY: &str = "model_parameters_datasheet";
 const MAX_DATASHEET_BYTES: usize = 128 * 1024 * 1024;
 /// Overall timeout for downloading a sheet.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(120);
-/// Frequency at which background jobs check their schedules.
-const SCHEDULER_POLL: Duration = Duration::from_secs(5);
+
 /// Conflict reported when sheet URLs change during synchronization.
 const SETTINGS_CHANGED: &str =
     "Datasheet URLs changed during sync; retry with the current settings";
 /// Serializes concurrent datasheet synchronizations.
 static SYNC_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Frequency at which background jobs check their schedules.
+const SCHEDULER_POLL: Duration = Duration::from_secs(5);
 
 /// URLs and intervals governing model metadata refreshes.
 #[derive(Clone, Debug, Deserialize, Serialize, utoipa::ToSchema)]
@@ -53,14 +55,12 @@ struct ModelSettings {
 }
 
 /// Cached datasheet entries indexed by their source keys.
-#[derive(Serialize, utoipa::ToSchema)]
-struct ModelData {
+#[derive(Default)]
+pub(super) struct ModelData {
     /// Pricing records.
-    #[schema(value_type = std::collections::HashMap<String, Value>)]
-    pricing: Value,
+    pub(super) pricing: Value,
     /// Model parameter records.
-    #[schema(value_type = std::collections::HashMap<String, Value>)]
-    parameters: Value,
+    pub(super) parameters: Value,
 }
 
 /// Model settings API error.
@@ -80,8 +80,8 @@ struct ModelSyncResult {
 /// Model synchronization and cached datasheet operations.
 #[derive(utoipa::OpenApi)]
 #[openapi(
-    paths(get_settings, put_settings, sync, get_data),
-    components(schemas(ModelSettings, ModelData, ModelSettingsError, ModelSyncResult))
+    paths(get_settings, put_settings, sync),
+    components(schemas(ModelSettings, ModelSettingsError, ModelSyncResult))
 )]
 pub(crate) struct Api;
 
@@ -338,7 +338,7 @@ async fn sync(State(state): State<AppState>) -> Response {
 
 /// Model identifiers used to select relevant datasheet entries.
 #[derive(Default)]
-struct CatalogModels {
+pub(super) struct CatalogModels {
     /// Discovered model identifiers.
     ids: HashSet<String>,
     /// Pairs of provider identifier or kind and model identifier.
@@ -349,42 +349,32 @@ struct CatalogModels {
 
 impl CatalogModels {
     /// Collect model identifiers and provider associations from a catalog.
-    fn from_catalog(catalog: &Value) -> Self {
+    pub(super) fn from_entries<'a>(
+        entries: impl IntoIterator<Item = (&'a str, &'a str, &'a str)>,
+    ) -> Self {
         let mut result = Self::default();
-        if let Some(providers) = catalog.get("providers").and_then(Value::as_array) {
-            for provider in providers {
-                if let Some(models) = provider.get("models").and_then(Value::as_array) {
-                    for model in models {
-                        if let Some(id) = model.get("id").and_then(Value::as_str) {
-                            result.ids.insert(id.to_owned());
-                            if provider.get("kind").and_then(Value::as_str) == Some("agy") {
-                                if id.starts_with("gemini-") {
-                                    for owner in ["gemini", "vertex_ai"] {
-                                        result
-                                            .reference_keys
-                                            .insert(format!("{owner}/{id}"), owner);
-                                        result
-                                            .reference_keys
-                                            .insert(format!("{owner}/{id}-preview"), owner);
-                                    }
-                                } else if id.starts_with("claude-") {
-                                    let base = id.strip_suffix("-thinking").unwrap_or(id);
-                                    result.reference_keys.insert(base.to_owned(), "anthropic");
-                                    result
-                                        .reference_keys
-                                        .insert(format!("anthropic/{base}"), "anthropic");
-                                }
-                            }
-                            for field in ["id", "kind"] {
-                                if let Some(name) = provider.get(field).and_then(Value::as_str) {
-                                    result
-                                        .provider_models
-                                        .insert((name.to_owned(), id.to_owned()));
-                                }
-                            }
-                        }
+        for (provider_id, kind, id) in entries {
+            result.ids.insert(id.to_owned());
+            if kind == "agy" {
+                if id.starts_with("gemini-") {
+                    for owner in ["gemini", "vertex_ai"] {
+                        result.reference_keys.insert(format!("{owner}/{id}"), owner);
+                        result
+                            .reference_keys
+                            .insert(format!("{owner}/{id}-preview"), owner);
                     }
+                } else if id.starts_with("claude-") {
+                    let base = id.strip_suffix("-thinking").unwrap_or(id);
+                    result.reference_keys.insert(base.to_owned(), "anthropic");
+                    result
+                        .reference_keys
+                        .insert(format!("anthropic/{base}"), "anthropic");
                 }
+            }
+            for name in [provider_id, kind] {
+                result
+                    .provider_models
+                    .insert((name.to_owned(), id.to_owned()));
             }
         }
         result
@@ -393,6 +383,12 @@ impl CatalogModels {
     /// Match either the sheet key or its provider and base model.
     fn matches(&self, key: &str, value: &Value) -> bool {
         if self.ids.contains(key) {
+            return true;
+        }
+        if key.split_once('/').is_some_and(|(provider, model)| {
+            self.provider_models
+                .contains(&(provider.to_owned(), model.to_owned()))
+        }) {
             return true;
         }
         if self
@@ -458,10 +454,11 @@ fn filter_datasheet(sheet: &str, models: &CatalogModels) -> Result<Value, String
     Ok(Value::Object(selected))
 }
 
-/// Return cached pricing and parameters for discovered models.
-#[utoipa::path(get, path = "/api/model-settings/data", operation_id = "getModelData",
-    responses((status = 200, body = ModelData), (status = 500, body = ModelSettingsError)))]
-async fn get_data(State(state): State<AppState>) -> Response {
+/// Load each cached sheet once, retaining only records relevant to this catalog.
+pub(super) async fn catalog_data(
+    store: &SettingsStore,
+    models: &CatalogModels,
+) -> Result<ModelData, String> {
     async fn read(
         store: &SettingsStore,
         key: &str,
@@ -472,38 +469,10 @@ async fn get_data(State(state): State<AppState>) -> Response {
             .await?
             .map_or_else(|| Ok(json!({})), |value| filter_datasheet(&value, models))
     }
-    let catalog = match state.settings.setting_get("model_catalog").await {
-        Ok(Some(value)) => match serde_json::from_str::<Value>(&value) {
-            Ok(value) => value,
-            Err(_) => {
-                return error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Unable to load cached model catalog",
-                );
-            }
-        },
-        Ok(None) => json!({}),
-        Err(_) => {
-            return error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Unable to load cached model catalog",
-            );
-        }
-    };
-    let models = CatalogModels::from_catalog(&catalog);
-    let pricing = read(&state.settings, PRICING_KEY, &models).await;
-    let parameters = read(&state.settings, PARAMETERS_KEY, &models).await;
-    match (pricing, parameters) {
-        (Ok(pricing), Ok(parameters)) => Json(ModelData {
-            pricing,
-            parameters,
-        })
-        .into_response(),
-        _ => error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Unable to load cached datasheets",
-        ),
-    }
+    Ok(ModelData {
+        pricing: read(store, PRICING_KEY, models).await?,
+        parameters: read(store, PARAMETERS_KEY, models).await?,
+    })
 }
 
 /// Build routes for model configuration and metadata.
@@ -511,7 +480,6 @@ pub(crate) fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/model-settings", get(get_settings).put(put_settings))
         .route("/api/model-settings/sync", post(sync))
-        .route("/api/model-settings/data", get(get_data))
         .with_state(state)
 }
 
@@ -561,7 +529,6 @@ pub(crate) async fn run_background(state: AppState) {
     tokio::join!(pricing, discovery);
 }
 
-/// Model metadata validation, scheduling, and persistence tests.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -583,7 +550,6 @@ mod tests {
         settings.pricing_interval_hours = u64::MAX;
         assert!(settings.validate().is_err());
     }
-
     /// Accept local HTTP datasheets without following redirects.
     #[tokio::test]
     async fn fetches_local_http_and_rejects_redirects() {
@@ -657,20 +623,13 @@ mod tests {
         server.abort();
     }
 
-    /// Zero intervals disable jobs and new schedules run immediately.
-    #[test]
-    fn disabled_and_initial_schedules() {
-        assert!(!due(None, 0));
-        assert!(due(None, 60));
-        assert!(!due(Some(Instant::now()), 60));
-    }
-
     /// Select datasheet entries corresponding to discovered models.
     #[test]
     fn filters_datasheets_by_catalog() {
-        let models = CatalogModels::from_catalog(&json!({
-            "providers": [{"id": "my-provider", "kind": "openai", "models": [{"id": "gpt-test"}, {"id": "exact"}]}]
-        }));
+        let models = CatalogModels::from_entries([
+            ("my-provider", "openai", "gpt-test"),
+            ("my-provider", "openai", "exact"),
+        ]);
         let sheet = r#"{
             "exact": {"input_cost_per_token": 1},
             "openai/gpt-test": {"provider": "openai", "base_model": "gpt-test"},
@@ -688,12 +647,10 @@ mod tests {
     /// Antigravity reference prices survive filtering without admitting unrelated models.
     #[test]
     fn retains_antigravity_reference_prices() {
-        let models = CatalogModels::from_catalog(&json!({
-            "providers": [{"id": "agy", "kind": "agy", "models": [
-                {"id": "gemini-3-pro"},
-                {"id": "claude-sonnet-4-6-thinking"}
-            ]}]
-        }));
+        let models = CatalogModels::from_entries([
+            ("agy", "agy", "gemini-3-pro"),
+            ("agy", "agy", "claude-sonnet-4-6-thinking"),
+        ]);
         let sheet = r#"{
             "gemini/gemini-3-pro-preview": {"provider":"gemini","base_model":"gemini-3-pro","input_cost_per_token":0.000002},
             "vertex_ai/gemini-3-pro-preview": {"provider":"vertex_ai","base_model":"gemini-3-pro"},
@@ -753,5 +710,12 @@ mod tests {
             store.setting_get(PARAMETERS_KEY).await.unwrap().unwrap(),
             r#"{"new":2}"#
         );
+    }
+    /// Zero intervals disable jobs and new schedules run immediately.
+    #[test]
+    fn disabled_and_initial_schedules() {
+        assert!(!due(None, 0));
+        assert!(due(None, 60));
+        assert!(!due(Some(Instant::now()), 60));
     }
 }

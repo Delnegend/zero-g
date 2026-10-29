@@ -235,35 +235,6 @@
         }
       }
     },
-    "/api/model-settings/data": {
-      "get": {
-        "tags": [],
-        "summary": "Return cached pricing and parameters for discovered models.",
-        "operationId": "getModelData",
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ModelData"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ModelSettingsError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/model-settings/sync": {
       "post": {
         "tags": [],
@@ -1457,18 +1428,125 @@
           }
         }
       },
+      "CatalogModel": {
+        "type": "object",
+        "description": "A raw model and its normalized dashboard metadata.",
+        "required": [
+          "model",
+          "display_name",
+          "description",
+          "reasoning_efforts",
+          "reasoning",
+          "tool_call",
+          "input_modalities",
+          "pricing",
+          "raw_pricing",
+          "parameters",
+          "provider_metadata"
+        ],
+        "properties": {
+          "description": {
+            "type": ["string", "null"],
+            "description": "Description when provided."
+          },
+          "display_name": {
+            "type": "string",
+            "description": "Human-readable name."
+          },
+          "input_modalities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Supported input modalities."
+          },
+          "model": {
+            "$ref": "#/components/schemas/Model",
+            "description": "Original provider model, including extra metadata."
+          },
+          "parameters": {
+            "type": ["object", "null"],
+            "description": "Original parameters record."
+          },
+          "pricing": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CatalogPricing",
+                "description": "Prices in USD per million tokens."
+              }
+            ]
+          },
+          "provider_metadata": {
+            "type": ["object", "null"],
+            "description": "Original provider-specific metadata."
+          },
+          "raw_pricing": {
+            "type": ["object", "null"],
+            "description": "Original pricing record."
+          },
+          "reasoning": {
+            "type": ["boolean", "null"],
+            "description": "Reasoning capability, if known."
+          },
+          "reasoning_efforts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Supported reasoning effort values."
+          },
+          "tool_call": {
+            "type": ["boolean", "null"],
+            "description": "Tool calling capability, if known."
+          }
+        }
+      },
+      "CatalogPricing": {
+        "type": "object",
+        "description": "Normalized prices in USD per million tokens.",
+        "required": ["input", "output", "cache_write", "cache_read", "source"],
+        "properties": {
+          "cache_read": {
+            "type": ["number", "null"],
+            "format": "double",
+            "description": "Cache read price."
+          },
+          "cache_write": {
+            "type": ["number", "null"],
+            "format": "double",
+            "description": "Cache write price."
+          },
+          "input": {
+            "type": ["number", "null"],
+            "format": "double",
+            "description": "Input price."
+          },
+          "output": {
+            "type": ["number", "null"],
+            "format": "double",
+            "description": "Output price."
+          },
+          "source": {
+            "type": "string",
+            "description": "Pricing source: models.dev, datasheet, or antigravity-reference."
+          }
+        }
+      },
       "CatalogProvider": {
         "type": "object",
-        "description": "Discovered models and the latest discovery error for a provider.",
-        "required": ["id", "name", "kind", "models", "error"],
+        "description": "Discovered provider and normalized models.",
+        "required": ["id", "name", "kind", "base_url", "models", "error"],
         "properties": {
           "base_url": {
             "type": "string",
-            "description": "Endpoint used to decide whether cached results remain valid."
+            "description": "Endpoint used for discovery."
           },
           "error": {
             "type": ["string", "null"],
-            "description": "Most recent discovery failure, if any."
+            "description": "Most recent discovery failure."
           },
           "id": {
             "type": "string",
@@ -1481,13 +1559,13 @@
           "models": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Model"
+              "$ref": "#/components/schemas/CatalogModel"
             },
-            "description": "Last successfully discovered model records."
+            "description": "Enriched discovery records."
           },
           "name": {
             "type": "string",
-            "description": "Display name from the registry."
+            "description": "Registry display name."
           }
         }
       },
@@ -1963,38 +2041,19 @@
       },
       "ModelCatalog": {
         "type": "object",
-        "description": "Persisted snapshot of provider discovery results.",
-        "required": ["providers"],
+        "description": "Catalog response enriched with current datasheet metadata.",
+        "required": ["providers", "datasheets_error"],
         "properties": {
+          "datasheets_error": {
+            "type": ["string", "null"],
+            "description": "Error loading cached datasheets, if any."
+          },
           "providers": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/CatalogProvider"
             },
-            "description": "Providers reconciled with the registry on load."
-          }
-        }
-      },
-      "ModelData": {
-        "type": "object",
-        "description": "Cached datasheet entries indexed by their source keys.",
-        "required": ["pricing", "parameters"],
-        "properties": {
-          "parameters": {
-            "type": "object",
-            "description": "Model parameter records.",
-            "additionalProperties": {},
-            "propertyNames": {
-              "type": "string"
-            }
-          },
-          "pricing": {
-            "type": "object",
-            "description": "Pricing records.",
-            "additionalProperties": {},
-            "propertyNames": {
-              "type": "string"
-            }
+            "description": "Providers reconciled with the registry."
           }
         }
       },

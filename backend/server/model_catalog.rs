@@ -10,6 +10,7 @@ use axum::{
 };
 use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::openai::Model;
 use crate::provider::{catalog::discover, registry};
@@ -22,8 +23,8 @@ const CACHE_KEY: &str = "model_catalog";
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Discovered models and the latest discovery error for a provider.
-#[derive(Clone, Debug, Serialize, Deserialize, utoipa::ToSchema)]
-struct CatalogProvider {
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct CachedProvider {
     /// Registry identifier.
     id: String,
     /// Display name from the registry.
@@ -36,32 +37,112 @@ struct CatalogProvider {
     /// Last successfully discovered model records.
     models: Vec<Model>,
     /// Most recent discovery failure, if any.
-    #[schema(required = true)]
     error: Option<String>,
 }
 
 /// Persisted snapshot of provider discovery results.
-#[derive(Default, Serialize, Deserialize, utoipa::ToSchema)]
-pub(super) struct ModelCatalog {
+#[derive(Default, Serialize, Deserialize)]
+pub(super) struct CachedCatalog {
     /// Providers reconciled with the registry on load.
+    providers: Vec<CachedProvider>,
+}
+
+/// Catalog response enriched with current datasheet metadata.
+#[derive(Serialize, utoipa::ToSchema)]
+struct ModelCatalog {
+    /// Providers reconciled with the registry.
     providers: Vec<CatalogProvider>,
+    /// Error loading cached datasheets, if any.
+    #[schema(required = true)]
+    datasheets_error: Option<String>,
+}
+
+/// Discovered provider and normalized models.
+#[derive(Serialize, utoipa::ToSchema)]
+struct CatalogProvider {
+    /// Registry identifier.
+    id: String,
+    /// Registry display name.
+    name: String,
+    /// Provider implementation kind.
+    kind: String,
+    /// Endpoint used for discovery.
+    base_url: String,
+    /// Enriched discovery records.
+    models: Vec<CatalogModel>,
+    /// Most recent discovery failure.
+    #[schema(required = true)]
+    error: Option<String>,
+}
+
+/// A raw model and its normalized dashboard metadata.
+#[derive(Serialize, utoipa::ToSchema)]
+struct CatalogModel {
+    /// Original provider model, including extra metadata.
+    model: Model,
+    /// Human-readable name.
+    display_name: String,
+    /// Description when provided.
+    #[schema(required = true)]
+    description: Option<String>,
+    /// Supported reasoning effort values.
+    reasoning_efforts: Vec<String>,
+    /// Reasoning capability, if known.
+    #[schema(required = true)]
+    reasoning: Option<bool>,
+    /// Tool calling capability, if known.
+    #[schema(required = true)]
+    tool_call: Option<bool>,
+    /// Supported input modalities.
+    input_modalities: Vec<String>,
+    /// Prices in USD per million tokens.
+    #[schema(required = true)]
+    pricing: Option<CatalogPricing>,
+    /// Original pricing record.
+    #[schema(required = true, value_type = Option<Object>)]
+    raw_pricing: Option<Value>,
+    /// Original parameters record.
+    #[schema(required = true, value_type = Option<Object>)]
+    parameters: Option<Value>,
+    /// Original provider-specific metadata.
+    #[schema(required = true, value_type = Option<Object>)]
+    provider_metadata: Option<Value>,
+}
+
+/// Normalized prices in USD per million tokens.
+#[derive(Serialize, utoipa::ToSchema)]
+struct CatalogPricing {
+    /// Input price.
+    #[schema(required = true)]
+    input: Option<f64>,
+    /// Output price.
+    #[schema(required = true)]
+    output: Option<f64>,
+    /// Cache write price.
+    #[schema(required = true)]
+    cache_write: Option<f64>,
+    /// Cache read price.
+    #[schema(required = true)]
+    cache_read: Option<f64>,
+    /// Pricing source: models.dev, datasheet, or antigravity-reference.
+    source: String,
 }
 
 /// Model discovery dashboard operations.
 #[derive(utoipa::OpenApi)]
 #[openapi(
     paths(get_catalog, post_refresh),
-    components(schemas(ModelCatalog, CatalogProvider, Model))
+    components(schemas(ModelCatalog, CatalogProvider, CatalogModel, CatalogPricing, Model))
 )]
 pub(crate) struct Api;
 
 /// Load the snapshot and reconcile it against the current registry.
 // Reconcile with the registry on every read: new providers appear immediately and
 // deleted providers never leak out of an old persisted snapshot.
-async fn load(store: &SettingsStore) -> Result<ModelCatalog, String> {
+async fn load(store: &SettingsStore) -> Result<CachedCatalog, String> {
     let cached = match store.setting_get(CACHE_KEY).await? {
-        Some(value) => serde_json::from_str::<ModelCatalog>(&value).map_err(|e| e.to_string())?,
-        None => ModelCatalog::default(),
+        Some(value) => serde_json::from_str::<CachedCatalog>(&value).map_err(|e| e.to_string())?,
+        None => CachedCatalog::default(),
     };
     let mut cached: HashMap<_, _> = cached
         .providers
@@ -75,21 +156,22 @@ async fn load(store: &SettingsStore) -> Result<ModelCatalog, String> {
             let prior = cached
                 .remove(&p.id)
                 .filter(|old| old.kind == p.kind && old.base_url == p.base_url);
-            CatalogProvider {
+            let (models, error) = prior.map(|old| (old.models, old.error)).unwrap_or_default();
+            CachedProvider {
                 id: p.id,
                 name: p.name,
                 kind: p.kind,
                 base_url: p.base_url,
-                models: prior.as_ref().map(|p| p.models.clone()).unwrap_or_default(),
-                error: prior.and_then(|p| p.error),
+                models,
+                error,
             }
         })
         .collect();
-    Ok(ModelCatalog { providers })
+    Ok(CachedCatalog { providers })
 }
 
 /// Persist a catalog snapshot transactionally.
-async fn save(store: &SettingsStore, catalog: &ModelCatalog) -> Result<(), String> {
+async fn save(store: &SettingsStore, catalog: &CachedCatalog) -> Result<(), String> {
     let value = serde_json::to_string(catalog).map_err(|e| e.to_string())?;
     store
         .database
@@ -108,7 +190,7 @@ async fn save(store: &SettingsStore, catalog: &ModelCatalog) -> Result<(), Strin
 }
 
 /// Discover providers concurrently and retain last successful models on failure.
-pub(super) async fn refresh_catalog(state: &AppState) -> Result<ModelCatalog, String> {
+pub(super) async fn refresh_catalog(state: &AppState) -> Result<CachedCatalog, String> {
     let current = registry::list(&state.settings.database).await?;
     let mut catalog = load(&state.settings).await?;
     let results = join_all(current.iter().map(|provider| async move {
@@ -138,12 +220,239 @@ pub(super) async fn refresh_catalog(state: &AppState) -> Result<ModelCatalog, St
     load(&state.settings).await
 }
 
+/// Find a record using the dashboard's provider-specific matching precedence.
+fn lookup<'a>(sheet: &'a Value, provider: &CachedProvider, id: &str) -> Option<&'a Value> {
+    for key in [
+        format!("{}/{id}", provider.id),
+        format!("{}/{id}", provider.kind),
+        id.to_owned(),
+    ] {
+        let Some(entry) = sheet.get(&key).filter(|entry| entry.is_object()) else {
+            continue;
+        };
+        let Some(owner) = entry.get("provider").and_then(Value::as_str) else {
+            continue;
+        };
+        if owner != provider.id && owner != provider.kind {
+            continue;
+        }
+        if key == id && id.contains('/') && !id.starts_with(&format!("{owner}/")) {
+            continue;
+        }
+        return Some(entry);
+    }
+    None
+}
+
+/// Match only explicit reference prices and declared Gemini preview aliases.
+fn reference_price<'a>(sheet: &'a Value, id: &str) -> Option<&'a Value> {
+    let candidates: Vec<(String, &str, bool)> = if id.starts_with("gemini-") {
+        vec![
+            (format!("gemini/{id}"), "gemini", false),
+            (format!("vertex_ai/{id}"), "vertex_ai", false),
+            (format!("gemini/{id}-preview"), "gemini", true),
+            (format!("vertex_ai/{id}-preview"), "vertex_ai", true),
+        ]
+    } else if id.starts_with("claude-") {
+        let base = id.strip_suffix("-thinking").unwrap_or(id);
+        vec![
+            (base.to_owned(), "anthropic", false),
+            (format!("anthropic/{base}"), "anthropic", false),
+        ]
+    } else {
+        Vec::new()
+    };
+    candidates.into_iter().find_map(|(key, owner, alias)| {
+        let entry = sheet.get(&key).filter(|entry| entry.is_object())?;
+        (entry.get("provider").and_then(Value::as_str) == Some(owner)
+            && (!alias || entry.get("base_model").and_then(Value::as_str) == Some(id)))
+        .then_some(entry)
+    })
+}
+
+/// Convert a pricing record to USD per million tokens.
+fn normalize_pricing(kind: &str, price: &Value) -> CatalogPricing {
+    let zen = kind == "zen";
+    let number = |key: &str| {
+        price
+            .get(key)
+            .and_then(Value::as_f64)
+            .map(|n| n * if zen { 1.0 } else { 1_000_000.0 })
+            .filter(|n| n.is_finite())
+    };
+    CatalogPricing {
+        input: number(if zen { "input" } else { "input_cost_per_token" }),
+        output: number(if zen {
+            "output"
+        } else {
+            "output_cost_per_token"
+        }),
+        cache_write: number(if zen {
+            "cache_write"
+        } else {
+            "cache_creation_input_token_cost"
+        }),
+        cache_read: number(if zen {
+            "cache_read"
+        } else {
+            "cache_read_input_token_cost"
+        }),
+        source: if zen {
+            "models.dev"
+        } else if kind == "agy" {
+            "antigravity-reference"
+        } else {
+            "datasheet"
+        }
+        .to_owned(),
+    }
+}
+
+/// Normalize one model using filtered datasheets.
+fn normalize_model(
+    provider: &CachedProvider,
+    model: Model,
+    data: &super::model_settings::ModelData,
+) -> CatalogModel {
+    let zen = (provider.kind == "zen")
+        .then(|| {
+            model
+                .extra
+                .get("zen_metadata")
+                .filter(|value| value.is_object())
+        })
+        .flatten();
+    let price = if provider.kind == "zen" {
+        zen.and_then(|value| value.get("cost"))
+            .filter(|value| value.is_object())
+    } else {
+        lookup(&data.pricing, provider, &model.id).or_else(|| {
+            (provider.kind == "agy")
+                .then(|| reference_price(&data.pricing, &model.id))
+                .flatten()
+        })
+    };
+    let pricing = price.map(|value| normalize_pricing(&provider.kind, value));
+    let display_name = model
+        .name
+        .as_ref()
+        .filter(|name| !name.trim().is_empty())
+        .or_else(|| {
+            model
+                .display_name
+                .as_ref()
+                .filter(|name| !name.trim().is_empty())
+        })
+        .unwrap_or(&model.id)
+        .clone();
+    let description = model
+        .extra
+        .get("description")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let reasoning = zen
+        .and_then(|value| value.get("reasoning"))
+        .and_then(Value::as_bool);
+    let tool_call = zen
+        .and_then(|value| value.get("tool_call"))
+        .and_then(Value::as_bool);
+    let input_modalities = zen
+        .and_then(|value| value.get("modalities"))
+        .and_then(|value| value.get("input"))
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    let reasoning_efforts = model
+        .supported_reasoning_efforts
+        .clone()
+        .unwrap_or_default();
+    let raw_pricing = price.cloned();
+    let parameters = lookup(&data.parameters, provider, &model.id).cloned();
+    let provider_metadata = zen.cloned();
+    CatalogModel {
+        model,
+        display_name,
+        description,
+        reasoning_efforts,
+        reasoning,
+        tool_call,
+        input_modalities,
+        pricing,
+        raw_pricing,
+        parameters,
+        provider_metadata,
+    }
+}
+
+/// Enrich a raw snapshot from the latest cached sheets without altering persistence.
+async fn normalize_catalog(store: &SettingsStore, catalog: CachedCatalog) -> ModelCatalog {
+    let models = super::model_settings::CatalogModels::from_entries(
+        catalog.providers.iter().flat_map(|provider| {
+            provider.models.iter().map(|model| {
+                (
+                    provider.id.as_str(),
+                    provider.kind.as_str(),
+                    model.id.as_str(),
+                )
+            })
+        }),
+    );
+    let (data, datasheets_error) = match super::model_settings::catalog_data(store, &models).await {
+        Ok(data) => (data, None),
+        Err(error) => {
+            tracing::warn!("Unable to load cached model datasheets: {error}");
+            (
+                super::model_settings::ModelData::default(),
+                Some("Unable to load cached datasheets".to_owned()),
+            )
+        }
+    };
+    let mut result = enrich_catalog(catalog, &data);
+    result.datasheets_error = datasheets_error;
+    result
+}
+
+/// Build the dashboard view from a discovery snapshot and its filtered datasheets.
+fn enrich_catalog(catalog: CachedCatalog, data: &super::model_settings::ModelData) -> ModelCatalog {
+    ModelCatalog {
+        datasheets_error: None,
+        providers: catalog
+            .providers
+            .into_iter()
+            .map(|mut provider| {
+                let models = std::mem::take(&mut provider.models)
+                    .into_iter()
+                    .map(|model| normalize_model(&provider, model, data))
+                    .collect();
+                CatalogProvider {
+                    id: provider.id,
+                    name: provider.name,
+                    kind: provider.kind,
+                    base_url: provider.base_url,
+                    models,
+                    error: provider.error,
+                }
+            })
+            .collect(),
+    }
+}
+
 /// Return the current reconciled catalog.
 #[utoipa::path(get, path = "/api/model-catalog", operation_id = "getModelCatalog",
     responses((status = 200, body = ModelCatalog),
         (status = 500, description = "Catalog load failed", body = String, content_type = "text/plain")))]
 async fn get_catalog(State(state): State<AppState>) -> Response {
-    load(&state.settings).await.map_or_else(
+    let result = match load(&state.settings).await {
+        Ok(catalog) => Ok(normalize_catalog(&state.settings, catalog).await),
+        Err(error) => Err(error),
+    };
+    result.map_or_else(
         |_| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -160,7 +469,11 @@ async fn get_catalog(State(state): State<AppState>) -> Response {
     responses((status = 200, body = ModelCatalog),
         (status = 500, description = "Catalog refresh failed", body = String, content_type = "text/plain")))]
 async fn post_refresh(State(state): State<AppState>) -> Response {
-    refresh_catalog(&state).await.map_or_else(
+    let result = match refresh_catalog(&state).await {
+        Ok(catalog) => Ok(normalize_catalog(&state.settings, catalog).await),
+        Err(error) => Err(error),
+    };
+    result.map_or_else(
         |_| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -193,6 +506,177 @@ mod tests {
     use serde_json::Value;
     use serde_json::json;
     use tower::ServiceExt;
+
+    fn sample_provider(kind: &str, id: &str) -> CachedProvider {
+        CachedProvider {
+            id: id.into(),
+            name: id.into(),
+            kind: kind.into(),
+            base_url: String::new(),
+            models: Vec::new(),
+            error: None,
+        }
+    }
+
+    fn sample_data(pricing: Value, parameters: Value) -> super::super::model_settings::ModelData {
+        super::super::model_settings::ModelData {
+            pricing,
+            parameters,
+        }
+    }
+
+    #[test]
+    fn provider_lookup_precedence_and_owner_restrictions() {
+        let provider = sample_provider("openai", "custom");
+        let sheet = json!({
+            "custom/m": {"provider":"custom", "value":1},
+            "openai/m": {"provider":"openai", "value":2},
+            "m": {"provider":"custom", "value":3},
+            "other/m": {"provider":"custom", "value":4}
+        });
+        assert_eq!(lookup(&sheet, &provider, "m").unwrap()["value"], 1);
+        assert!(lookup(&sheet, &provider, "other/m").is_none());
+        let sheet = json!({"custom/m":{"provider":"wrong"}, "openai/m":{"provider":"openai", "value":2}, "m":{"provider":"custom", "value":3}});
+        assert_eq!(lookup(&sheet, &provider, "m").unwrap()["value"], 2);
+    }
+
+    #[test]
+    fn reference_aliases_require_matching_owner_and_base() {
+        let sheet = json!({
+            "gemini/gemini-x-preview":{"provider":"gemini","base_model":"other"},
+            "vertex_ai/gemini-x-preview":{"provider":"vertex_ai","base_model":"gemini-x","value":2},
+            "claude-x":{"provider":"anthropic","value":3},
+            "anthropic/claude-x":{"provider":"wrong","value":4}
+        });
+        assert_eq!(reference_price(&sheet, "gemini-x").unwrap()["value"], 2);
+        assert_eq!(
+            reference_price(&sheet, "claude-x-thinking").unwrap()["value"],
+            3
+        );
+        assert!(reference_price(&sheet, "gemini-y").is_none());
+        assert!(
+            reference_price(
+                &json!({"gemini/gemini-x-preview":{"provider":"wrong","base_model":"gemini-x"}}),
+                "gemini-x"
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn pricing_selection_units_and_unknown_values() {
+        let model: Model = serde_json::from_value(json!({"id":"gemini-x"})).unwrap();
+        let agy = sample_provider("agy", "custom");
+        let data = sample_data(
+            json!({
+                "custom/gemini-x":{"provider":"custom","input_cost_per_token":0.000_002,"output_cost_per_token":"invalid"},
+                "gemini/gemini-x":{"provider":"gemini","input_cost_per_token":0.000_009}
+            }),
+            json!({}),
+        );
+        let result = normalize_model(&agy, model, &data);
+        let price = result.pricing.unwrap();
+        assert_eq!(price.input, Some(2.0));
+        assert_eq!(price.output, None);
+        assert_eq!(price.cache_read, None);
+        assert_eq!(price.source, "antigravity-reference");
+        let zen = sample_provider("zen", "zen");
+        let model: Model = serde_json::from_value(json!({
+            "id":"m", "reasoning":true, "zen_metadata":{
+                "reasoning":false,"tool_call":true,"modalities":{"input":["text", 42, "image"]},
+                "cost":{"input":2.5,"output":null,"cache_read":0.1}
+            }
+        }))
+        .unwrap();
+        let result = normalize_model(
+            &zen,
+            model,
+            &sample_data(
+                json!({"zen/m":{"provider":"zen","input_cost_per_token":1}}),
+                json!({}),
+            ),
+        );
+        assert_eq!(result.reasoning, Some(false));
+        assert_eq!(result.tool_call, Some(true));
+        assert_eq!(result.input_modalities, ["text", "image"]);
+        let price = result.pricing.unwrap();
+        assert_eq!(price.input, Some(2.5));
+        assert_eq!(price.output, None);
+        assert_eq!(price.cache_read, Some(0.1));
+        assert_eq!(price.source, "models.dev");
+        let model: Model =
+            serde_json::from_value(json!({"id":"m","zen_metadata":{"cost":[]}})).unwrap();
+        assert!(
+            normalize_model(&zen, model, &sample_data(json!({}), json!({})))
+                .pricing
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn normalized_response_uses_current_sheets_without_changing_raw_cache() {
+        let store = store().await;
+        let mut provider = sample_provider("openai", "custom");
+        provider.models.push(serde_json::from_value(json!({"id":"m","name":" ", "display_name":"Model", "description":"details", "custom":42})).unwrap());
+        let catalog = CachedCatalog {
+            providers: vec![provider],
+        };
+        save(&store, &catalog).await.unwrap();
+        let response = serde_json::to_value(normalize_catalog(&store, catalog).await).unwrap();
+        let model = &response["providers"][0]["models"][0];
+        assert_eq!(model["model"]["custom"], 42);
+        assert_eq!(model["display_name"], "Model");
+        assert_eq!(model["description"], "details");
+        assert_eq!(model["pricing"], Value::Null);
+        assert_eq!(model["parameters"], Value::Null);
+        let saved: Value =
+            serde_json::from_str(&store.setting_get(CACHE_KEY).await.unwrap().unwrap()).unwrap();
+        assert_eq!(saved["providers"][0]["models"][0]["id"], "m");
+        assert!(saved["providers"][0]["models"][0].get("model").is_none());
+        Setting::upsert_by_name("model_pricing_datasheet")
+            .value(r#"{"custom/m":{"provider":"custom","input_cost_per_token":0.000003}}"#)
+            .exec(&mut (*store.database.db).clone())
+            .await
+            .unwrap();
+        let cached: CachedCatalog = serde_json::from_value(saved).unwrap();
+        let response = serde_json::to_value(normalize_catalog(&store, cached).await).unwrap();
+        assert_eq!(
+            response["providers"][0]["models"][0]["pricing"]["input"],
+            3.0
+        );
+        assert_eq!(
+            response["providers"][0]["models"][0]["pricing"]["source"],
+            "datasheet"
+        );
+    }
+
+    /// A damaged datasheet is reported without hiding discovered models.
+    #[tokio::test]
+    async fn catalog_keeps_models_when_datasheet_is_invalid() {
+        let store = store().await;
+        Setting::upsert_by_name("model_pricing_datasheet")
+            .value("{invalid")
+            .exec(&mut (*store.database.db).clone())
+            .await
+            .unwrap();
+        let mut provider = sample_provider("openai", "custom");
+        provider
+            .models
+            .push(serde_json::from_value(json!({"id":"m"})).unwrap());
+        let response = normalize_catalog(
+            &store,
+            CachedCatalog {
+                providers: vec![provider],
+            },
+        )
+        .await;
+        assert_eq!(
+            response.datasheets_error.as_deref(),
+            Some("Unable to load cached datasheets")
+        );
+        assert_eq!(response.providers[0].models[0].model.id, "m");
+        assert!(response.providers[0].models[0].pricing.is_none());
+    }
 
     /// Create an in-memory settings store.
     async fn store() -> SettingsStore {

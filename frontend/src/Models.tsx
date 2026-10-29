@@ -2,17 +2,14 @@ import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useMemo, useRef, useState } from "react";
 import { Info } from "lucide-react";
-import { antigravityReferencePrice } from "./modelPricing";
 import { message } from "./server/api/client";
 import {
   modelCatalogQueryOptions,
-  modelDatasheetsQueryOptions,
   modelSettingsQueryOptions,
   refreshModelCatalog,
   saveModelSettings,
   syncModelSettings,
-  type Datasheets,
-  type Model,
+  type CatalogModel,
   type Provider,
   type Settings,
 } from "./server/api/models";
@@ -55,27 +52,6 @@ const pageClass =
   "mx-auto w-full min-w-0 max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-12";
 const inputClass = "mt-1 w-full";
 
-function lookup(
-  sheet: Record<string, unknown> | undefined,
-  provider: Provider,
-  id: string,
-): unknown {
-  if (!sheet) return undefined;
-  for (const key of [`${provider.id}/${id}`, `${provider.kind}/${id}`, id]) {
-    const entry = sheet[key];
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const owner = (entry as Record<string, unknown>).provider;
-    if (
-      typeof owner !== "string" ||
-      (owner !== provider.id && owner !== provider.kind)
-    )
-      continue;
-    if (key === id && id.includes("/") && !id.startsWith(`${owner}/`)) continue;
-    return entry;
-  }
-  return undefined;
-}
-
 function JsonDetails({ title, value }: { title: string; value: unknown }) {
   const [open, setOpen] = useState(false);
   if (value === undefined || value === null) return null;
@@ -94,121 +70,45 @@ function JsonDetails({ title, value }: { title: string; value: unknown }) {
   );
 }
 
-function modelName(model: Model): string {
-  return typeof model.name === "string" && model.name.trim()
-    ? model.name
-    : typeof model.display_name === "string" && model.display_name.trim()
-      ? model.display_name
-      : model.id;
-}
-
 function ModelCard({
   model,
   provider,
-  data,
 }: {
-  model: Model;
+  model: CatalogModel;
   provider: Provider;
-  data?: Datasheets;
 }) {
   const descriptionRef = useRef<HTMLButtonElement>(null);
-  const zenMetadata =
-    provider.kind === "zen" &&
-    model.zen_metadata &&
-    typeof model.zen_metadata === "object" &&
-    !Array.isArray(model.zen_metadata)
-      ? (model.zen_metadata as Record<string, unknown>)
-      : undefined;
-  const zenCost =
-    zenMetadata?.cost &&
-    typeof zenMetadata.cost === "object" &&
-    !Array.isArray(zenMetadata.cost)
-      ? (zenMetadata.cost as Record<string, unknown>)
-      : undefined;
-  const price =
-    provider.kind === "zen"
-      ? zenCost
-      : (lookup(data?.pricing, provider, model.id) ??
-        (provider.kind === "agy"
-          ? antigravityReferencePrice(data?.pricing, model.id)
-          : undefined));
-  const parameters = lookup(data?.parameters, provider, model.id);
-  const pricing =
-    price && typeof price === "object" && !Array.isArray(price)
-      ? (price as Record<string, unknown>)
-      : {};
+  const rawModel = model.model;
   const number = (value: unknown) =>
     typeof value === "number" && Number.isFinite(value)
       ? value.toLocaleString()
       : "—";
   const cost = (value: unknown) =>
     typeof value === "number" && Number.isFinite(value)
-      ? `$${(value * (provider.kind === "zen" ? 1 : 1_000_000)).toLocaleString(undefined, { maximumFractionDigits: 6 })}`
+      ? `$${value.toLocaleString(undefined, { maximumFractionDigits: 6 })}`
       : "—";
-  const title = modelName(model);
-  const efforts = Array.isArray(model.supported_reasoning_efforts)
-    ? model.supported_reasoning_efforts.filter(
-        (value): value is string => typeof value === "string",
-      )
-    : [];
-  const description =
-    typeof model.description === "string" ? model.description : null;
-  const modalities =
-    zenMetadata?.modalities &&
-    typeof zenMetadata.modalities === "object" &&
-    !Array.isArray(zenMetadata.modalities)
-      ? (zenMetadata.modalities as Record<string, unknown>)
-      : undefined;
-  const inputModalities = Array.isArray(modalities?.input)
-    ? modalities.input.filter(
-        (value): value is string => typeof value === "string",
-      )
-    : [];
+  const title = model.display_name;
+  const efforts = model.reasoning_efforts;
+  const description = model.description;
   const capabilities = [
-    ...(typeof zenMetadata?.reasoning === "boolean"
-      ? [["Reasoning support", zenMetadata.reasoning ? "Yes" : "No"]]
+    ...(typeof model.reasoning === "boolean"
+      ? [["Reasoning support", model.reasoning ? "Yes" : "No"]]
       : []),
-    ...(typeof zenMetadata?.tool_call === "boolean"
-      ? [["Tool calling", zenMetadata.tool_call ? "Yes" : "No"]]
+    ...(typeof model.tool_call === "boolean"
+      ? [["Tool calling", model.tool_call ? "Yes" : "No"]]
       : []),
-    ...(inputModalities.length > 0
-      ? [["Input modalities", inputModalities.join(", ")]]
+    ...(model.input_modalities.length > 0
+      ? [["Input modalities", model.input_modalities.join(", ")]]
       : []),
   ];
   const rows = [
-    ["Model ID", `${provider.id}/${model.id}`],
-    ["Context window", number(model.context_window)],
-    ["Max output", number(model.max_output_tokens)],
-    [
-      "Input price / 1M tokens",
-      cost(
-        provider.kind === "zen" ? pricing.input : pricing.input_cost_per_token,
-      ),
-    ],
-    [
-      "Output price / 1M tokens",
-      cost(
-        provider.kind === "zen"
-          ? pricing.output
-          : pricing.output_cost_per_token,
-      ),
-    ],
-    [
-      "Cache write / 1M tokens",
-      cost(
-        provider.kind === "zen"
-          ? pricing.cache_write
-          : pricing.cache_creation_input_token_cost,
-      ),
-    ],
-    [
-      "Cache read / 1M tokens",
-      cost(
-        provider.kind === "zen"
-          ? pricing.cache_read
-          : pricing.cache_read_input_token_cost,
-      ),
-    ],
+    ["Model ID", `${provider.id}/${rawModel.id}`],
+    ["Context window", number(rawModel.context_window)],
+    ["Max output", number(rawModel.max_output_tokens)],
+    ["Input price / 1M tokens", cost(model.pricing?.input)],
+    ["Output price / 1M tokens", cost(model.pricing?.output)],
+    ["Cache write / 1M tokens", cost(model.pricing?.cache_write)],
+    ["Cache read / 1M tokens", cost(model.pricing?.cache_read)],
     ...capabilities,
   ];
   return (
@@ -259,7 +159,7 @@ function ModelCard({
           <div key={label} className="flex justify-between gap-4 py-2">
             <dt className="flex shrink-0 items-center gap-1 text-muted-foreground">
               {label}
-              {provider.kind === "agy" &&
+              {model.pricing?.source === "antigravity-reference" &&
                 label === "Input price / 1M tokens" && (
                   <Popover>
                     <PopoverTrigger
@@ -282,10 +182,13 @@ function ModelCard({
         ))}
       </dl>
       <div className="mt-2">
-        <JsonDetails title="Model metadata" value={model} />
-        <JsonDetails title="Models.dev metadata" value={zenMetadata} />
-        <JsonDetails title="Pricing and limits" value={price} />
-        <JsonDetails title="Supported parameters" value={parameters} />
+        <JsonDetails title="Model metadata" value={rawModel} />
+        <JsonDetails
+          title="Models.dev metadata"
+          value={model.provider_metadata}
+        />
+        <JsonDetails title="Pricing and limits" value={model.raw_pricing} />
+        <JsonDetails title="Supported parameters" value={model.parameters} />
       </div>
     </Card>
   );
@@ -309,11 +212,9 @@ function CarouselEdgeFades() {
 function ProviderModels({
   provider,
   models,
-  data,
 }: {
   provider: Provider;
-  models: Model[];
-  data?: Datasheets;
+  models: CatalogModel[];
 }) {
   return (
     <section className="min-w-0">
@@ -335,10 +236,10 @@ function ProviderModels({
             <CarouselContent>
               {models.map((model, index) => (
                 <CarouselItem
-                  key={`${model.id}-${index}`}
+                  key={`${model.model.id}-${index}`}
                   className="basis-full md:basis-1/2 xl:basis-1/3 [&>div]:h-full"
                 >
-                  <ModelCard model={model} provider={provider} data={data} />
+                  <ModelCard model={model} provider={provider} />
                 </CarouselItem>
               ))}
             </CarouselContent>
@@ -359,7 +260,6 @@ export function ModelCatalogPage() {
   const [providerFilter, setProviderFilter] = useState("");
   const queryClient = useQueryClient();
   const catalog = useQuery(modelCatalogQueryOptions());
-  const data = useQuery(modelDatasheetsQueryOptions());
   const refresh = useMutation({
     mutationFn: refreshModelCatalog,
     onSuccess: async (result) => {
@@ -367,9 +267,6 @@ export function ModelCatalogPage() {
         queryKey: modelCatalogQueryOptions().queryKey,
       });
       queryClient.setQueryData(modelCatalogQueryOptions().queryKey, result);
-      await queryClient.invalidateQueries({
-        queryKey: modelDatasheetsQueryOptions().queryKey,
-      });
     },
   });
   const groups = useMemo(() => {
@@ -385,11 +282,12 @@ export function ModelCatalogPage() {
           (model) =>
             matchesProvider ||
             [
-              `${provider.id}/${model.id}`,
-              model.id,
-              model.name,
+              `${provider.id}/${model.model.id}`,
+              model.model.id,
+              model.model.name,
+              model.model.display_name,
               model.display_name,
-              model.default_reasoning_effort,
+              model.model.default_reasoning_effort,
             ].some(
               (value) =>
                 typeof value === "string" &&
@@ -428,11 +326,9 @@ export function ModelCatalogPage() {
           <AlertDescription>{message(refresh.error)}</AlertDescription>
         </Alert>
       )}
-      {data.error && (
+      {catalog.data?.datasheets_error && (
         <Alert variant="destructive" className="mt-5">
-          <AlertDescription>
-            Datasheets unavailable: {message(data.error)}
-          </AlertDescription>
+          <AlertDescription>{catalog.data.datasheets_error}</AlertDescription>
         </Alert>
       )}
       <div className="mt-6 grid gap-3 sm:grid-cols-2">
@@ -494,11 +390,7 @@ export function ModelCatalogPage() {
         {groups.map(({ provider, models }, index) => (
           <Fragment key={`${provider.id}:${search}`}>
             {index > 0 && <Separator />}
-            <ProviderModels
-              provider={provider}
-              models={models}
-              data={data.data}
-            />
+            <ProviderModels provider={provider} models={models} />
           </Fragment>
         ))}
       </div>
@@ -553,7 +445,7 @@ function SettingsForm({ initial }: { initial: Settings }) {
     try {
       await sync.mutateAsync();
       await queryClient.invalidateQueries({
-        queryKey: modelDatasheetsQueryOptions().queryKey,
+        queryKey: modelCatalogQueryOptions().queryKey,
       });
       setStatus("Datasheets synced.");
     } catch (err) {

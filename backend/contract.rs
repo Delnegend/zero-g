@@ -74,7 +74,6 @@ mod tests {
             ("/api/model-catalog/refresh", "post"),
             ("/api/model-settings", "get"),
             ("/api/model-settings", "put"),
-            ("/api/model-settings/data", "get"),
             ("/api/model-settings/sync", "post"),
             ("/api/keys", "get"),
             ("/api/keys", "post"),

@@ -143,80 +143,250 @@ export const Model = zod
 export type Model = zod.input<typeof Model>;
 export type ModelOutput = zod.output<typeof Model>;
 
-export const catalogProviderModelsItemContextWindowMin = 0;
+export const CatalogPricing = zod
+  .object({
+    cache_read: zod.number().nullable().describe("Cache read price."),
+    cache_write: zod.number().nullable().describe("Cache write price."),
+    input: zod.number().nullable().describe("Input price."),
+    output: zod.number().nullable().describe("Output price."),
+    source: zod
+      .string()
+      .describe(
+        "Pricing source: models.dev, datasheet, or antigravity-reference.",
+      ),
+  })
+  .describe("Normalized prices in USD per million tokens.");
 
-export const catalogProviderModelsItemCreatedMin = 0;
+export type CatalogPricing = zod.input<typeof CatalogPricing>;
+export type CatalogPricingOutput = zod.output<typeof CatalogPricing>;
 
-export const catalogProviderModelsItemMaxOutputTokensMin = 0;
+export const catalogModelModelContextWindowMin = 0;
+
+export const catalogModelModelCreatedMin = 0;
+
+export const catalogModelModelMaxOutputTokensMin = 0;
+
+export const CatalogModel = zod
+  .object({
+    description: zod.string().nullable().describe("Description when provided."),
+    display_name: zod.string().describe("Human-readable name."),
+    input_modalities: zod
+      .array(zod.string())
+      .describe("Supported input modalities."),
+    model: zod
+      .object({
+        context_window: zod
+          .int()
+          .min(catalogModelModelContextWindowMin)
+          .nullish()
+          .describe("Maximum context size in tokens."),
+        created: zod
+          .int()
+          .min(catalogModelModelCreatedMin)
+          .nullish()
+          .describe("Creation time as a Unix timestamp."),
+        default_reasoning_effort: zod
+          .string()
+          .nullish()
+          .describe("Default reasoning effort, if specified."),
+        display_name: zod
+          .string()
+          .nullish()
+          .describe("Optional human-readable display name."),
+        id: zod.string().describe("Model identifier used in requests."),
+        max_output_tokens: zod
+          .int()
+          .min(catalogModelModelMaxOutputTokensMin)
+          .nullish()
+          .describe("Maximum output size in tokens."),
+        name: zod.string().nullish().describe("Optional model name."),
+        object: zod.string().nullish().describe("Wire object type."),
+        owned_by: zod.string().nullish().describe("Model owner identifier."),
+        reasoning: zod
+          .boolean()
+          .nullish()
+          .describe("Whether the model supports reasoning."),
+        supported_reasoning_efforts: zod
+          .array(zod.string())
+          .nullish()
+          .describe("Supported reasoning effort values."),
+      })
+      .catchall(
+        zod
+          .unknown()
+          .describe("Provider-specific metadata retained across discovery."),
+      )
+      .describe("Original provider model, including extra metadata."),
+    parameters: zod
+      .looseObject({})
+      .nullable()
+      .describe("Original parameters record."),
+    pricing: zod.union([
+      zod.null(),
+      zod
+        .object({
+          cache_read: zod.number().nullable().describe("Cache read price."),
+          cache_write: zod.number().nullable().describe("Cache write price."),
+          input: zod.number().nullable().describe("Input price."),
+          output: zod.number().nullable().describe("Output price."),
+          source: zod
+            .string()
+            .describe(
+              "Pricing source: models.dev, datasheet, or antigravity-reference.",
+            ),
+        })
+        .describe("Prices in USD per million tokens."),
+    ]),
+    provider_metadata: zod
+      .looseObject({})
+      .nullable()
+      .describe("Original provider-specific metadata."),
+    raw_pricing: zod
+      .looseObject({})
+      .nullable()
+      .describe("Original pricing record."),
+    reasoning: zod
+      .boolean()
+      .nullable()
+      .describe("Reasoning capability, if known."),
+    reasoning_efforts: zod
+      .array(zod.string())
+      .describe("Supported reasoning effort values."),
+    tool_call: zod
+      .boolean()
+      .nullable()
+      .describe("Tool calling capability, if known."),
+  })
+  .describe("A raw model and its normalized dashboard metadata.");
+
+export type CatalogModel = zod.input<typeof CatalogModel>;
+export type CatalogModelOutput = zod.output<typeof CatalogModel>;
+
+export const catalogProviderModelsItemModelContextWindowMin = 0;
+
+export const catalogProviderModelsItemModelCreatedMin = 0;
+
+export const catalogProviderModelsItemModelMaxOutputTokensMin = 0;
 
 export const CatalogProvider = zod
   .object({
-    base_url: zod
-      .string()
-      .optional()
-      .describe("Endpoint used to decide whether cached results remain valid."),
-    error: zod
-      .string()
-      .nullable()
-      .describe("Most recent discovery failure, if any."),
+    base_url: zod.string().describe("Endpoint used for discovery."),
+    error: zod.string().nullable().describe("Most recent discovery failure."),
     id: zod.string().describe("Registry identifier."),
     kind: zod.string().describe("Provider implementation kind."),
     models: zod
       .array(
         zod
           .object({
-            context_window: zod
-              .int()
-              .min(catalogProviderModelsItemContextWindowMin)
-              .nullish()
-              .describe("Maximum context size in tokens."),
-            created: zod
-              .int()
-              .min(catalogProviderModelsItemCreatedMin)
-              .nullish()
-              .describe("Creation time as a Unix timestamp."),
-            default_reasoning_effort: zod
+            description: zod
               .string()
-              .nullish()
-              .describe("Default reasoning effort, if specified."),
-            display_name: zod
-              .string()
-              .nullish()
-              .describe("Optional human-readable display name."),
-            id: zod.string().describe("Model identifier used in requests."),
-            max_output_tokens: zod
-              .int()
-              .min(catalogProviderModelsItemMaxOutputTokensMin)
-              .nullish()
-              .describe("Maximum output size in tokens."),
-            name: zod.string().nullish().describe("Optional model name."),
-            object: zod.string().nullish().describe("Wire object type."),
-            owned_by: zod
-              .string()
-              .nullish()
-              .describe("Model owner identifier."),
+              .nullable()
+              .describe("Description when provided."),
+            display_name: zod.string().describe("Human-readable name."),
+            input_modalities: zod
+              .array(zod.string())
+              .describe("Supported input modalities."),
+            model: zod
+              .object({
+                context_window: zod
+                  .int()
+                  .min(catalogProviderModelsItemModelContextWindowMin)
+                  .nullish()
+                  .describe("Maximum context size in tokens."),
+                created: zod
+                  .int()
+                  .min(catalogProviderModelsItemModelCreatedMin)
+                  .nullish()
+                  .describe("Creation time as a Unix timestamp."),
+                default_reasoning_effort: zod
+                  .string()
+                  .nullish()
+                  .describe("Default reasoning effort, if specified."),
+                display_name: zod
+                  .string()
+                  .nullish()
+                  .describe("Optional human-readable display name."),
+                id: zod.string().describe("Model identifier used in requests."),
+                max_output_tokens: zod
+                  .int()
+                  .min(catalogProviderModelsItemModelMaxOutputTokensMin)
+                  .nullish()
+                  .describe("Maximum output size in tokens."),
+                name: zod.string().nullish().describe("Optional model name."),
+                object: zod.string().nullish().describe("Wire object type."),
+                owned_by: zod
+                  .string()
+                  .nullish()
+                  .describe("Model owner identifier."),
+                reasoning: zod
+                  .boolean()
+                  .nullish()
+                  .describe("Whether the model supports reasoning."),
+                supported_reasoning_efforts: zod
+                  .array(zod.string())
+                  .nullish()
+                  .describe("Supported reasoning effort values."),
+              })
+              .catchall(
+                zod
+                  .unknown()
+                  .describe(
+                    "Provider-specific metadata retained across discovery.",
+                  ),
+              )
+              .describe("Original provider model, including extra metadata."),
+            parameters: zod
+              .looseObject({})
+              .nullable()
+              .describe("Original parameters record."),
+            pricing: zod.union([
+              zod.null(),
+              zod
+                .object({
+                  cache_read: zod
+                    .number()
+                    .nullable()
+                    .describe("Cache read price."),
+                  cache_write: zod
+                    .number()
+                    .nullable()
+                    .describe("Cache write price."),
+                  input: zod.number().nullable().describe("Input price."),
+                  output: zod.number().nullable().describe("Output price."),
+                  source: zod
+                    .string()
+                    .describe(
+                      "Pricing source: models.dev, datasheet, or antigravity-reference.",
+                    ),
+                })
+                .describe("Prices in USD per million tokens."),
+            ]),
+            provider_metadata: zod
+              .looseObject({})
+              .nullable()
+              .describe("Original provider-specific metadata."),
+            raw_pricing: zod
+              .looseObject({})
+              .nullable()
+              .describe("Original pricing record."),
             reasoning: zod
               .boolean()
-              .nullish()
-              .describe("Whether the model supports reasoning."),
-            supported_reasoning_efforts: zod
+              .nullable()
+              .describe("Reasoning capability, if known."),
+            reasoning_efforts: zod
               .array(zod.string())
-              .nullish()
               .describe("Supported reasoning effort values."),
+            tool_call: zod
+              .boolean()
+              .nullable()
+              .describe("Tool calling capability, if known."),
           })
-          .catchall(
-            zod
-              .unknown()
-              .describe(
-                "Provider-specific metadata retained across discovery.",
-              ),
-          )
-          .describe("Model metadata returned by the listing endpoint."),
+          .describe("A raw model and its normalized dashboard metadata."),
       )
-      .describe("Last successfully discovered model records."),
-    name: zod.string().describe("Display name from the registry."),
+      .describe("Enriched discovery records."),
+    name: zod.string().describe("Registry display name."),
   })
-  .describe("Discovered models and the latest discovery error for a provider.");
+  .describe("Discovered provider and normalized models.");
 
 export type CatalogProvider = zod.input<typeof CatalogProvider>;
 export type CatalogProviderOutput = zod.output<typeof CatalogProvider>;
@@ -580,119 +750,173 @@ export const LogEntry = zod
 export type LogEntry = zod.input<typeof LogEntry>;
 export type LogEntryOutput = zod.output<typeof LogEntry>;
 
-export const modelCatalogProvidersItemModelsItemContextWindowMin = 0;
+export const modelCatalogProvidersItemModelsItemModelContextWindowMin = 0;
 
-export const modelCatalogProvidersItemModelsItemCreatedMin = 0;
+export const modelCatalogProvidersItemModelsItemModelCreatedMin = 0;
 
-export const modelCatalogProvidersItemModelsItemMaxOutputTokensMin = 0;
+export const modelCatalogProvidersItemModelsItemModelMaxOutputTokensMin = 0;
 
 export const ModelCatalog = zod
   .object({
+    datasheets_error: zod
+      .string()
+      .nullable()
+      .describe("Error loading cached datasheets, if any."),
     providers: zod
       .array(
         zod
           .object({
-            base_url: zod
-              .string()
-              .optional()
-              .describe(
-                "Endpoint used to decide whether cached results remain valid.",
-              ),
+            base_url: zod.string().describe("Endpoint used for discovery."),
             error: zod
               .string()
               .nullable()
-              .describe("Most recent discovery failure, if any."),
+              .describe("Most recent discovery failure."),
             id: zod.string().describe("Registry identifier."),
             kind: zod.string().describe("Provider implementation kind."),
             models: zod
               .array(
                 zod
                   .object({
-                    context_window: zod
-                      .int()
-                      .min(modelCatalogProvidersItemModelsItemContextWindowMin)
-                      .nullish()
-                      .describe("Maximum context size in tokens."),
-                    created: zod
-                      .int()
-                      .min(modelCatalogProvidersItemModelsItemCreatedMin)
-                      .nullish()
-                      .describe("Creation time as a Unix timestamp."),
-                    default_reasoning_effort: zod
+                    description: zod
                       .string()
-                      .nullish()
-                      .describe("Default reasoning effort, if specified."),
-                    display_name: zod
-                      .string()
-                      .nullish()
-                      .describe("Optional human-readable display name."),
-                    id: zod
-                      .string()
-                      .describe("Model identifier used in requests."),
-                    max_output_tokens: zod
-                      .int()
-                      .min(
-                        modelCatalogProvidersItemModelsItemMaxOutputTokensMin,
+                      .nullable()
+                      .describe("Description when provided."),
+                    display_name: zod.string().describe("Human-readable name."),
+                    input_modalities: zod
+                      .array(zod.string())
+                      .describe("Supported input modalities."),
+                    model: zod
+                      .object({
+                        context_window: zod
+                          .int()
+                          .min(
+                            modelCatalogProvidersItemModelsItemModelContextWindowMin,
+                          )
+                          .nullish()
+                          .describe("Maximum context size in tokens."),
+                        created: zod
+                          .int()
+                          .min(
+                            modelCatalogProvidersItemModelsItemModelCreatedMin,
+                          )
+                          .nullish()
+                          .describe("Creation time as a Unix timestamp."),
+                        default_reasoning_effort: zod
+                          .string()
+                          .nullish()
+                          .describe("Default reasoning effort, if specified."),
+                        display_name: zod
+                          .string()
+                          .nullish()
+                          .describe("Optional human-readable display name."),
+                        id: zod
+                          .string()
+                          .describe("Model identifier used in requests."),
+                        max_output_tokens: zod
+                          .int()
+                          .min(
+                            modelCatalogProvidersItemModelsItemModelMaxOutputTokensMin,
+                          )
+                          .nullish()
+                          .describe("Maximum output size in tokens."),
+                        name: zod
+                          .string()
+                          .nullish()
+                          .describe("Optional model name."),
+                        object: zod
+                          .string()
+                          .nullish()
+                          .describe("Wire object type."),
+                        owned_by: zod
+                          .string()
+                          .nullish()
+                          .describe("Model owner identifier."),
+                        reasoning: zod
+                          .boolean()
+                          .nullish()
+                          .describe("Whether the model supports reasoning."),
+                        supported_reasoning_efforts: zod
+                          .array(zod.string())
+                          .nullish()
+                          .describe("Supported reasoning effort values."),
+                      })
+                      .catchall(
+                        zod
+                          .unknown()
+                          .describe(
+                            "Provider-specific metadata retained across discovery.",
+                          ),
                       )
-                      .nullish()
-                      .describe("Maximum output size in tokens."),
-                    name: zod
-                      .string()
-                      .nullish()
-                      .describe("Optional model name."),
-                    object: zod
-                      .string()
-                      .nullish()
-                      .describe("Wire object type."),
-                    owned_by: zod
-                      .string()
-                      .nullish()
-                      .describe("Model owner identifier."),
+                      .describe(
+                        "Original provider model, including extra metadata.",
+                      ),
+                    parameters: zod
+                      .looseObject({})
+                      .nullable()
+                      .describe("Original parameters record."),
+                    pricing: zod.union([
+                      zod.null(),
+                      zod
+                        .object({
+                          cache_read: zod
+                            .number()
+                            .nullable()
+                            .describe("Cache read price."),
+                          cache_write: zod
+                            .number()
+                            .nullable()
+                            .describe("Cache write price."),
+                          input: zod
+                            .number()
+                            .nullable()
+                            .describe("Input price."),
+                          output: zod
+                            .number()
+                            .nullable()
+                            .describe("Output price."),
+                          source: zod
+                            .string()
+                            .describe(
+                              "Pricing source: models.dev, datasheet, or antigravity-reference.",
+                            ),
+                        })
+                        .describe("Prices in USD per million tokens."),
+                    ]),
+                    provider_metadata: zod
+                      .looseObject({})
+                      .nullable()
+                      .describe("Original provider-specific metadata."),
+                    raw_pricing: zod
+                      .looseObject({})
+                      .nullable()
+                      .describe("Original pricing record."),
                     reasoning: zod
                       .boolean()
-                      .nullish()
-                      .describe("Whether the model supports reasoning."),
-                    supported_reasoning_efforts: zod
+                      .nullable()
+                      .describe("Reasoning capability, if known."),
+                    reasoning_efforts: zod
                       .array(zod.string())
-                      .nullish()
                       .describe("Supported reasoning effort values."),
+                    tool_call: zod
+                      .boolean()
+                      .nullable()
+                      .describe("Tool calling capability, if known."),
                   })
-                  .catchall(
-                    zod
-                      .unknown()
-                      .describe(
-                        "Provider-specific metadata retained across discovery.",
-                      ),
-                  )
-                  .describe("Model metadata returned by the listing endpoint."),
+                  .describe(
+                    "A raw model and its normalized dashboard metadata.",
+                  ),
               )
-              .describe("Last successfully discovered model records."),
-            name: zod.string().describe("Display name from the registry."),
+              .describe("Enriched discovery records."),
+            name: zod.string().describe("Registry display name."),
           })
-          .describe(
-            "Discovered models and the latest discovery error for a provider.",
-          ),
+          .describe("Discovered provider and normalized models."),
       )
-      .describe("Providers reconciled with the registry on load."),
+      .describe("Providers reconciled with the registry."),
   })
-  .describe("Persisted snapshot of provider discovery results.");
+  .describe("Catalog response enriched with current datasheet metadata.");
 
 export type ModelCatalog = zod.input<typeof ModelCatalog>;
 export type ModelCatalogOutput = zod.output<typeof ModelCatalog>;
-
-export const ModelData = zod
-  .object({
-    parameters: zod
-      .record(zod.string(), zod.unknown())
-      .describe("Model parameter records."),
-    pricing: zod
-      .record(zod.string(), zod.unknown())
-      .describe("Pricing records."),
-  })
-  .describe("Cached datasheet entries indexed by their source keys.");
-
-export type ModelData = zod.input<typeof ModelData>;
-export type ModelDataOutput = zod.output<typeof ModelData>;
 
 export const modelSettingsDiscoveryIntervalMinutesMin = 0;
 

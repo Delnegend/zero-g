@@ -58,6 +58,8 @@ Zen's model IDs come from OpenCode; matching prices and capabilities come from t
 
 For Antigravity, matching Gemini and Claude API prices from the configured datasheet are shown as a reference, not as Antigravity charges. Matching includes Gemini preview entries and Claude thinking variants when their base model is available. Prices can differ from the actual plan or credit overage costs; models without a matching price show a dash.
 
+The dashboard receives model details and prices from `/api/model-catalog`; the backend combines cached provider results with the latest cached datasheets. If a cached datasheet cannot be read, the catalog remains visible and shows an error; datasheet-based details are unavailable until it is fixed.
+
 For a normalized Antigravity model, pass its base ID and set `reasoning_effort` to an advertised effort. If omitted, zero-g chooses an accessible base model, then medium, low or high. A virtual key restricted to the base ID permits its variants; a key restricted to a variant permits only that variant. Resolving an unsuffixed Antigravity request checks the discovered model list, cached for up to five minutes per credential and project.
 
 **Models → Settings** configures pricing and model-parameter datasheet URLs and automatic refresh intervals. Defaults use Bifrost's public datasheets, synced every 24 hours; provider discovery runs every 60 minutes. Set either interval to zero to disable that automatic task, or use the manual buttons. Leave a URL blank to restore its default. Datasheets are cached in the database; a failed sync keeps the last successful pair. Pricing is informational and is not a billed-cost record.

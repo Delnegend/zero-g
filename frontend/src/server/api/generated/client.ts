@@ -16,7 +16,6 @@ import {
   CredentialsResponse,
   KeyList,
   ModelCatalog,
-  ModelData,
   ModelSettings,
   ModelSyncResult,
   ObservabilityResponse,
@@ -210,23 +209,6 @@ export const updateModelSettings = async (
     },
     body: JSON.stringify(modelSettings),
     schema: ModelSettings,
-  });
-};
-
-export const getGetModelDataUrl = () => {
-  return `/api/model-settings/data`;
-};
-
-/**
- * @summary Return cached pricing and parameters for discovered models.
- */
-export const getModelData = async (
-  options?: Parameters<typeof request>[1],
-): Promise<ModelData> => {
-  return request<ModelData>(getGetModelDataUrl(), {
-    ...options,
-    method: "GET",
-    schema: ModelData,
   });
 };
 

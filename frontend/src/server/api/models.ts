@@ -1,23 +1,17 @@
 import { queryOptions } from "@tanstack/react-query";
 import * as api from "./generated/client";
 import type {
+  CatalogModel,
   CatalogProvider,
-  Model,
-  ModelData,
   ModelSettings,
 } from "./generated/schemas";
 
-export type { Model };
+export type { CatalogModel };
 export type Provider = CatalogProvider;
-export type Datasheets = ModelData;
 export type Settings = ModelSettings;
 
 export function getModelCatalog(signal: AbortSignal) {
   return api.getModelCatalog({ signal });
-}
-
-export function getModelDatasheets(signal: AbortSignal) {
-  return api.getModelData({ signal });
 }
 
 export function modelCatalogQueryOptions() {
@@ -25,15 +19,6 @@ export function modelCatalogQueryOptions() {
     queryKey: ["model-catalog"],
     retry: false,
     queryFn: ({ signal }) => getModelCatalog(signal),
-  });
-}
-
-export function modelDatasheetsQueryOptions() {
-  return queryOptions({
-    queryKey: ["model-settings-data"],
-    retry: false,
-    staleTime: 30_000,
-    queryFn: ({ signal }) => getModelDatasheets(signal),
   });
 }
 
