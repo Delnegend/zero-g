@@ -12,6 +12,7 @@ use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::database::transaction_with_retry;
 use crate::openai::Model;
 use crate::provider::{catalog::discover, registry};
 use crate::server::{AppState, settings::SettingsStore};
@@ -173,20 +174,15 @@ async fn load(store: &SettingsStore) -> Result<CachedCatalog, String> {
 /// Persist a catalog snapshot transactionally.
 async fn save(store: &SettingsStore, catalog: &CachedCatalog) -> Result<(), String> {
     let value = serde_json::to_string(catalog).map_err(|e| e.to_string())?;
-    store
-        .database
-        .retry(|| async {
-            let mut db = (*store.database.db).clone();
-            let mut tx = db.transaction().await?;
-            Setting::upsert_by_name(CACHE_KEY)
-                .value(value.as_str())
-                .exec(&mut tx)
-                .await?;
-            tx.commit().await?;
-            Ok(())
-        })
-        .await
-        .map_err(|e| e.to_string())
+    transaction_with_retry!(store.database, |mut tx| {
+        Setting::upsert_by_name(CACHE_KEY)
+            .value(value.as_str())
+            .exec(&mut tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    })
+    .map_err(|e| e.to_string())
 }
 
 /// Discover providers concurrently and retain last successful models on failure.

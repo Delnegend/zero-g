@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
-    database::Database,
+    database::{Database, transaction_with_retry},
     provider::{PROVIDER_KINDS, common::ProviderDescriptor, credentials},
     server::settings::SettingsStore,
     storage::{ProviderCredential, ProviderRecord, Secret, Setting, VirtualKey},
@@ -246,46 +246,41 @@ async fn create_provider(
     if let Err(e) = validate(&id, &name, &input.kind, &input.base_url) {
         return (StatusCode::BAD_REQUEST, e).into_response();
     }
-    let result = store
-        .database
-        .retry(|| async {
-            let mut db = (*store.database.db).clone();
-            let mut tx = db.transaction().await?;
-            let rows = ProviderRecord::all().exec(&mut tx).await?;
-            if duplicate(&rows, &id, &input.kind, &input.base_url) {
+    let result = transaction_with_retry!(store.database, |mut tx| {
+        let rows = ProviderRecord::all().exec(&mut tx).await?;
+        if duplicate(&rows, &id, &input.kind, &input.base_url) {
+            return Ok(Some("Provider ID or provider kind/base URL already exists"));
+        }
+        if let Some(existing) = rows.iter().find(|row| row.id == id) {
+            if !existing.deleted || kind.fixed_id.is_none() || existing.kind != input.kind {
                 return Ok(Some("Provider ID or provider kind/base URL already exists"));
             }
-            if let Some(existing) = rows.iter().find(|row| row.id == id) {
-                if !existing.deleted || kind.fixed_id.is_none() || existing.kind != input.kind {
-                    return Ok(Some("Provider ID or provider kind/base URL already exists"));
-                }
-                for key in VirtualKey::all().exec(&mut tx).await? {
-                    let permissions: Vec<String> = match serde_json::from_str(&key.providers) {
-                        Ok(value) => value,
-                        Err(_) => {
-                            return Ok(Some(
-                                "Cannot safely recreate provider: invalid virtual key restrictions",
-                            ));
-                        }
-                    };
-                    if permissions.contains(&id) {
+            for key in VirtualKey::all().exec(&mut tx).await? {
+                let permissions: Vec<String> = match serde_json::from_str(&key.providers) {
+                    Ok(value) => value,
+                    Err(_) => {
                         return Ok(Some(
-                            "Revoke affected virtual keys before recreating this provider",
+                            "Cannot safely recreate provider: invalid virtual key restrictions",
                         ));
                     }
+                };
+                if permissions.contains(&id) {
+                    return Ok(Some(
+                        "Revoke affected virtual keys before recreating this provider",
+                    ));
                 }
             }
-            ProviderRecord::upsert_by_id(id.as_str())
-                .name(name.clone())
-                .kind(input.kind.clone())
-                .base_url(input.base_url.clone())
-                .deleted(false)
-                .exec(&mut tx)
-                .await?;
-            tx.commit().await?;
-            Ok(None)
-        })
-        .await;
+        }
+        ProviderRecord::upsert_by_id(id.as_str())
+            .name(name.clone())
+            .kind(input.kind.clone())
+            .base_url(input.base_url.clone())
+            .deleted(false)
+            .exec(&mut tx)
+            .await?;
+        tx.commit().await?;
+        Ok(None)
+    });
     match result {
         Ok(Some(message)) => (StatusCode::CONFLICT, message).into_response(),
         Err(e) => internal_error(&e.to_string()),
@@ -309,61 +304,56 @@ async fn update_provider(
     Path(id): Path<String>,
     Json(input): Json<UpdateProvider>,
 ) -> Response {
-    let result = store
-        .database
-        .retry(|| async {
-            let mut db = (*store.database.db).clone();
-            let mut tx = db.transaction().await?;
-            let rows = ProviderRecord::all().exec(&mut tx).await?;
-            let Some(row) = rows.iter().find(|row| row.id == id && !row.deleted) else {
-                return Ok(Err((StatusCode::NOT_FOUND, "Provider not found")));
-            };
-            let kind = PROVIDER_KINDS.iter().find(|kind| kind.value == row.kind);
-            let name = match (kind.and_then(|kind| kind.fixed_name), &input.name) {
-                (Some(_), Some(_)) => {
-                    return Ok(Err((
-                        StatusCode::BAD_REQUEST,
-                        "Built-in provider name is fixed",
-                    )));
-                }
-                (Some(name), None) => name.to_string(),
-                (None, Some(name)) => name.clone(),
-                (None, None) => {
-                    return Ok(Err((
-                        StatusCode::BAD_REQUEST,
-                        "Custom provider name is required",
-                    )));
-                }
-            };
-            let base_url = input
-                .base_url
-                .clone()
-                .unwrap_or_else(|| row.base_url.clone());
-            if let Err(e) = validate(&id, &name, &row.kind, &base_url) {
-                return Ok(Err((StatusCode::BAD_REQUEST, e)));
-            }
-            if duplicate(&rows, &id, &row.kind, &base_url) {
+    let result = transaction_with_retry!(store.database, |mut tx| {
+        let rows = ProviderRecord::all().exec(&mut tx).await?;
+        let Some(row) = rows.iter().find(|row| row.id == id && !row.deleted) else {
+            return Ok(Err((StatusCode::NOT_FOUND, "Provider not found")));
+        };
+        let kind = PROVIDER_KINDS.iter().find(|kind| kind.value == row.kind);
+        let name = match (kind.and_then(|kind| kind.fixed_name), &input.name) {
+            (Some(_), Some(_)) => {
                 return Ok(Err((
-                    StatusCode::CONFLICT,
-                    "Provider kind or base URL already exists",
+                    StatusCode::BAD_REQUEST,
+                    "Built-in provider name is fixed",
                 )));
             }
-            ProviderRecord::upsert_by_id(id.as_str())
-                .name(name.clone())
-                .kind(row.kind.clone())
-                .base_url(base_url.clone())
-                .deleted(false)
-                .exec(&mut tx)
-                .await?;
-            tx.commit().await?;
-            Ok(Ok(Provider {
-                id: id.clone(),
-                name,
-                kind: row.kind.clone(),
-                base_url,
-            }))
-        })
-        .await;
+            (Some(name), None) => name.to_string(),
+            (None, Some(name)) => name.clone(),
+            (None, None) => {
+                return Ok(Err((
+                    StatusCode::BAD_REQUEST,
+                    "Custom provider name is required",
+                )));
+            }
+        };
+        let base_url = input
+            .base_url
+            .clone()
+            .unwrap_or_else(|| row.base_url.clone());
+        if let Err(e) = validate(&id, &name, &row.kind, &base_url) {
+            return Ok(Err((StatusCode::BAD_REQUEST, e)));
+        }
+        if duplicate(&rows, &id, &row.kind, &base_url) {
+            return Ok(Err((
+                StatusCode::CONFLICT,
+                "Provider kind or base URL already exists",
+            )));
+        }
+        ProviderRecord::upsert_by_id(id.as_str())
+            .name(name.clone())
+            .kind(row.kind.clone())
+            .base_url(base_url.clone())
+            .deleted(false)
+            .exec(&mut tx)
+            .await?;
+        tx.commit().await?;
+        Ok(Ok(Provider {
+            id: id.clone(),
+            name,
+            kind: row.kind.clone(),
+            base_url,
+        }))
+    });
     match result {
         Ok(Ok(provider)) => Json(provider).into_response(),
         Ok(Err((status, e))) => (status, e).into_response(),
@@ -393,50 +383,44 @@ async fn delete_provider(State(store): State<SettingsStore>, Path(id): Path<Stri
                 .await,
         );
     }
-    let result = store
-        .database
-        .retry(|| async {
-            let mut db = (*store.database.db).clone();
-            let mut tx = db.transaction().await?;
-            let Some(row) = ProviderRecord::filter_by_id(id.as_str())
-                .first()
-                .exec(&mut tx)
-                .await?
-                .filter(|row| !row.deleted)
-            else {
-                return Ok(false);
-            };
-            let credentials = ProviderCredential::filter(
-                ProviderCredential::fields().provider_id().eq(id.as_str()),
-            )
+    let result = transaction_with_retry!(store.database, |mut tx| {
+        let Some(row) = ProviderRecord::filter_by_id(id.as_str())
+            .first()
             .exec(&mut tx)
-            .await?;
-            for credential in credentials {
-                for suffix in [
-                    "api_key",
-                    "credential",
-                    "console_session",
-                    "console_workspace",
-                ] {
-                    Secret::delete_by_name(
-                        &mut tx,
-                        format!("credential.{}.{suffix}", credential.id).as_str(),
-                    )
-                    .await?;
-                }
-                ProviderCredential::delete_by_id(&mut tx, credential.id.as_str()).await?;
-            }
-            ProviderRecord::upsert_by_id(id.as_str())
-                .name(String::new())
-                .kind(row.kind)
-                .base_url(String::new())
-                .deleted(true)
+            .await?
+            .filter(|row| !row.deleted)
+        else {
+            return Ok(false);
+        };
+        let credentials =
+            ProviderCredential::filter(ProviderCredential::fields().provider_id().eq(id.as_str()))
                 .exec(&mut tx)
                 .await?;
-            tx.commit().await?;
-            Ok(true)
-        })
-        .await;
+        for credential in credentials {
+            for suffix in [
+                "api_key",
+                "credential",
+                "console_session",
+                "console_workspace",
+            ] {
+                Secret::delete_by_name(
+                    &mut tx,
+                    format!("credential.{}.{suffix}", credential.id).as_str(),
+                )
+                .await?;
+            }
+            ProviderCredential::delete_by_id(&mut tx, credential.id.as_str()).await?;
+        }
+        ProviderRecord::upsert_by_id(id.as_str())
+            .name(String::new())
+            .kind(row.kind)
+            .base_url(String::new())
+            .deleted(true)
+            .exec(&mut tx)
+            .await?;
+        tx.commit().await?;
+        Ok(true)
+    });
     drop(guards);
     match result {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
@@ -448,9 +432,7 @@ async fn delete_provider(State(store): State<SettingsStore>, Path(id): Path<Stri
 /// Cut over built-in identities atomically, refusing occupied IDs and stale grants.
 pub(crate) async fn migrate_fixed_identities(store: &SettingsStore) -> Result<(), String> {
     const MARKER: &str = "provider_fixed_identities_v1";
-    store.database.retry(|| async {
-        let mut db = (*store.database.db).clone();
-        let mut tx = db.transaction().await?;
+    transaction_with_retry!(store.database, |mut tx| {
         if Setting::filter_by_name(MARKER).first().exec(&mut tx).await?.is_some() {
             return Ok(Ok(()));
         }
@@ -508,7 +490,7 @@ pub(crate) async fn migrate_fixed_identities(store: &SettingsStore) -> Result<()
         Setting::upsert_by_name(MARKER).value("1".to_string()).exec(&mut tx).await?;
         tx.commit().await?;
         Ok(Ok(()))
-    }).await.map_err(|e| e.to_string())?
+    }).map_err(|e| e.to_string())?
 }
 
 /// Builds provider registry management routes.

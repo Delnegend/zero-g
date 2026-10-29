@@ -1,6 +1,7 @@
 /// HTTP routes for Zen models and chat completions.
 pub(crate) mod routes;
 
+use crate::database::transaction_with_retry;
 use crate::provider::quota::QuotaSnapshot;
 use crate::server::settings::SettingsStore;
 use crate::storage::{ProviderCredential, ProviderRecord, Secret};
@@ -70,41 +71,36 @@ pub(crate) async fn connection(
     };
     let lock = crate::provider::login::credential_lock(credential).await;
     let _guard = lock.lock().await;
-    let result = store
-        .database
-        .retry(|| async {
-            let mut db = (*store.database.db).clone();
-            let mut tx = db.transaction().await?;
-            let p = ProviderRecord::filter_by_id(provider)
-                .first()
+    let result = transaction_with_retry!(store.database, |mut tx| {
+        let p = ProviderRecord::filter_by_id(provider)
+            .first()
+            .exec(&mut tx)
+            .await?;
+        let c = ProviderCredential::filter_by_id(credential)
+            .first()
+            .exec(&mut tx)
+            .await?;
+        if !matches!(p, Some(p) if !p.deleted && p.kind == "zen")
+            || !matches!(c, Some(c) if c.provider_id == provider)
+        {
+            return Ok(false);
+        }
+        if let Some((session, workspace)) = &encrypted {
+            Secret::upsert_by_name(session_name.as_str())
+                .value(session.clone())
                 .exec(&mut tx)
                 .await?;
-            let c = ProviderCredential::filter_by_id(credential)
-                .first()
+            Secret::upsert_by_name(workspace_name.as_str())
+                .value(workspace.clone())
                 .exec(&mut tx)
                 .await?;
-            if !matches!(p, Some(p) if !p.deleted && p.kind == "zen")
-                || !matches!(c, Some(c) if c.provider_id == provider)
-            {
-                return Ok(false);
-            }
-            if let Some((session, workspace)) = &encrypted {
-                Secret::upsert_by_name(session_name.as_str())
-                    .value(session.clone())
-                    .exec(&mut tx)
-                    .await?;
-                Secret::upsert_by_name(workspace_name.as_str())
-                    .value(workspace.clone())
-                    .exec(&mut tx)
-                    .await?;
-            } else {
-                Secret::delete_by_name(&mut tx, &session_name).await?;
-                Secret::delete_by_name(&mut tx, &workspace_name).await?;
-            }
-            tx.commit().await?;
-            Ok(true)
-        })
-        .await;
+        } else {
+            Secret::delete_by_name(&mut tx, &session_name).await?;
+            Secret::delete_by_name(&mut tx, &workspace_name).await?;
+        }
+        tx.commit().await?;
+        Ok(true)
+    });
     match result {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => StatusCode::NOT_FOUND.into_response(),

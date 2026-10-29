@@ -1,4 +1,5 @@
 use super::{CONFIG_KEY, ModelSettings, ModelSettingsError, error};
+use crate::database::transaction_with_retry;
 use crate::server::AppState;
 use crate::storage::Setting;
 use axum::{
@@ -33,20 +34,14 @@ pub(super) async fn put_settings(
             "Unable to serialize model settings",
         );
     };
-    let result = state
-        .settings
-        .database
-        .retry(|| async {
-            let mut db = (*state.settings.database.db).clone();
-            let mut tx = db.transaction().await?;
-            Setting::upsert_by_name(CONFIG_KEY)
-                .value(value.as_str())
-                .exec(&mut tx)
-                .await?;
-            tx.commit().await?;
-            Ok(())
-        })
-        .await;
+    let result = transaction_with_retry!(state.settings.database, |mut tx| {
+        Setting::upsert_by_name(CONFIG_KEY)
+            .value(value.as_str())
+            .exec(&mut tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    });
     if result.is_err() {
         return error(
             StatusCode::INTERNAL_SERVER_ERROR,

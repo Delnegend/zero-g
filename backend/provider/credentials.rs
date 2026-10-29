@@ -9,6 +9,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    database::transaction_with_retry,
     provider::registry,
     server::settings::SettingsStore,
     storage::{ProviderCredential, ProviderRecord, Secret, Setting, VirtualKey},
@@ -137,9 +138,7 @@ pub(crate) async fn save_oauth(
 ) -> Result<(), String> {
     let name = format!("credential.{credential_id}.credential");
     let encrypted = store.encrypt(&name, value)?;
-    store.database.retry(|| async {
-        let mut db = (*store.database.db).clone();
-        let mut tx = db.transaction().await?;
+    transaction_with_retry!(store.database, |mut tx| {
         let provider = ProviderRecord::filter_by_id(provider_id).first().exec(&mut tx).await?;
         let credential = ProviderCredential::filter_by_id(credential_id).first().exec(&mut tx).await?;
         if !matches!(provider, Some(row) if !row.deleted && row.kind == kind && crate::provider::ProviderKind::from_str(kind).is_some_and(crate::provider::ProviderKind::oauth))
@@ -149,7 +148,7 @@ pub(crate) async fn save_oauth(
         Secret::upsert_by_name(name.as_str()).value(encrypted.clone()).exec(&mut tx).await?;
         tx.commit().await?;
         Ok(Ok(()))
-    }).await.map_err(|e| e.to_string())?
+    }).map_err(|e| e.to_string())?
 }
 
 /// Credential creation or update request.
@@ -239,50 +238,42 @@ async fn create(
         Ok(value) => value,
         Err(e) => return internal(&e),
     };
-    let result = store
-        .database
-        .retry(|| async {
-            let mut db = (*store.database.db).clone();
-            let mut tx = db.transaction().await?;
-            let provider = ProviderRecord::filter_by_id(provider_id.as_str())
-                .first()
-                .exec(&mut tx)
-                .await?
-                .filter(|row| !row.deleted);
-            let Some(provider) = provider else {
-                return Ok(StatusCode::NOT_FOUND);
-            };
-            let Some(kind) = crate::provider::ProviderKind::from_str(&provider.kind) else {
-                return Ok(StatusCode::BAD_REQUEST);
-            };
-            if encrypted.is_some() && kind.oauth() {
-                return Ok(StatusCode::BAD_REQUEST);
-            }
-            if kind.api_key()
-                && !kind.keyless()
-                && input.api_key.as_deref().is_none_or(str::is_empty)
-            {
-                return Ok(StatusCode::BAD_REQUEST);
-            }
-            toasty::create!(ProviderCredential {
-                id: id.clone(),
-                provider_id: provider_id.clone(),
-                name: input.name.clone(),
-                weight: input.weight,
-                enabled: input.enabled
-            })
+    let result = transaction_with_retry!(store.database, |mut tx| {
+        let provider = ProviderRecord::filter_by_id(provider_id.as_str())
+            .first()
             .exec(&mut tx)
-            .await?;
-            if let Some(value) = &encrypted {
-                Secret::upsert_by_name(secret_name.as_str())
-                    .value(value.clone())
-                    .exec(&mut tx)
-                    .await?;
-            }
-            tx.commit().await?;
-            Ok(StatusCode::CREATED)
+            .await?
+            .filter(|row| !row.deleted);
+        let Some(provider) = provider else {
+            return Ok(StatusCode::NOT_FOUND);
+        };
+        let Some(kind) = crate::provider::ProviderKind::from_str(&provider.kind) else {
+            return Ok(StatusCode::BAD_REQUEST);
+        };
+        if encrypted.is_some() && kind.oauth() {
+            return Ok(StatusCode::BAD_REQUEST);
+        }
+        if kind.api_key() && !kind.keyless() && input.api_key.as_deref().is_none_or(str::is_empty) {
+            return Ok(StatusCode::BAD_REQUEST);
+        }
+        toasty::create!(ProviderCredential {
+            id: id.clone(),
+            provider_id: provider_id.clone(),
+            name: input.name.clone(),
+            weight: input.weight,
+            enabled: input.enabled
         })
-        .await;
+        .exec(&mut tx)
+        .await?;
+        if let Some(value) = &encrypted {
+            Secret::upsert_by_name(secret_name.as_str())
+                .value(value.clone())
+                .exec(&mut tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(StatusCode::CREATED)
+    });
     match result {
         Ok(StatusCode::CREATED) => match get(&store, &provider_id, &id).await {
             Ok(Some(value)) => (StatusCode::CREATED, Json(value)).into_response(),
@@ -319,55 +310,48 @@ async fn update(
         Ok(value) => value,
         Err(e) => return internal(&e),
     };
-    let result = store
-        .database
-        .retry(|| async {
-            let mut db = (*store.database.db).clone();
-            let mut tx = db.transaction().await?;
-            let provider = ProviderRecord::filter_by_id(provider_id.as_str())
-                .first()
-                .exec(&mut tx)
-                .await?
-                .filter(|row| !row.deleted);
-            let row = ProviderCredential::filter_by_id(id.as_str())
-                .first()
+    let result = transaction_with_retry!(store.database, |mut tx| {
+        let provider = ProviderRecord::filter_by_id(provider_id.as_str())
+            .first()
+            .exec(&mut tx)
+            .await?
+            .filter(|row| !row.deleted);
+        let row = ProviderCredential::filter_by_id(id.as_str())
+            .first()
+            .exec(&mut tx)
+            .await?;
+        let Some(provider) = provider else {
+            return Ok(StatusCode::NOT_FOUND);
+        };
+        if !matches!(row, Some(row) if row.provider_id == provider_id) {
+            return Ok(StatusCode::NOT_FOUND);
+        }
+        let Some(kind) = crate::provider::ProviderKind::from_str(&provider.kind) else {
+            return Ok(StatusCode::BAD_REQUEST);
+        };
+        if encrypted.is_some() && kind.oauth() {
+            return Ok(StatusCode::BAD_REQUEST);
+        }
+        if kind.api_key() && !kind.keyless() && input.api_key.as_deref().is_some_and(str::is_empty)
+        {
+            return Ok(StatusCode::BAD_REQUEST);
+        }
+        ProviderCredential::upsert_by_id(id.as_str())
+            .provider_id(provider_id.clone())
+            .name(input.name.clone())
+            .weight(input.weight)
+            .enabled(input.enabled)
+            .exec(&mut tx)
+            .await?;
+        if let Some(value) = &encrypted {
+            Secret::upsert_by_name(secret_name.as_str())
+                .value(value.clone())
                 .exec(&mut tx)
                 .await?;
-            let Some(provider) = provider else {
-                return Ok(StatusCode::NOT_FOUND);
-            };
-            if !matches!(row, Some(row) if row.provider_id == provider_id) {
-                return Ok(StatusCode::NOT_FOUND);
-            }
-            let Some(kind) = crate::provider::ProviderKind::from_str(&provider.kind) else {
-                return Ok(StatusCode::BAD_REQUEST);
-            };
-            if encrypted.is_some() && kind.oauth() {
-                return Ok(StatusCode::BAD_REQUEST);
-            }
-            if kind.api_key()
-                && !kind.keyless()
-                && input.api_key.as_deref().is_some_and(str::is_empty)
-            {
-                return Ok(StatusCode::BAD_REQUEST);
-            }
-            ProviderCredential::upsert_by_id(id.as_str())
-                .provider_id(provider_id.clone())
-                .name(input.name.clone())
-                .weight(input.weight)
-                .enabled(input.enabled)
-                .exec(&mut tx)
-                .await?;
-            if let Some(value) = &encrypted {
-                Secret::upsert_by_name(secret_name.as_str())
-                    .value(value.clone())
-                    .exec(&mut tx)
-                    .await?;
-            }
-            tx.commit().await?;
-            Ok(StatusCode::OK)
-        })
-        .await;
+        }
+        tx.commit().await?;
+        Ok(StatusCode::OK)
+    });
     match result {
         Ok(StatusCode::OK) => match get(&store, &provider_id, &id).await {
             Ok(Some(value)) => Json(value).into_response(),
@@ -390,38 +374,32 @@ async fn delete(
 ) -> Response {
     let lock = crate::provider::login::credential_lock(&id).await;
     let _guard = lock.lock().await;
-    let result = store
-        .database
-        .retry(|| async {
-            let mut db = (*store.database.db).clone();
-            let mut tx = db.transaction().await?;
-            let provider = ProviderRecord::filter_by_id(provider_id.as_str())
-                .first()
-                .exec(&mut tx)
-                .await?;
-            let row = ProviderCredential::filter_by_id(id.as_str())
-                .first()
-                .exec(&mut tx)
-                .await?;
-            if !matches!(provider, Some(row) if !row.deleted)
-                || !matches!(row, Some(row) if row.provider_id == provider_id)
-            {
-                return Ok(false);
-            }
-            for suffix in [
-                "api_key",
-                "credential",
-                "console_session",
-                "console_workspace",
-            ] {
-                Secret::delete_by_name(&mut tx, format!("credential.{id}.{suffix}").as_str())
-                    .await?;
-            }
-            ProviderCredential::delete_by_id(&mut tx, id.as_str()).await?;
-            tx.commit().await?;
-            Ok(true)
-        })
-        .await;
+    let result = transaction_with_retry!(store.database, |mut tx| {
+        let provider = ProviderRecord::filter_by_id(provider_id.as_str())
+            .first()
+            .exec(&mut tx)
+            .await?;
+        let row = ProviderCredential::filter_by_id(id.as_str())
+            .first()
+            .exec(&mut tx)
+            .await?;
+        if !matches!(provider, Some(row) if !row.deleted)
+            || !matches!(row, Some(row) if row.provider_id == provider_id)
+        {
+            return Ok(false);
+        }
+        for suffix in [
+            "api_key",
+            "credential",
+            "console_session",
+            "console_workspace",
+        ] {
+            Secret::delete_by_name(&mut tx, format!("credential.{id}.{suffix}").as_str()).await?;
+        }
+        ProviderCredential::delete_by_id(&mut tx, id.as_str()).await?;
+        tx.commit().await?;
+        Ok(true)
+    });
     match result {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => (StatusCode::NOT_FOUND, "Credential not found").into_response(),
@@ -509,9 +487,7 @@ pub(crate) async fn migrate_legacy(store: &SettingsStore) -> Result<(), String> 
             .transpose()?;
         entries.push((provider.clone(), target, id, old_name, new_name, encrypted));
     }
-    store.database.retry(|| async {
-        let mut db = (*store.database.db).clone();
-        let mut tx = db.transaction().await?;
+    transaction_with_retry!(store.database, |mut tx| {
         if Setting::filter_by_name(MARKER).first().exec(&mut tx).await?.is_some() { return Ok(Ok(())); }
         let keys = VirtualKey::all().exec(&mut tx).await?;
         for key in keys {
@@ -545,7 +521,7 @@ pub(crate) async fn migrate_legacy(store: &SettingsStore) -> Result<(), String> 
         Setting::upsert_by_name(MARKER).value("1".to_string()).exec(&mut tx).await?;
         tx.commit().await?;
         Ok(Ok(()))
-    }).await.map_err(|e| e.to_string())?
+    }).map_err(|e| e.to_string())?
 }
 
 /// Legacy credential migration checks.

@@ -10,6 +10,23 @@ pub(crate) struct Database {
     pub(crate) db: Arc<toasty::Db>,
 }
 
+/// Run each retry attempt in a fresh transaction. The body controls whether to
+/// commit and must keep side effects inside the transaction.
+macro_rules! transaction_with_retry {
+    ($database:expr, |mut $tx:ident| $body:block) => {{
+        let database = &$database;
+        database
+            .retry(|| async {
+                let mut db = (*database.db).clone();
+                let mut $tx = db.transaction().await?;
+                $body
+            })
+            .await
+    }};
+}
+
+pub(crate) use transaction_with_retry;
+
 impl Database {
     /// Opens the database, registers models, and applies embedded migrations.
     pub(crate) async fn open(path: &str) -> Result<Self, String> {
@@ -43,8 +60,8 @@ impl Database {
         Ok(Self { db: Arc::new(db) })
     }
 
-    /// Retry the whole database operation after a write conflict. Callers must
-    /// create a fresh transaction on every attempt and keep side effects inside it.
+    /// Retry an operation after a write conflict. Use `transaction_with_retry!`
+    /// to give each attempt its own transaction.
     pub(crate) async fn retry<T, F, Fut>(&self, mut operation: F) -> Result<T, toasty::Error>
     where
         F: FnMut() -> Fut,
@@ -65,5 +82,49 @@ impl Database {
                 result => return result,
             }
         }
+    }
+}
+
+/// Transaction boundary behavior.
+#[cfg(test)]
+mod tests {
+    use super::Database;
+    use crate::storage::Setting;
+
+    /// Dropped transactions roll back while committed writes remain visible.
+    #[tokio::test]
+    async fn transaction_commits_only_when_requested() {
+        let database = Database::open(":memory:").await.unwrap();
+        let changed = transaction_with_retry!(database, |mut tx| {
+            Setting::upsert_by_name("transaction-test")
+                .value("discarded")
+                .exec(&mut tx)
+                .await?;
+            Ok(false)
+        })
+        .unwrap();
+        assert!(!changed);
+        let row = Setting::filter_by_name("transaction-test")
+            .first()
+            .exec(&mut (*database.db).clone())
+            .await
+            .unwrap();
+        assert!(row.is_none());
+        transaction_with_retry!(database, |mut tx| {
+            Setting::upsert_by_name("transaction-test")
+                .value("saved")
+                .exec(&mut tx)
+                .await?;
+            tx.commit().await?;
+            Ok(())
+        })
+        .unwrap();
+        let row = Setting::filter_by_name("transaction-test")
+            .first()
+            .exec(&mut (*database.db).clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.value, "saved");
     }
 }

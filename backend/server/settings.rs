@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use utoipa::ToSchema;
 
-use crate::database::Database;
+use crate::database::{Database, transaction_with_retry};
 
 /// Reserved secret name for checking the configured encryption key.
 const SENTINEL: &str = "__zero_g_encryption_key_check";
@@ -133,39 +133,34 @@ impl SettingsStore {
             database,
             encryption_key,
         };
-        store
-            .database
-            .retry(|| async {
-                let mut db = (*store.database.db).clone();
-                let mut tx = db.transaction().await?;
-                let rows = Secret::all().exec(&mut tx).await?;
-                if let Some(row) = rows.iter().find(|row| row.name == SENTINEL) {
-                    match store.decrypt(SENTINEL, &row.value) {
-                        Ok(value) if value == CHECK => {}
-                        Ok(_) => return Ok(Err("Invalid encryption key check".to_string())),
-                        Err(err) => return Ok(Err(err)),
-                    }
-                } else {
-                    // Validate any pre-existing secrets before establishing the key check.
-                    for row in &rows {
-                        if let Err(err) = store.decrypt(&row.name, &row.value) {
-                            return Ok(Err(err));
-                        }
-                    }
-                    let encrypted = match store.encrypt(SENTINEL, CHECK) {
-                        Ok(value) => value,
-                        Err(err) => return Ok(Err(err)),
-                    };
-                    Secret::upsert_by_name(SENTINEL)
-                        .value(encrypted)
-                        .exec(&mut tx)
-                        .await?;
+        transaction_with_retry!(store.database, |mut tx| {
+            let rows = Secret::all().exec(&mut tx).await?;
+            if let Some(row) = rows.iter().find(|row| row.name == SENTINEL) {
+                match store.decrypt(SENTINEL, &row.value) {
+                    Ok(value) if value == CHECK => {}
+                    Ok(_) => return Ok(Err("Invalid encryption key check".to_string())),
+                    Err(err) => return Ok(Err(err)),
                 }
-                tx.commit().await?;
-                Ok(Ok(()))
-            })
-            .await
-            .map_err(|e| e.to_string())??;
+            } else {
+                // Validate any pre-existing secrets before establishing the key check.
+                for row in &rows {
+                    if let Err(err) = store.decrypt(&row.name, &row.value) {
+                        return Ok(Err(err));
+                    }
+                }
+                let encrypted = match store.encrypt(SENTINEL, CHECK) {
+                    Ok(value) => value,
+                    Err(err) => return Ok(Err(err)),
+                };
+                Secret::upsert_by_name(SENTINEL)
+                    .value(encrypted)
+                    .exec(&mut tx)
+                    .await?;
+            }
+            tx.commit().await?;
+            Ok(Ok(()))
+        })
+        .map_err(|e| e.to_string())??;
         crate::provider::credentials::migrate_legacy(&store).await?;
         crate::provider::registry::migrate_fixed_identities(&store).await?;
         Ok(store)
@@ -244,19 +239,15 @@ impl SettingsStore {
     #[cfg(test)]
     async fn secret_put(&self, name: &str, value: &str) -> Result<(), String> {
         let stored = self.encrypt(name, value)?;
-        self.database
-            .retry(|| async {
-                let mut db = (*self.database.db).clone();
-                let mut tx = db.transaction().await?;
-                Secret::upsert_by_name(name)
-                    .value(stored.clone())
-                    .exec(&mut tx)
-                    .await?;
-                tx.commit().await?;
-                Ok(())
-            })
-            .await
-            .map_err(|e| e.to_string())
+        transaction_with_retry!(self.database, |mut tx| {
+            Secret::upsert_by_name(name)
+                .value(stored.clone())
+                .exec(&mut tx)
+                .await?;
+            tx.commit().await?;
+            Ok(())
+        })
+        .map_err(|e| e.to_string())
     }
 
     /// Resolves a token's stored hash to its provider and model restrictions.
@@ -310,40 +301,35 @@ pub(crate) struct SettingsResponse {
 pub(crate) async fn get_settings(State(store): State<SettingsStore>) -> Response {
     /// Loads the settings and validates any stored OAuth secret.
     async fn load(store: &SettingsStore) -> Result<SettingsResponse, String> {
-        store
-            .database
-            .retry(|| async {
-                let mut db = (*store.database.db).clone();
-                let mut tx = db.transaction().await?;
-                let retention = Setting::filter_by_name("log_retention_days")
-                    .first()
-                    .exec(&mut tx)
-                    .await?
-                    .and_then(|row| row.value.parse::<u32>().ok())
-                    .unwrap_or(30);
-                let client_id = Setting::filter_by_name("oauth_client_id")
-                    .first()
-                    .exec(&mut tx)
-                    .await?
-                    .map_or_else(String::new, |row| row.value);
-                let secret = Secret::filter_by_name("oauth_client_secret")
-                    .first()
-                    .exec(&mut tx)
-                    .await?;
-                if let Some(row) = &secret
-                    && let Err(err) = store.decrypt("oauth_client_secret", &row.value)
-                {
-                    return Ok(Err(err));
-                }
-                tx.commit().await?;
-                Ok(Ok(SettingsResponse {
-                    log_retention_days: retention,
-                    oauth_client_id: client_id,
-                    oauth_client_secret_set: secret.is_some(),
-                }))
-            })
-            .await
-            .map_err(|e| e.to_string())?
+        transaction_with_retry!(store.database, |mut tx| {
+            let retention = Setting::filter_by_name("log_retention_days")
+                .first()
+                .exec(&mut tx)
+                .await?
+                .and_then(|row| row.value.parse::<u32>().ok())
+                .unwrap_or(30);
+            let client_id = Setting::filter_by_name("oauth_client_id")
+                .first()
+                .exec(&mut tx)
+                .await?
+                .map_or_else(String::new, |row| row.value);
+            let secret = Secret::filter_by_name("oauth_client_secret")
+                .first()
+                .exec(&mut tx)
+                .await?;
+            if let Some(row) = &secret
+                && let Err(err) = store.decrypt("oauth_client_secret", &row.value)
+            {
+                return Ok(Err(err));
+            }
+            tx.commit().await?;
+            Ok(Ok(SettingsResponse {
+                log_retention_days: retention,
+                oauth_client_id: client_id,
+                oauth_client_secret_set: secret.is_some(),
+            }))
+        })
+        .map_err(|e| e.to_string())?
     }
     match load(&store).await {
         Ok(value) => Json(value).into_response(),
@@ -400,33 +386,28 @@ pub(crate) async fn put_settings(
         },
         None => None,
     };
-    let result = store
-        .database
-        .retry(|| async {
-            let mut db = (*store.database.db).clone();
-            let mut tx = db.transaction().await?;
-            for (name, value) in &values {
-                if let Some(value) = value {
-                    Setting::upsert_by_name(*name)
-                        .value(value.as_str())
-                        .exec(&mut tx)
-                        .await?;
-                }
+    let result = transaction_with_retry!(store.database, |mut tx| {
+        for (name, value) in &values {
+            if let Some(value) = value {
+                Setting::upsert_by_name(*name)
+                    .value(value.as_str())
+                    .exec(&mut tx)
+                    .await?;
             }
-            if let Some(value) = &secret {
-                if let Some(encrypted) = value {
-                    Secret::upsert_by_name("oauth_client_secret")
-                        .value(encrypted.clone())
-                        .exec(&mut tx)
-                        .await?;
-                } else {
-                    Secret::delete_by_name(&mut tx, "oauth_client_secret").await?;
-                }
+        }
+        if let Some(value) = &secret {
+            if let Some(encrypted) = value {
+                Secret::upsert_by_name("oauth_client_secret")
+                    .value(encrypted.clone())
+                    .exec(&mut tx)
+                    .await?;
+            } else {
+                Secret::delete_by_name(&mut tx, "oauth_client_secret").await?;
             }
-            tx.commit().await?;
-            Ok(())
-        })
-        .await;
+        }
+        tx.commit().await?;
+        Ok(())
+    });
     if let Err(err) = result {
         return internal_error(&err.to_string());
     }
@@ -503,34 +484,29 @@ pub(super) async fn create_key(
         Ok(v) => v,
         Err(e) => return internal_error(&e.to_string()),
     };
-    let result = store
-        .database
-        .retry(|| async {
-            let mut db = (*store.database.db).clone();
-            let mut tx = db.transaction().await?;
-            for provider_id in &input.providers {
-                let row = ProviderRecord::filter_by_id(provider_id.as_str())
-                    .first()
-                    .exec(&mut tx)
-                    .await?;
-                if !matches!(row, Some(row) if !row.deleted) {
-                    return Ok(false);
-                }
+    let result = transaction_with_retry!(store.database, |mut tx| {
+        for provider_id in &input.providers {
+            let row = ProviderRecord::filter_by_id(provider_id.as_str())
+                .first()
+                .exec(&mut tx)
+                .await?;
+            if !matches!(row, Some(row) if !row.deleted) {
+                return Ok(false);
             }
-            toasty::create!(VirtualKey {
-                id: id.clone(),
-                name: input.name.clone(),
-                key_hash: hash.as_ref().to_vec(),
-                providers: providers.clone(),
-                models: models.clone(),
-                created_at
-            })
-            .exec(&mut tx)
-            .await?;
-            tx.commit().await?;
-            Ok(true)
+        }
+        toasty::create!(VirtualKey {
+            id: id.clone(),
+            name: input.name.clone(),
+            key_hash: hash.as_ref().to_vec(),
+            providers: providers.clone(),
+            models: models.clone(),
+            created_at
         })
-        .await;
+        .exec(&mut tx)
+        .await?;
+        tx.commit().await?;
+        Ok(true)
+    });
     match result {
         Ok(true) => (
             StatusCode::CREATED,
@@ -558,23 +534,18 @@ pub(super) async fn revoke_key(
     State(store): State<SettingsStore>,
     Path(id): Path<String>,
 ) -> Response {
-    let result = store
-        .database
-        .retry(|| async {
-            let mut db = (*store.database.db).clone();
-            let mut tx = db.transaction().await?;
-            let Some(row) = VirtualKey::filter_by_id(id.as_str())
-                .first()
-                .exec(&mut tx)
-                .await?
-            else {
-                return Ok(false);
-            };
-            row.delete().exec(&mut tx).await?;
-            tx.commit().await?;
-            Ok(true)
-        })
-        .await;
+    let result = transaction_with_retry!(store.database, |mut tx| {
+        let Some(row) = VirtualKey::filter_by_id(id.as_str())
+            .first()
+            .exec(&mut tx)
+            .await?
+        else {
+            return Ok(false);
+        };
+        row.delete().exec(&mut tx).await?;
+        tx.commit().await?;
+        Ok(true)
+    });
     match result {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => StatusCode::NOT_FOUND.into_response(),

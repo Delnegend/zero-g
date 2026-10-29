@@ -6,6 +6,7 @@ use serde::de::{DeserializeSeed, MapAccess, Visitor};
 use serde_json::{Value, json};
 
 use super::{CONFIG_KEY, ModelSettings, load_settings, validate_url};
+use crate::database::transaction_with_retry;
 use crate::server::settings::SettingsStore;
 use crate::storage::Setting;
 
@@ -106,38 +107,33 @@ async fn save_datasheets(
 ) -> Result<(), String> {
     // Commit the pair together. A bad download or failed write never destroys
     // either last-known-good sheet.
-    let saved = store
-        .database
-        .retry(|| async {
-            let mut db = (*store.database.db).clone();
-            let mut tx = db.transaction().await?;
-            let current = Setting::filter_by_name(CONFIG_KEY)
-                .first()
-                .exec(&mut tx)
-                .await?;
-            let current = match current {
-                Some(row) => serde_json::from_str::<ModelSettings>(&row.value).ok(),
-                None => Some(ModelSettings::default()),
-            };
-            if !current.is_some_and(|current| {
-                current.pricing_url == settings.pricing_url
-                    && current.parameters_url == settings.parameters_url
-            }) {
-                return Ok(false);
-            }
-            Setting::upsert_by_name(PRICING_KEY)
-                .value(pricing)
-                .exec(&mut tx)
-                .await?;
-            Setting::upsert_by_name(PARAMETERS_KEY)
-                .value(parameters)
-                .exec(&mut tx)
-                .await?;
-            tx.commit().await?;
-            Ok(true)
-        })
-        .await
-        .map_err(|_| "Unable to save datasheets".to_string())?;
+    let saved = transaction_with_retry!(store.database, |mut tx| {
+        let current = Setting::filter_by_name(CONFIG_KEY)
+            .first()
+            .exec(&mut tx)
+            .await?;
+        let current = match current {
+            Some(row) => serde_json::from_str::<ModelSettings>(&row.value).ok(),
+            None => Some(ModelSettings::default()),
+        };
+        if !current.is_some_and(|current| {
+            current.pricing_url == settings.pricing_url
+                && current.parameters_url == settings.parameters_url
+        }) {
+            return Ok(false);
+        }
+        Setting::upsert_by_name(PRICING_KEY)
+            .value(pricing)
+            .exec(&mut tx)
+            .await?;
+        Setting::upsert_by_name(PARAMETERS_KEY)
+            .value(parameters)
+            .exec(&mut tx)
+            .await?;
+        tx.commit().await?;
+        Ok(true)
+    })
+    .map_err(|_| "Unable to save datasheets".to_string())?;
     if saved {
         Ok(())
     } else {

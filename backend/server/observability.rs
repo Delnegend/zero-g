@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use crate::database::Database;
+use crate::database::{Database, transaction_with_retry};
 use crate::storage::RequestLog;
 use axum::body::{Body, Bytes, to_bytes};
 use axum::extract::{Query, Request, State};
@@ -41,51 +41,43 @@ impl LogStore {
     /// Delete records older than the retention cutoff.
     async fn prune(&self) -> Result<(), String> {
         let cutoff = now().saturating_sub(self.retention_days.saturating_mul(86400));
-        self.database
-            .retry(|| async {
-                let mut db = (*self.database.db).clone();
-                let mut tx = db.transaction().await?;
-                RequestLog::filter(RequestLog::fields().created_at().lt(cutoff))
-                    .delete()
-                    .exec(&mut tx)
-                    .await?;
-                tx.commit().await?;
-                Ok(())
-            })
-            .await
-            .map_err(|e| e.to_string())
+        transaction_with_retry!(self.database, |mut tx| {
+            RequestLog::filter(RequestLog::fields().created_at().lt(cutoff))
+                .delete()
+                .exec(&mut tx)
+                .await?;
+            tx.commit().await?;
+            Ok(())
+        })
+        .map_err(|e| e.to_string())
     }
 
     /// Store a request record and prune expired records transactionally.
     async fn insert(&self, log: LogEntry) -> Result<(), String> {
         let cutoff = now().saturating_sub(self.retention_days.saturating_mul(86400));
-        self.database
-            .retry(|| async {
-                let mut db = (*self.database.db).clone();
-                let mut tx = db.transaction().await?;
-                toasty::create!(RequestLog {
-                    created_at: log.created_at,
-                    provider: log.provider.clone(),
-                    model: log.model.clone(),
-                    path: log.path.clone(),
-                    status: log.status,
-                    latency_ms: log.latency_ms,
-                    input_tokens: log.input_tokens,
-                    output_tokens: log.output_tokens,
-                    request_body: log.request_body.clone(),
-                    response_body: log.response_body.clone(),
-                })
+        transaction_with_retry!(self.database, |mut tx| {
+            toasty::create!(RequestLog {
+                created_at: log.created_at,
+                provider: log.provider.clone(),
+                model: log.model.clone(),
+                path: log.path.clone(),
+                status: log.status,
+                latency_ms: log.latency_ms,
+                input_tokens: log.input_tokens,
+                output_tokens: log.output_tokens,
+                request_body: log.request_body.clone(),
+                response_body: log.response_body.clone(),
+            })
+            .exec(&mut tx)
+            .await?;
+            RequestLog::filter(RequestLog::fields().created_at().lt(cutoff))
+                .delete()
                 .exec(&mut tx)
                 .await?;
-                RequestLog::filter(RequestLog::fields().created_at().lt(cutoff))
-                    .delete()
-                    .exec(&mut tx)
-                    .await?;
-                tx.commit().await?;
-                Ok(())
-            })
-            .await
-            .map_err(|e| e.to_string())
+            tx.commit().await?;
+            Ok(())
+        })
+        .map_err(|e| e.to_string())
     }
 
     /// Aggregate request statistics and recent logs for the requested range.
@@ -96,45 +88,40 @@ impl LogStore {
     ) -> Result<ObservabilityResponse, String> {
         let upper = until.or_else(|| since.map(|_| now()));
         let interval = interval(since, upper)?;
-        let (rows, logs) = self
-            .database
-            .retry(|| async {
-                let mut db = (*self.database.db).clone();
-                let mut tx = db.transaction().await?;
-                let mut rows_query = RequestLog::all();
-                let mut logs_query = RequestLog::all();
-                if let Some(since) = since {
-                    rows_query = rows_query.filter(RequestLog::fields().created_at().ge(since));
-                    logs_query = logs_query.filter(RequestLog::fields().created_at().ge(since));
-                }
-                if let Some(upper) = upper {
-                    rows_query = rows_query.filter(RequestLog::fields().created_at().le(upper));
-                    logs_query = logs_query.filter(RequestLog::fields().created_at().le(upper));
-                }
-                let rows = rows_query
-                    .select((
-                        RequestLog::fields().status(),
-                        RequestLog::fields().latency_ms(),
-                        RequestLog::fields().input_tokens(),
-                        RequestLog::fields().output_tokens(),
-                        RequestLog::fields().created_at(),
-                    ))
-                    .exec(&mut tx)
-                    .await?;
-                let logs_query = if since.is_some() || until.is_some() {
-                    logs_query.order_by((
-                        RequestLog::fields().created_at().desc(),
-                        RequestLog::fields().id().desc(),
-                    ))
-                } else {
-                    logs_query.order_by(RequestLog::fields().id().desc())
-                };
-                let logs = logs_query.limit(200).exec(&mut tx).await?;
-                tx.commit().await?;
-                Ok((rows, logs))
-            })
-            .await
-            .map_err(|e| e.to_string())?;
+        let (rows, logs) = transaction_with_retry!(self.database, |mut tx| {
+            let mut rows_query = RequestLog::all();
+            let mut logs_query = RequestLog::all();
+            if let Some(since) = since {
+                rows_query = rows_query.filter(RequestLog::fields().created_at().ge(since));
+                logs_query = logs_query.filter(RequestLog::fields().created_at().ge(since));
+            }
+            if let Some(upper) = upper {
+                rows_query = rows_query.filter(RequestLog::fields().created_at().le(upper));
+                logs_query = logs_query.filter(RequestLog::fields().created_at().le(upper));
+            }
+            let rows = rows_query
+                .select((
+                    RequestLog::fields().status(),
+                    RequestLog::fields().latency_ms(),
+                    RequestLog::fields().input_tokens(),
+                    RequestLog::fields().output_tokens(),
+                    RequestLog::fields().created_at(),
+                ))
+                .exec(&mut tx)
+                .await?;
+            let logs_query = if since.is_some() || until.is_some() {
+                logs_query.order_by((
+                    RequestLog::fields().created_at().desc(),
+                    RequestLog::fields().id().desc(),
+                ))
+            } else {
+                logs_query.order_by(RequestLog::fields().id().desc())
+            };
+            let logs = logs_query.limit(200).exec(&mut tx).await?;
+            tx.commit().await?;
+            Ok((rows, logs))
+        })
+        .map_err(|e| e.to_string())?;
         let count = rows.len();
         let successes = rows.iter().filter(|r| (200..400).contains(&r.0)).count();
         let errors = rows.iter().filter(|r| r.0 >= 400).count();
