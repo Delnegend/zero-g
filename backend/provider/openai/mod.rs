@@ -138,11 +138,23 @@ pub(crate) async fn send(
 /// Forward an upstream response to the caller.
 pub(crate) fn forward(response: reqwest::Response) -> Response {
     let status = response.status();
-    let content_type = response.headers().get(header::CONTENT_TYPE).cloned();
+    let headers = response.headers().clone();
     let mut result = Response::new(Body::from_stream(response.bytes_stream()));
     *result.status_mut() = status;
-    if let Some(value) = content_type {
-        result.headers_mut().insert(header::CONTENT_TYPE, value);
+    for (name, value) in &headers {
+        if !matches!(
+            name.as_str(),
+            "connection"
+                | "transfer-encoding"
+                | "keep-alive"
+                | "proxy-authenticate"
+                | "proxy-authorization"
+                | "te"
+                | "trailer"
+                | "upgrade"
+        ) {
+            result.headers_mut().append(name, value.clone());
+        }
     }
     result
 }

@@ -17,25 +17,26 @@ Configure each model as an `openai/` deployment with `zero-g` as the API base:
 model_list:
   - model_name: agy-claude
     litellm_params:
-      model: openai/claude-sonnet-5-5-medium
-      api_base: http://zero-g:8080/agy/agy/v1
+      model: openai/agy/claude-sonnet-5-5-medium
+      api_base: http://zero-g:8080/v1
       api_key: os.environ/ZERO_G_VIRTUAL_KEY
   - model_name: zen-beam
     litellm_params:
-      model: openai/beam-free
-      api_base: http://zero-g:8080/zen/zen/v1
+      model: openai/zen/beam-free
+      api_base: http://zero-g:8080/v1
       api_key: os.environ/ZERO_G_VIRTUAL_KEY
 ```
 
-LiteLLM calls `zero-g`'s `/agy/agy/v1/chat/completions` for chat traffic and
-forwards `/v1/responses` requests to `zero-g`'s `/agy/agy/v1/responses` endpoint. No
-Responses-to-chat bridge is required. Supply the created key securely via the
-gateway environment.
+LiteLLM calls `zero-g`'s `/v1/chat/completions` for chat traffic and
+`/v1/responses` for Responses requests. No Responses-to-chat bridge is
+required for providers that support both APIs. Supply the created key securely
+via the gateway environment.
 
 ## Bifrost
 
-Configure each provider as a custom OpenAI-base provider. Set the appropriate
-provider prefix in `base_url` because Bifrost appends its OpenAI paths:
+Configure one custom OpenAI-base provider. Bifrost appends its OpenAI paths, so
+the base URL is the zero-g origin. Use the provider-prefixed model IDs from
+`/v1/models`.
 
 ```json
 {
@@ -44,7 +45,7 @@ provider prefix in `base_url` because Bifrost appends its OpenAI paths:
       "keys": [
         { "name": "zero-g", "value": "<zero-g-virtual-key>", "models": ["*"] }
       ],
-      "network_config": { "base_url": "http://zero-g:8080/agy/agy" },
+      "network_config": { "base_url": "http://zero-g:8080" },
       "custom_provider_config": {
         "base_provider_type": "openai",
         "allowed_requests": {
@@ -70,7 +71,7 @@ additional configuration.
 
 - The provider key must be a valid `zero-g` virtual key; restrict it to the
   providers and models needed by the gateway. Keep the value secret.
-- Model names are upstream wire IDs. Each named provider exposes `/{kind}/{id}/v1/models`
-  for model discovery. There is no alias layer; do friendly naming in the gateway.
+- Model IDs are `<provider-id>/<upstream-model-id>`, as returned by the shared
+  `/v1/models` endpoint. Do friendly naming in the gateway.
 - Keep `zero-g` reachable only from the gateway: bind it to a private
   interface and let the gateway enforce authentication.

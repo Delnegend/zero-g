@@ -10,6 +10,18 @@ pub(crate) async fn discover(state: &AppState, provider: &Provider) -> Result<Ve
         .await
 }
 
+/// Discovers models permitted by the virtual key.
+pub(crate) async fn discover_permitted(
+    state: &AppState,
+    provider: &Provider,
+    permissions: &crate::server::settings::Permissions,
+) -> Result<Vec<Value>, String> {
+    ProviderKind::from_str(&provider.kind)
+        .ok_or_else(|| "Unsupported provider kind".to_string())?
+        .discover_permitted(state, provider, permissions)
+        .await
+}
+
 /// Model discovery integration checks.
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]

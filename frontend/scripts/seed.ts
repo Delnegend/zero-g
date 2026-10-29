@@ -22,7 +22,7 @@ const providers = [
     kind: "codex",
     baseUrl: "",
     model: "gpt-5.3-codex",
-    path: "/codex/codex/v1/responses",
+    path: "/v1/responses",
   },
   {
     name: "agy",
@@ -30,7 +30,7 @@ const providers = [
     kind: "agy",
     baseUrl: "",
     model: "gemini-3-pro",
-    path: "/agy/agy/v1/chat/completions",
+    path: "/v1/chat/completions",
   },
   {
     name: "zen",
@@ -38,7 +38,7 @@ const providers = [
     kind: "zen",
     baseUrl: "http://127.0.0.1:8090/v1",
     model: "big-pickle",
-    path: "/zen/zen/v1/chat/completions",
+    path: "/v1/chat/completions",
   },
 ] as const;
 const now = Math.floor(Date.now() / 1000);
@@ -126,17 +126,14 @@ try {
           now - i * 3600,
           providerIds.get(provider.name),
           provider.model,
-          provider.path.replace(
-            `/${provider.name}/`,
-            `/${providerIds.get(provider.name)}/`,
-          ),
+          provider.path,
           status,
           180 + ((i * 137) % 4500),
           status === 200 ? input : null,
           status === 200 ? output : null,
           JSON.stringify({
             _seed: true,
-            model: provider.model,
+            model: `${providerIds.get(provider.name)}/${provider.model}`,
             messages: [{ role: "user", content: `Example request ${i + 1}` }],
           }),
           JSON.stringify(

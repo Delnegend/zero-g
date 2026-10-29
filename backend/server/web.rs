@@ -25,6 +25,8 @@ pub(super) async fn index() -> Response {
 pub(super) async fn fallback(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
     if crate::provider::is_provider_path(uri.path())
+        || path == "v1"
+        || path.starts_with("v1/")
         || path == "health"
         || path.starts_with("health/")
     {

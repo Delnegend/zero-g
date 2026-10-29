@@ -1,5 +1,7 @@
 /// Dashboard authentication and session handling.
 pub(crate) mod dashboard_auth;
+/// Unified public inference API.
+mod inference;
 /// Cached provider model discovery.
 pub(crate) mod model_catalog;
 /// Model metadata settings and synchronization.
@@ -71,7 +73,7 @@ pub(crate) fn create_router(state: AppState) -> Router {
 
     Router::new()
         .route("/health", get(health_handler))
-        .merge(provider::router(&state.settings))
+        .merge(inference::router(&state))
         .layer(cors)
         .layer(axum::middleware::from_fn_with_state(
             state.logs.clone(),

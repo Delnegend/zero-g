@@ -295,16 +295,20 @@ pub(super) async fn capture(State(store): State<LogStore>, req: Request, next: N
     }
     let start = Instant::now();
     let path = req.uri().path().to_owned();
-    let provider = path.split('/').nth(2).unwrap_or_default().to_owned();
     let (parts, body) = req.into_parts();
     let Ok(body) = to_bytes(body, 2 * 1024 * 1024).await else {
         return StatusCode::PAYLOAD_TOO_LARGE.into_response();
     };
     let request_body = String::from_utf8_lossy(&body).into_owned();
-    let model = serde_json::from_slice::<Value>(&body)
+    let namespaced_model = serde_json::from_slice::<Value>(&body)
         .ok()
         .and_then(|v| v.get("model").and_then(Value::as_str).map(str::to_owned))
         .unwrap_or_default();
+    let (provider, model) = if let Some((provider, model)) = namespaced_model.split_once('/') {
+        (provider.to_owned(), model.to_owned())
+    } else {
+        (String::new(), namespaced_model)
+    };
     let response = next.run(Request::from_parts(parts, Body::from(body))).await;
     let status = i64::from(response.status().as_u16());
     let (parts, body) = response.into_parts();

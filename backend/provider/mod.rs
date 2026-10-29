@@ -130,6 +130,26 @@ impl ProviderKind {
         }
     }
 
+    /// Discovers only models allowed by the virtual key using backend-specific policy.
+    pub(crate) async fn discover_permitted(
+        self,
+        state: &AppState,
+        provider: &registry::Provider,
+        permissions: &crate::server::settings::Permissions,
+    ) -> Result<Vec<Value>, String> {
+        if matches!(self, Self::Antigravity) {
+            return antigravity::discover_permitted(state, provider, permissions).await;
+        }
+        let mut models = self.discover(state, provider).await?;
+        models.retain(|model| {
+            model
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| permissions.allows_model(id))
+        });
+        Ok(models)
+    }
+
     /// Returns the backend's quota capability, if supported.
     pub(crate) const fn quota(self) -> Option<QuotaCapability> {
         match self {

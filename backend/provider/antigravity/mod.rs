@@ -151,28 +151,49 @@ impl super::common::Provider for Backend {
         state: &crate::server::AppState,
         provider: &super::registry::Provider,
     ) -> Result<Vec<serde_json::Value>, String> {
-        let models = routes::fetch_models(state, provider).await?;
-        let permissions = crate::server::settings::Permissions {
-            providers: Vec::new(),
-            models: Vec::new(),
-        };
-        models::normalize_models(models)
-            .iter()
-            .filter_map(|family| family.entry(&permissions))
-            .map(|(entry, info)| {
-                let mut raw = serde_json::to_value(info)
-                    .map_err(|_| "Failed to serialize Antigravity model")?;
-                let normalized = serde_json::to_value(entry)
-                    .map_err(|_| "Failed to serialize Antigravity model")?;
-                if let (Some(raw), serde_json::Value::Object(normalized)) =
-                    (raw.as_object_mut(), normalized)
-                {
-                    raw.extend(normalized.into_iter().filter(|(_, value)| !value.is_null()));
-                }
-                Ok(raw)
-            })
-            .collect()
+        discover_permitted(
+            state,
+            provider,
+            &crate::server::settings::Permissions {
+                providers: Vec::new(),
+                models: Vec::new(),
+            },
+        )
+        .await
     }
+}
+
+/// Discover model families with the same variant restrictions as inference.
+pub(crate) async fn discover_permitted(
+    state: &crate::server::AppState,
+    provider: &super::registry::Provider,
+    permissions: &crate::server::settings::Permissions,
+) -> Result<Vec<serde_json::Value>, String> {
+    let models = routes::fetch_models(state, provider).await?;
+    permitted_models(models, permissions)
+}
+
+/// Normalize and filter discovered families while retaining provider metadata.
+fn permitted_models(
+    models: Vec<(String, AntigravityModelInfo)>,
+    permissions: &crate::server::settings::Permissions,
+) -> Result<Vec<serde_json::Value>, String> {
+    models::normalize_models(models)
+        .iter()
+        .filter_map(|family| family.entry(permissions))
+        .map(|(entry, info)| {
+            let mut raw =
+                serde_json::to_value(info).map_err(|_| "Failed to serialize Antigravity model")?;
+            let normalized =
+                serde_json::to_value(entry).map_err(|_| "Failed to serialize Antigravity model")?;
+            if let (Some(raw), serde_json::Value::Object(normalized)) =
+                (raw.as_object_mut(), normalized)
+            {
+                raw.extend(normalized.into_iter().filter(|(_, value)| !value.is_null()));
+            }
+            Ok(raw)
+        })
+        .collect()
 }
 
 impl super::common::QuotaProvider for Backend {
@@ -188,5 +209,33 @@ impl super::common::QuotaProvider for Backend {
 impl super::common::DashboardProvider for Backend {
     fn dashboard_router(state: crate::server::AppState) -> axum::Router {
         dashboard_login::router(state)
+    }
+}
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod discovery_permission_tests {
+    use super::*;
+    use crate::server::settings::Permissions;
+    use serde_json::json;
+
+    #[test]
+    fn discovery_exposes_only_permitted_family_efforts() {
+        let info: AntigravityModelInfo = serde_json::from_value(json!({
+            "supportsThinking": true
+        }))
+        .unwrap();
+        let models = vec![
+            ("model-low".to_owned(), info.clone()),
+            ("model-high".to_owned(), info),
+        ];
+        let permissions = Permissions {
+            providers: vec![],
+            models: vec!["model-high".into()],
+        };
+        let entries = permitted_models(models, &permissions).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["id"], "model");
+        assert_eq!(entries[0]["supported_reasoning_efforts"], json!(["high"]));
+        assert_eq!(entries[0]["default_reasoning_effort"], "high");
     }
 }

@@ -17,7 +17,7 @@ flowchart TD
 
 ## Core Components
 
-- **Axum HTTP Layer (`backend/server/`):** Combines provider-owned routers with dashboard authentication, virtual-key settings and observability. Named provider routes (`/{kind}/{id}/v1`) require a virtual key; unprefixed routes are rejected.
+- **Axum HTTP Layer (`backend/server/`):** The unified `/v1` API requires a virtual key and dispatches `provider/model` IDs to provider-owned routers. Dashboard authentication and observability remain separate.
 - **Dashboard OIDC (`backend/server/dashboard_auth.rs`):** Uses `openidconnect` for discovery, PKCE, token exchange and signed ID-token validation. Signing keys are refreshed at login; local sessions and email/group authorization remain in zero-g.
 - **Protocol Models (`backend/openai.rs`, `backend/responses.rs`):** Strongly typed Serde models for Chat Completions and Responses API inputs (prompts, messages, tool outputs).
 - **Auth Managers (`backend/provider/antigravity/auth.rs`, `backend/provider/codex/auth.rs`):** Store provider credentials encrypted in the database, parse JWT claims, and refresh access tokens near expiration.

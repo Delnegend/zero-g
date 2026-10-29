@@ -114,7 +114,7 @@ function ModelCard({
   const description =
     typeof model.description === "string" ? model.description : null;
   const rows = [
-    ["Model ID", model.id],
+    ["Model ID", `${provider.id}/${model.id}`],
     ["Context window", number(model.context_window)],
     ["Max output", number(model.max_output_tokens)],
     ["Input price / 1M tokens", cost(pricing.input_cost_per_token)],
@@ -180,6 +180,7 @@ function ProviderModels({
     (model) =>
       providerMatches ||
       [
+        `${provider.id}/${model.id}`,
         model.id,
         model.name,
         model.display_name,

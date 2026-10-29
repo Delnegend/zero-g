@@ -222,7 +222,7 @@ impl SettingsStore {
     }
 
     /// Resolves a token's stored hash to its provider and model restrictions.
-    async fn permissions(&self, token: &str) -> Result<Option<Permissions>, String> {
+    pub(crate) async fn permissions(&self, token: &str) -> Result<Option<Permissions>, String> {
         let hash = digest::digest(&digest::SHA256, token.as_bytes());
         let Some(row) = VirtualKey::filter_by_key_hash(hash.as_ref().to_vec())
             .first()
