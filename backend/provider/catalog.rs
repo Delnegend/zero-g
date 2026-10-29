@@ -82,10 +82,7 @@ mod tests {
     /// Discovery retries authentication and rate-limit failures only.
     #[tokio::test]
     async fn discovery_retries_only_credential_failures() {
-        use std::sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
-        };
+        use std::sync::{Arc, Mutex};
 
         for status in [
             StatusCode::UNAUTHORIZED,
@@ -94,14 +91,23 @@ mod tests {
             StatusCode::BAD_REQUEST,
             StatusCode::INTERNAL_SERVER_ERROR,
         ] {
-            let calls = Arc::new(AtomicUsize::new(0));
-            let seen = calls.clone();
+            let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+            let requests = seen.clone();
             let app = Router::new().route(
                 "/v1/models",
-                get(move || {
-                    let seen = seen.clone();
+                get(move |headers: HeaderMap| {
+                    let requests = requests.clone();
                     async move {
-                        if seen.fetch_add(1, Ordering::SeqCst) == 0 {
+                        let credential =
+                            headers[header::AUTHORIZATION].to_str().unwrap().to_owned();
+                        let mut requests = requests.lock().unwrap();
+                        let rejected = requests
+                            .first()
+                            .cloned()
+                            .unwrap_or_else(|| credential.clone());
+                        requests.push(credential.clone());
+                        drop(requests);
+                        if credential == rejected {
                             (status, Json(json!({"error":"failed"})))
                         } else {
                             (StatusCode::OK, Json(json!({"data":[{"id":"model-a"}]})))
@@ -145,7 +151,15 @@ mod tests {
             let result = openai::discover::<Backend>(&store, &provider).await;
             let retryable = matches!(status.as_u16(), 401 | 403 | 429);
             assert_eq!(result.is_ok(), retryable, "status {status}");
-            assert_eq!(calls.load(Ordering::SeqCst), if retryable { 2 } else { 1 });
+            let requests = seen.lock().unwrap();
+            assert_eq!(requests.len(), if retryable { 2 } else { 1 });
+            if retryable {
+                assert_ne!(requests[0], requests[1]);
+                assert_eq!(
+                    serde_json::to_value(result.unwrap()).unwrap(),
+                    json!([{"id":"model-a"}])
+                );
+            }
             server.abort();
         }
     }
