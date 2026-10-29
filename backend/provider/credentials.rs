@@ -15,15 +15,22 @@ use crate::{
     storage::{ProviderCredential, ProviderRecord, Secret, Setting, VirtualKey},
 };
 
+/// Credential metadata exposed without the underlying secret.
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct Credential {
+    /// Stable credential identifier.
     pub(crate) id: String,
+    /// User-facing credential name.
     pub(crate) name: String,
+    /// Relative selection weight.
     pub(crate) weight: i64,
+    /// Whether the credential is enabled.
     pub(crate) enabled: bool,
+    /// Whether its provider-specific secret exists.
     pub(crate) connected: bool,
 }
 
+/// Builds public credential metadata and checks for its stored secret.
 async fn info(
     store: &SettingsStore,
     row: ProviderCredential,
@@ -49,6 +56,7 @@ async fn info(
     })
 }
 
+/// Retrieves a credential belonging to the named provider, if present.
 pub(crate) async fn get(
     store: &SettingsStore,
     provider_id: &str,
@@ -68,6 +76,7 @@ pub(crate) async fn get(
     }
 }
 
+/// Lists credentials for a provider, or returns none if it does not exist.
 pub(crate) async fn all(
     store: &SettingsStore,
     provider_id: &str,
@@ -144,15 +153,21 @@ pub(crate) async fn save_oauth(
     }).await.map_err(|e| e.to_string())?
 }
 
+/// Credential creation or update request.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Input {
+    /// User-facing credential name.
     name: String,
+    /// Positive relative selection weight.
     weight: i64,
+    /// Whether the credential can be selected.
     enabled: bool,
+    /// API key to store, when supplied.
     api_key: Option<String>,
 }
 
+/// Rejects empty names and nonpositive weights.
 fn validate(input: &Input) -> Result<(), &'static str> {
     if input.name.trim().is_empty() {
         return Err("Credential name must not be empty");
@@ -163,6 +178,7 @@ fn validate(input: &Input) -> Result<(), &'static str> {
     Ok(())
 }
 
+/// Logs a storage failure and returns a generic server error.
 fn internal(error: &str) -> Response {
     tracing::error!("Credential storage error: {error}");
     (
@@ -172,6 +188,7 @@ fn internal(error: &str) -> Response {
         .into_response()
 }
 
+/// Lists a provider's credentials over HTTP.
 async fn list_endpoint(
     State(store): State<SettingsStore>,
     Path(provider_id): Path<String>,
@@ -183,6 +200,7 @@ async fn list_endpoint(
     }
 }
 
+/// Creates a credential and stores any supplied secret.
 async fn create(
     State(store): State<SettingsStore>,
     Path(provider_id): Path<String>,
@@ -263,6 +281,7 @@ async fn create(
     }
 }
 
+/// Updates credential metadata and an optional API key.
 async fn update(
     State(store): State<SettingsStore>,
     Path((provider_id, id)): Path<(String, String)>,
@@ -346,6 +365,7 @@ async fn update(
     }
 }
 
+/// Deletes a provider credential and its associated state.
 async fn delete(
     State(store): State<SettingsStore>,
     Path((provider_id, id)): Path<(String, String)>,
@@ -391,6 +411,7 @@ async fn delete(
     }
 }
 
+/// Builds the credential management routes.
 pub(crate) fn router(store: SettingsStore) -> Router {
     Router::new()
         .route(
@@ -509,12 +530,14 @@ pub(crate) async fn migrate_legacy(store: &SettingsStore) -> Result<(), String> 
     }).await.map_err(|e| e.to_string())?
 }
 
+/// Legacy credential migration checks.
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::database::Database;
 
     #[tokio::test]
+    /// Merging legacy credentials must not widen virtual-key access.
     #[allow(clippy::too_many_lines)]
     async fn legacy_merge_preserves_credentials_and_refuses_to_widen_key_access() {
         let store = SettingsStore::new(
@@ -636,11 +659,13 @@ mod tests {
     }
 }
 
+/// Checks for incompatible legacy provider configurations.
 #[cfg(test)]
 mod incompatible_legacy_tests {
     use super::*;
     use crate::database::Database;
 
+    /// Distinct Zen upstreams must remain separate.
     #[tokio::test]
     async fn different_zen_upstreams_are_not_merged() {
         let store = SettingsStore::new(

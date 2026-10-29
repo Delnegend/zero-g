@@ -22,12 +22,15 @@ use crate::responses::{
     ResponseContentPart, ResponseCreateRequest, ResponseObject, ResponseOutputItem, ResponseUsage,
 };
 
+/// HTTP client for translating requests to the Codex Responses endpoint.
 #[derive(Clone)]
 pub(crate) struct CodexClient {
+    /// Shared connection pool used for upstream requests.
     http: reqwest::Client,
 }
 
 impl CodexClient {
+    /// Builds a client with connection pooling and TCP no-delay enabled.
     pub(crate) fn new() -> Self {
         Self {
             http: reqwest::Client::builder()
@@ -38,6 +41,7 @@ impl CodexClient {
         }
     }
 
+    /// Sends an authenticated streaming request to the Codex Responses endpoint.
     async fn send_request(
         &self,
         creds: &CodexCredentials,
@@ -91,6 +95,7 @@ impl CodexClient {
         Ok(resp)
     }
 
+    /// Translates and streams a chat completion as SSE chunks.
     pub(crate) async fn stream_chat(
         &self,
         creds: &CodexCredentials,
@@ -111,6 +116,7 @@ impl CodexClient {
             .into_response())
     }
 
+    /// Collects an upstream stream into a single chat completion.
     pub(crate) async fn complete_chat_non_streaming(
         &self,
         creds: &CodexCredentials,
@@ -199,6 +205,7 @@ impl CodexClient {
         })
     }
 
+    /// Forwards a Responses request as an SSE event stream.
     pub(crate) async fn stream_responses(
         &self,
         creds: &CodexCredentials,
@@ -218,6 +225,7 @@ impl CodexClient {
             .into_response())
     }
 
+    /// Collects an upstream stream into a single Responses object.
     pub(crate) async fn complete_responses_non_streaming(
         &self,
         creds: &CodexCredentials,
@@ -292,6 +300,7 @@ impl CodexClient {
     }
 }
 
+/// Forwards upstream Responses SSE events to the downstream channel.
 async fn pump_responses_events(
     tx: mpsc::Sender<Result<Event, Infallible>>,
     upstream: reqwest::Response,
@@ -321,6 +330,7 @@ async fn pump_responses_events(
     }
 }
 
+/// Converts upstream events into streaming chat completion chunks.
 // Streaming events share ordering and tool-call state throughout this loop.
 #[allow(clippy::too_many_lines)]
 async fn pump_chat_chunks(
@@ -570,26 +580,42 @@ async fn pump_chat_chunks(
     let _ = tx.send(Ok(Event::default().data("[DONE]"))).await;
 }
 
+/// Events extracted from the Codex Responses stream.
 #[derive(Debug)]
 enum CodexParsedEvent {
+    /// Incremental assistant output text.
     TextDelta(String),
+    /// Incremental assistant reasoning text.
     ReasoningDelta(String),
+    /// A function call has been introduced.
     ToolCallStart {
+        /// Identifier exposed to the caller for the function call.
         call_id: String,
+        /// Upstream output item identifier, when supplied.
         item_id: Option<String>,
+        /// Name of the function being called.
         name: String,
     },
+    /// An incremental function-call argument fragment.
     ToolCallDelta {
+        /// Identifier used to associate the fragment with a call.
         key: Option<String>,
+        /// Argument text to append.
         delta: String,
     },
+    /// The complete arguments for a function call.
     ToolCallDone {
+        /// Identifier used to associate the arguments with a call.
         key: Option<String>,
+        /// Complete argument text, replacing accumulated fragments.
         arguments: String,
     },
+    /// The upstream response has finished.
     Finish {
+        /// Chat completion finish reason.
         reason: String,
     },
+    /// Token usage reported by the upstream response.
     Usage(Usage),
 }
 
@@ -599,9 +625,13 @@ enum CodexParsedEvent {
 /// events, and `item_id` (`fc_…`) on the argument events. Argument deltas and
 /// the final `*.done` events only carry `item_id`, so both are matched.
 struct PendingToolCall {
+    /// Identifier exposed to the caller.
     call_id: String,
+    /// Upstream output item identifier, if available.
     item_id: Option<String>,
+    /// Function name.
     name: String,
+    /// Accumulated or final argument text.
     arguments: String,
     /// Bytes of argument deltas already forwarded to the client. The Codex
     /// backend only streams deltas for single-call turns; for parallel calls it
@@ -611,15 +641,18 @@ struct PendingToolCall {
 }
 
 impl PendingToolCall {
+    /// Checks whether a supplied key matches either upstream identifier.
     fn matches(&self, key: Option<&str>) -> bool {
         key.is_some_and(|key| key == self.call_id || self.item_id.as_deref() == Some(key))
     }
 }
 
+/// Converts a tool-call index to the chunk representation, saturating on overflow.
 fn chunk_tool_index(index: usize) -> u32 {
     u32::try_from(index).unwrap_or(u32::MAX)
 }
 
+/// Extracts a function-call identifier from an event or its nested item.
 fn function_call_key(val: &Value) -> Option<String> {
     val.get("item_id")
         .or_else(|| val.get("call_id"))
@@ -630,6 +663,7 @@ fn function_call_key(val: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Extracts argument text, serializing supported non-string JSON values.
 fn extract_arguments(val: &Value) -> Option<String> {
     match val.get("arguments") {
         Some(Value::String(s)) => Some(s.clone()),
@@ -672,13 +706,17 @@ fn apply_tool_event(calls: &mut Vec<PendingToolCall>, ev: CodexParsedEvent) {
     }
 }
 
+/// Incrementally decodes upstream SSE lines into recognized Codex events.
 #[derive(Default)]
 struct SseLineDecoder {
+    /// Bytes not yet consumed as complete lines.
     buffer: Vec<u8>,
+    /// Current SSE event name, used when JSON has no type.
     current_event_name: Option<String>,
 }
 
 impl SseLineDecoder {
+    /// Buffers a byte chunk and parses any complete SSE data lines.
     fn push_chunk(&mut self, chunk: &[u8]) -> Vec<CodexParsedEvent> {
         self.buffer.extend_from_slice(chunk);
         let mut out = Vec::new();
@@ -711,6 +749,7 @@ impl SseLineDecoder {
         out
     }
 
+    /// Appends recognized events from one JSON payload.
     // The event variants form one protocol dispatch table.
     #[allow(clippy::too_many_lines)]
     fn parse_json_event(&self, val: &Value, out: &mut Vec<CodexParsedEvent>) {
@@ -825,13 +864,17 @@ impl SseLineDecoder {
     }
 }
 
+/// Incrementally decodes SSE lines without interpreting their JSON payloads.
 #[derive(Default)]
 struct SseRawLineDecoder {
+    /// Bytes not yet consumed as complete lines.
     buffer: Vec<u8>,
+    /// Event name associated with the current SSE data lines.
     current_event: Option<String>,
 }
 
 impl SseRawLineDecoder {
+    /// Buffers a byte chunk and returns complete event-name and data pairs.
     fn push_chunk(&mut self, chunk: &[u8]) -> Vec<(Option<String>, String)> {
         self.buffer.extend_from_slice(chunk);
         let mut out = Vec::new();

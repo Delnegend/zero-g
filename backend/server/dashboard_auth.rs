@@ -48,6 +48,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
+/// OIDC HTTP client that validates every requested endpoint before sending.
 struct SafeHttp(reqwest::Client);
 
 impl<'a> openidconnect::AsyncHttpClient<'a> for SafeHttp {
@@ -71,6 +72,7 @@ impl<'a> openidconnect::AsyncHttpClient<'a> for SafeHttp {
     }
 }
 
+/// OIDC client configured with the provider's discovered endpoints and group claims.
 type OidcClient = openidconnect::Client<
     ExtraClaims,
     CoreAuthDisplay,
@@ -100,62 +102,98 @@ type OidcClient = openidconnect::Client<
     EndpointMaybeSet,
 >;
 
+/// Additional identity-token claims used for group authorization.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct ExtraClaims {
+    /// Group memberships asserted by the identity provider.
     #[serde(default)]
     groups: Vec<String>,
 }
 impl AdditionalClaims for ExtraClaims {}
 
+/// Path receiving the identity provider's authorization response.
 const CALLBACK: &str = "/auth/callback";
+/// Cookie carrying the opaque dashboard session token.
 const SESSION_COOKIE: &str = "zero_g_dashboard_session";
+/// Cookie binding an OIDC callback to its initiating browser.
 const STATE_COOKIE: &str = "zero_g_oidc_state";
+/// Maximum age of a pending authorization flow.
 const LOGIN_TTL: Duration = Duration::from_mins(10);
+/// Lifetime of an authenticated dashboard session.
 const SESSION_TTL: Duration = Duration::from_hours(8);
 
+/// Shared authentication configuration and trusted public origin.
 #[derive(Clone)]
 pub(crate) struct DashboardAuth(Arc<Mode>, Arc<reqwest::Url>);
 
+/// Dashboard authentication mechanism selected at startup.
 enum Mode {
+    /// HTTP Basic credentials configured for the dashboard.
     Basic {
+        /// Expected Basic username.
         username: String,
+        /// Expected Basic password.
         password: String,
     },
+    /// OIDC authorization-code flow and session state.
     Oidc(Box<Oidc>),
 }
 
+/// Discovered OIDC provider configuration and local login state.
 struct Oidc {
+    /// Validating HTTP client for discovery and token requests.
     http_client: SafeHttp,
+    /// Configured authorization and token endpoint client.
     client: OidcClient,
+    /// Expected issuer of identity tokens.
     issuer: IssuerUrl,
+    /// Endpoint supplying identity-token verification keys.
     jwks_uri: JsonWebKeySetUrl,
+    /// Provider-advertised signing algorithms accepted for identity tokens.
     signing_algorithms: Vec<CoreJwsSigningAlgorithm>,
+    /// Email addresses permitted when verified by the provider.
     allowed_emails: Vec<String>,
+    /// Group memberships permitted to access the dashboard.
     allowed_groups: Vec<String>,
+    /// Whether authentication cookies require HTTPS.
     secure: bool,
+    /// Pending login flows and active sessions protected by a mutex.
     state: Mutex<Store>,
 }
 
+/// In-memory login and session records.
 #[derive(Default)]
 struct Store {
+    /// Authorization state tokens mapped to their pending flow.
     pending: HashMap<String, Pending>,
+    /// Session tokens mapped to their expiration instants.
     sessions: HashMap<String, Instant>,
 }
 
+/// Data retained between authorization redirect and callback.
 struct Pending {
+    /// PKCE verifier used when exchanging the authorization code.
     verifier: String,
+    /// Nonce expected in the identity token.
     nonce: String,
+    /// Local path to visit after successful login.
     return_to: String,
+    /// Instant at which the login flow began.
     created: Instant,
 }
 
+/// Query parameters returned by the OIDC authorization endpoint.
 #[derive(Deserialize)]
 struct Callback {
+    /// CSRF state returned by the provider.
     state: Option<String>,
+    /// Authorization code to exchange for tokens.
     code: Option<String>,
+    /// Provider-reported authorization error, if any.
     error: Option<String>,
 }
 
+/// Reads a required nonblank environment variable.
 fn required(name: &str) -> Result<String, String> {
     std::env::var(name)
         .ok()
@@ -163,6 +201,7 @@ fn required(name: &str) -> Result<String, String> {
         .ok_or_else(|| format!("{name} must be set"))
 }
 
+/// Authorizes a verified allowlisted email or an allowlisted group membership.
 fn authorized(
     email: Option<&str>,
     verified: bool,
@@ -174,6 +213,7 @@ fn authorized(
         || membership.iter().any(|group| groups.contains(group))
 }
 
+/// Parses a comma-separated allowlist, dropping blank entries.
 fn allowlist(value: &str) -> Vec<String> {
     value
         .split(',')
@@ -183,6 +223,7 @@ fn allowlist(value: &str) -> Vec<String> {
         .collect()
 }
 
+/// Validates an endpoint URL, allowing plaintext HTTP only on loopback.
 // Only explicitly configured loopback HTTP is permitted. All other endpoints
 // must use TLS; never derive the public callback URL from request headers.
 fn safe_url(value: &str) -> Result<reqwest::Url, String> {
@@ -300,12 +341,14 @@ impl DashboardAuth {
     }
 }
 
+/// Generates a random URL-safe token for an authenticated session.
 fn random_token() -> String {
     let mut bytes = [0u8; 32];
     rand::rng().fill_bytes(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
+/// Finds a named cookie across the request's Cookie headers.
 fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
     headers
         .get_all(header::COOKIE)
@@ -316,6 +359,7 @@ fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
         .find_map(|(key, value)| (key == name).then(|| value.to_owned()))
 }
 
+/// Builds an HTTP-only, same-site cookie with an optional Secure attribute.
 fn set_cookie(name: &str, value: &str, max_age: u64, secure: bool) -> String {
     format!(
         "{name}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}{}",
@@ -323,6 +367,7 @@ fn set_cookie(name: &str, value: &str, max_age: u64, secure: bool) -> String {
     )
 }
 
+/// Appends a cookie and prevents caching of the response.
 fn with_cookie(mut response: Response, value: &str) -> Response {
     if let Ok(value) = HeaderValue::from_str(value) {
         response.headers_mut().append(header::SET_COOKIE, value);
@@ -333,6 +378,7 @@ fn with_cookie(mut response: Response, value: &str) -> Response {
     response
 }
 
+/// Compares byte slices without early exit on differing bytes.
 // Avoid early exit on differing bytes for credentials and state values.
 fn equal(a: &[u8], b: &[u8]) -> bool {
     let mut difference = a.len() ^ b.len();
@@ -342,6 +388,7 @@ fn equal(a: &[u8], b: &[u8]) -> bool {
     difference == 0
 }
 
+/// Checks request origin and authentication, disabling caching for API responses.
 async fn authenticate(State(auth): State<DashboardAuth>, req: Request, next: Next) -> Response {
     let is_api = req.uri().path() == "/api" || req.uri().path().starts_with("/api/");
     let mut response = if valid_request_origin(&auth.1, &req) {
@@ -357,6 +404,7 @@ async fn authenticate(State(auth): State<DashboardAuth>, req: Request, next: Nex
     response
 }
 
+/// Enforces the configured host and same-origin rules for dashboard requests.
 fn valid_request_origin(origin: &reqwest::Url, req: &Request) -> bool {
     let headers = req.headers();
     let mut hosts = headers.get_all(header::HOST).iter();
@@ -404,6 +452,7 @@ fn valid_request_origin(origin: &reqwest::Url, req: &Request) -> bool {
     true
 }
 
+/// Validates Basic credentials or an OIDC session, starting login when needed.
 async fn authenticate_inner(auth: DashboardAuth, req: Request, next: Next) -> Response {
     match auth.0.as_ref() {
         Mode::Basic { username, password } => {
@@ -499,6 +548,7 @@ async fn authenticate_inner(auth: DashboardAuth, req: Request, next: Next) -> Re
     }
 }
 
+/// Consumes OIDC callback state and creates a session after successful verification.
 async fn callback(
     State(auth): State<DashboardAuth>,
     headers: HeaderMap,
@@ -543,6 +593,7 @@ async fn callback(
     )
 }
 
+/// Exchanges a code and verifies the identity token and authorization claims.
 async fn verify_login(oidc: &Oidc, code: &str, pending: &Pending) -> Result<(), String> {
     let tokens = oidc
         .client
@@ -606,11 +657,13 @@ async fn verify_login(oidc: &Oidc, code: &str, pending: &Pending) -> Result<(), 
 }
 
 #[cfg(test)]
+/// Exercises dashboard authentication, origin checks, and OIDC login.
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use axum::{body::Body, http::Request};
     use tower::ServiceExt;
+    /// Builds a test OIDC configuration with supplied in-memory state.
     fn test_oidc(store: Store) -> Oidc {
         let metadata: CoreProviderMetadata = serde_json::from_value(serde_json::json!({
             "issuer": "https://issuer.example",
@@ -646,6 +699,7 @@ mod tests {
         }
     }
 
+    /// Verified email or exact group membership grants access.
     #[test]
     fn oidc_allows_verified_emails_or_exact_group_membership() {
         let emails = vec!["admin@example.com".to_owned()];
@@ -682,6 +736,7 @@ mod tests {
         assert!(!authorized(None, false, &["admins".into()], &[], &[]));
     }
 
+    /// Both authentication modes enforce host and origin rules for writes.
     #[tokio::test]
     async fn writes_require_trusted_origin_and_host_in_both_modes() {
         let mut store = Store::default();
@@ -757,6 +812,7 @@ mod tests {
         }
     }
 
+    /// Basic authentication protects both dashboard and management API routes.
     #[tokio::test]
     async fn basic_auth_protects_dashboard_and_api() {
         let auth = DashboardAuth(
@@ -810,6 +866,7 @@ mod tests {
         }
     }
 
+    /// Callback state must match the browser and be fresh and single-use.
     #[tokio::test]
     async fn oidc_callback_requires_matching_unexpired_single_use_state() {
         let mut store = Store::default();
@@ -881,6 +938,7 @@ mod tests {
         }
     }
     #[allow(clippy::too_many_lines)]
+    /// Signed OIDC login validates nonce and group before creating a session.
     #[tokio::test]
     async fn oidc_signed_login_checks_nonce_group_and_session() {
         use ring::signature::{RSA_PKCS1_SHA256, RsaKeyPair};

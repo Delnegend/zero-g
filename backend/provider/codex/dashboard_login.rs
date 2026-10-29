@@ -17,30 +17,44 @@ use crate::provider::codex::auth::{
 use crate::provider::login::{credential_lock, error, require_credential, same_origin};
 use crate::server::AppState;
 
+/// Shared collection of pending device authorization flows.
 #[derive(Clone, Default)]
 struct OAuthFlows {
+    /// Flows indexed by their dashboard-facing identifier.
     pending: Arc<tokio::sync::Mutex<HashMap<String, Flow>>>,
 }
 
+/// State retained while a user authorizes a device.
 struct Flow {
+    /// Provider to which this flow belongs.
     provider_id: String,
+    /// Credential to populate on successful authorization.
     credential_id: String,
+    /// Time at which the flow was created.
     created: Instant,
+    /// Device authorization identifier issued by `OpenAI`.
     device_id: String,
+    /// Code the user enters on the authorization page.
     user_code: String,
+    /// Minimum interval between upstream polls.
     interval: Duration,
+    /// Earliest time another upstream poll may start.
     next_poll: Instant,
+    /// Whether an upstream poll is currently running.
     in_flight: bool,
 }
 
 impl Flow {
+    /// Checks that the flow belongs to the requested provider and credential.
     fn belongs_to(&self, provider: &str, credential: &str) -> bool {
         self.provider_id == provider && self.credential_id == credential
     }
 }
 
+/// Application state and pending flows shared by login handlers.
 type LoginState = (AppState, OAuthFlows);
 
+/// Builds the dashboard routes for Codex device authorization.
 pub(crate) fn router(app: AppState) -> Router {
     Router::new()
         .route(
@@ -54,13 +68,18 @@ pub(crate) fn router(app: AppState) -> Router {
         .with_state((app, OAuthFlows::default()))
 }
 
+/// Response from the device authorization start endpoint.
 #[derive(Deserialize)]
 struct DeviceStart {
+    /// Identifier used to poll the device authorization.
     device_auth_id: String,
+    /// Code displayed to the user for authorization.
     user_code: String,
+    /// Suggested polling interval, represented as a number or string.
     interval: Option<serde_json::Value>,
 }
 
+/// Starts a device authorization flow for a Codex credential.
 async fn codex_start(
     State((app, flows)): State<LoginState>,
     Path((provider_id, credential_id)): Path<(String, String)>,
@@ -119,16 +138,22 @@ async fn codex_start(
     ))
 }
 
+/// Dashboard request identifying a pending device flow.
 #[derive(Deserialize)]
 struct CodexPoll {
+    /// Dashboard-facing flow identifier.
     id: String,
 }
+/// Response from the device authorization polling endpoint.
 #[derive(Deserialize)]
 struct DeviceToken {
+    /// Authorization code to exchange after approval.
     authorization_code: Option<String>,
+    /// PKCE verifier accompanying the authorization code.
     code_verifier: Option<String>,
 }
 
+/// Polls a pending device flow and saves credentials after authorization.
 // Keep the device polling state transition and token exchange together.
 #[allow(clippy::too_many_lines)]
 async fn codex_poll(

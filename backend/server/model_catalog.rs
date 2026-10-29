@@ -16,25 +16,37 @@ use crate::provider::{catalog::discover, registry};
 use crate::server::{AppState, settings::SettingsStore};
 use crate::storage::Setting;
 
+/// Settings key for the persisted discovery snapshot.
 const CACHE_KEY: &str = "model_catalog";
+/// Maximum time allowed for one provider discovery.
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Discovered models and the latest discovery error for a provider.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct CatalogProvider {
+    /// Registry identifier.
     id: String,
+    /// Display name from the registry.
     name: String,
+    /// Provider implementation kind.
     kind: String,
+    /// Endpoint used to decide whether cached results remain valid.
     #[serde(default)]
     base_url: String,
+    /// Last successfully discovered model records.
     models: Vec<Value>,
+    /// Most recent discovery failure, if any.
     error: Option<String>,
 }
 
+/// Persisted snapshot of provider discovery results.
 #[derive(Default, Serialize, Deserialize)]
 struct Catalog {
+    /// Providers reconciled with the registry on load.
     providers: Vec<CatalogProvider>,
 }
 
+/// Load the snapshot and reconcile it against the current registry.
 // Reconcile with the registry on every read: new providers appear immediately and
 // deleted providers never leak out of an old persisted snapshot.
 async fn load(store: &SettingsStore) -> Result<Catalog, String> {
@@ -67,6 +79,7 @@ async fn load(store: &SettingsStore) -> Result<Catalog, String> {
     Ok(Catalog { providers })
 }
 
+/// Persist a catalog snapshot transactionally.
 async fn save(store: &SettingsStore, catalog: &Catalog) -> Result<(), String> {
     let value = serde_json::to_string(catalog).map_err(|e| e.to_string())?;
     store
@@ -85,6 +98,7 @@ async fn save(store: &SettingsStore, catalog: &Catalog) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Discover providers concurrently and retain last successful models on failure.
 async fn refresh_catalog(state: &AppState) -> Result<Catalog, String> {
     let current = registry::list(&state.settings.database).await?;
     let mut catalog = load(&state.settings).await?;
@@ -115,12 +129,14 @@ async fn refresh_catalog(state: &AppState) -> Result<Catalog, String> {
     load(&state.settings).await
 }
 
+/// Refresh the catalog, logging failures for background callers.
 pub(crate) async fn refresh(state: &AppState) {
     if refresh_catalog(state).await.is_err() {
         tracing::error!("Failed to refresh model catalog");
     }
 }
 
+/// Return the current reconciled catalog.
 async fn get_catalog(State(state): State<AppState>) -> Response {
     load(&state.settings).await.map_or_else(
         |_| {
@@ -134,6 +150,7 @@ async fn get_catalog(State(state): State<AppState>) -> Response {
     )
 }
 
+/// Refresh the catalog on demand and return the result.
 async fn post_refresh(State(state): State<AppState>) -> Response {
     refresh_catalog(&state).await.map_or_else(
         |_| {
@@ -147,6 +164,7 @@ async fn post_refresh(State(state): State<AppState>) -> Response {
     )
 }
 
+/// Build dashboard routes for catalog access and refresh.
 pub(crate) fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/model-catalog", get(get_catalog))
@@ -154,6 +172,7 @@ pub(crate) fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
+/// Catalog persistence and registry reconciliation tests.
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -166,6 +185,7 @@ mod tests {
     use serde_json::json;
     use tower::ServiceExt;
 
+    /// Create an in-memory settings store.
     async fn store() -> SettingsStore {
         let database = Database::open(":memory:").await.unwrap();
         SettingsStore::new(database, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
@@ -173,6 +193,7 @@ mod tests {
             .unwrap()
     }
 
+    /// Send a JSON request to the provider registry.
     async fn registry_request(
         store: &SettingsStore,
         method: &str,
@@ -193,6 +214,7 @@ mod tests {
             .status()
     }
 
+    /// Cached models survive reopening and follow registry changes.
     #[tokio::test]
     async fn cache_survives_store_recreation_and_tracks_registry() {
         let store = store().await;

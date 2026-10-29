@@ -4,6 +4,7 @@ use serde_json::Value;
 
 use crate::server::settings::Permissions;
 
+/// OpenAI-compatible error response with its HTTP status and error metadata.
 #[derive(Debug)]
 pub(crate) struct ProxyError(StatusCode, &'static str, &'static str, &'static str);
 
@@ -17,6 +18,7 @@ impl IntoResponse for ProxyError {
     }
 }
 
+/// Constructs a proxy error from its status and wire-level error fields.
 pub(crate) const fn error(
     status: StatusCode,
     message: &'static str,
@@ -26,6 +28,7 @@ pub(crate) const fn error(
     ProxyError(status, message, kind, code)
 }
 
+/// Reports failure to load OpenAI-compatible provider settings.
 pub(crate) const fn settings_error() -> ProxyError {
     error(
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -35,6 +38,7 @@ pub(crate) const fn settings_error() -> ProxyError {
     )
 }
 
+/// Requires a nonempty model in the request and checks key permissions.
 pub(crate) fn check_model(body: &[u8], permissions: &Permissions) -> Result<(), ProxyError> {
     let value = serde_json::from_slice::<Value>(body).ok();
     let model = value
@@ -60,6 +64,7 @@ pub(crate) fn check_model(body: &[u8], permissions: &Permissions) -> Result<(), 
     Ok(())
 }
 
+/// Filters a model-list response by key permissions; returns false if `data` is not an array.
 pub(crate) fn filter_models(value: &mut Value, permissions: &Permissions) -> bool {
     let Some(data) = value.get_mut("data").and_then(Value::as_array_mut) else {
         return false;

@@ -25,6 +25,7 @@ Dashboard pages use the shared skeleton components in `frontend/src/components/L
 Dashboard and catalog refresh controls share `frontend/src/components/RefreshButton.tsx`, including their disabled and updating states.
 Dashboard page titles are defined in their TanStack Router route metadata in `frontend/src/App.tsx`.
 The requests chart uses TanStack Charts' motion renderer and theme-aware tooltip tokens; motion respects the browser's reduced-motion preference.
+The request log table uses TanStack Table v9 with explicit filtering, sorting and pagination features.
 
 To populate the dashboard, start zero-g once to initialize its database, then stop it and run `just seed`. It reads `ZERO_G_LOG_DB` from `.env` (or uses `zero-g-logs.db`), creates example providers where needed, and appends 140 example requests and two restricted virtual keys per run. It reuses an existing provider of each kind without changing its credentials. Request and response bodies contain `_seed: true`. Copy the newly generated keys from the command output; they cannot be retrieved later. Newly created providers require upstream credentials before making requests. If an example ID belongs to a different or deleted provider, the seed fails without adding data. Use a development database, not production. Restart `just dev` to view the data.
 
@@ -47,6 +48,8 @@ just build
 ```
 
 Rust follows the [Namtao strict Clippy configuration](https://www.namtao.com/rust/#strict-lints): pedantic and nursery lints, plus explicit panic, indexing, arithmetic, conversion, and process-exit checks. `clippy.toml` permits the guide's test-only exceptions. Visibility follows actual usage: keep items private when possible and expose them only to the modules that need them. The `redundant_pub_crate` lint is disabled because it recommends broader visibility in binary crates; individual exceptions document cohesive long functions or JSON object insertion.
+
+Clippy also requires documentation comments on private Rust items, including fields and variants. Describe their purpose or constraints with `///`; `just check` treats missing documentation as an error.
 
 ## Settings API contract
 

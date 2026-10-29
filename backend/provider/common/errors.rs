@@ -1,17 +1,22 @@
 use reqwest::StatusCode;
 
+/// Failure returned by an upstream provider, with an optional HTTP status.
 #[derive(Debug)]
 pub(crate) struct UpstreamError {
+    /// Upstream status when an HTTP response was received.
     pub(crate) status: Option<StatusCode>,
+    /// Human-readable error detail.
     pub(crate) message: String,
 }
 
 impl UpstreamError {
+    /// Returns whether the status permits trying another credential.
     pub(crate) fn retryable(&self) -> bool {
         retryable_status(self.status)
     }
 }
 
+/// Identifies authentication and rate-limit statuses eligible for retry.
 pub(crate) fn retryable_status(status: Option<StatusCode>) -> bool {
     matches!(
         status,

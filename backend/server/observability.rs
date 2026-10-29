@@ -13,12 +13,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tracing::error;
 
+/// Persistent request logs and their retention policy.
 #[derive(Clone)]
 pub(crate) struct LogStore {
+    /// Database holding request records.
     database: Database,
+    /// Number of days of records to retain.
     retention_days: i64,
 }
 impl LogStore {
+    /// Create a log store with the default 30-day retention.
     pub(crate) const fn new(database: Database) -> Self {
         Self {
             database,
@@ -26,11 +30,13 @@ impl LogStore {
         }
     }
 
+    /// Update retention and immediately prune expired records.
     pub(crate) async fn set_retention(&mut self, retention_days: i64) -> Result<(), String> {
         self.retention_days = retention_days;
         self.prune().await
     }
 
+    /// Delete records older than the retention cutoff.
     async fn prune(&self) -> Result<(), String> {
         let cutoff = now().saturating_sub(self.retention_days.saturating_mul(86400));
         self.database
@@ -48,6 +54,7 @@ impl LogStore {
             .map_err(|e| e.to_string())
     }
 
+    /// Store a request record and prune expired records transactionally.
     async fn insert(&self, log: LogEntry) -> Result<(), String> {
         let cutoff = now().saturating_sub(self.retention_days.saturating_mul(86400));
         self.database
@@ -79,6 +86,7 @@ impl LogStore {
             .map_err(|e| e.to_string())
     }
 
+    /// Aggregate request statistics and recent logs for the requested range.
     async fn dashboard(&self, since: Option<i64>, until: Option<i64>) -> Result<Value, String> {
         let upper = until.or_else(|| since.map(|_| now()));
         let interval = interval(since, upper)?;
@@ -164,20 +172,27 @@ impl LogStore {
     }
 }
 
+/// Calendar granularity used for dashboard request buckets.
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "lowercase")]
 enum Interval {
+    /// Hourly buckets.
     Hour,
+    /// Daily buckets.
     Day,
+    /// Monthly buckets.
     Month,
+    /// Yearly buckets.
     Year,
 }
 
+/// Convert Unix seconds to a supported UTC date.
 fn date(timestamp: i64) -> Result<DateTime<Utc>, String> {
     DateTime::from_timestamp(timestamp, 0)
         .ok_or_else(|| format!("timestamp outside supported date range: {timestamp}"))
 }
 
+/// Choose a bucket granularity for the requested time range.
 fn interval(since: Option<i64>, until: Option<i64>) -> Result<Interval, String> {
     let start = since.map(date).transpose()?;
     let end = until.map(date).transpose()?;
@@ -202,6 +217,7 @@ fn interval(since: Option<i64>, until: Option<i64>) -> Result<Interval, String> 
     Ok(Interval::Year)
 }
 
+/// Compute the UTC start of the bucket containing a Unix timestamp.
 fn bucket_start(timestamp: i64, interval: Interval) -> Result<i64, String> {
     let value = date(timestamp)?;
     let day = match interval {
@@ -215,33 +231,50 @@ fn bucket_start(timestamp: i64, interval: Interval) -> Result<i64, String> {
         .ok_or_else(|| format!("cannot bucket timestamp: {timestamp}"))
 }
 
+/// Serialized request log returned by the dashboard.
 #[derive(Serialize)]
 struct LogEntry {
+    /// Database record identifier.
     id: i64,
+    /// Completion time in Unix seconds.
     created_at: i64,
+    /// Provider extracted from the request path.
     provider: String,
+    /// Model named in the request body.
     model: String,
+    /// Request URI path.
     path: String,
+    /// HTTP status, or 499 for an incomplete response stream.
     status: i64,
+    /// Elapsed request time in milliseconds.
     latency_ms: i64,
+    /// Reported input token count, when available.
     input_tokens: Option<i64>,
+    /// Reported output token count, when available.
     output_tokens: Option<i64>,
+    /// Captured request body.
     request_body: String,
+    /// Captured response body.
     response_body: String,
 }
 
+/// Return the current Unix timestamp in seconds.
 fn now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
 }
 
+/// Optional inclusive time bounds for dashboard metrics.
 #[derive(Deserialize)]
 pub(super) struct DashboardQuery {
+    /// Lower timestamp bound in Unix seconds.
     since: Option<i64>,
+    /// Upper timestamp bound in Unix seconds.
     until: Option<i64>,
 }
 
+/// Serve dashboard metrics and recent request logs.
 pub(super) async fn dashboard(
     State(store): State<LogStore>,
     Query(query): Query<DashboardQuery>,
@@ -255,6 +288,7 @@ pub(super) async fn dashboard(
     }
 }
 
+/// Capture POST request and response bodies for asynchronous logging.
 pub(super) async fn capture(State(store): State<LogStore>, req: Request, next: Next) -> Response {
     if req.method() != Method::POST {
         return next.run(req).await;
@@ -303,11 +337,16 @@ pub(super) async fn capture(State(store): State<LogStore>, req: Request, next: N
     Response::from_parts(parts, Body::from_stream(stream))
 }
 
+/// Callback receiving captured bytes and whether the response completed.
 type Completion = Box<dyn FnOnce(Vec<u8>, bool) + Send>;
 
+/// Response stream that records bytes and finalizes on completion or drop.
 struct FinalizeStream<S> {
+    /// Wrapped response body stream.
     inner: std::pin::Pin<Box<S>>,
+    /// One-shot completion callback.
     finish: Option<Completion>,
+    /// Response bytes observed so far.
     captured: Vec<u8>,
 }
 impl<S, E> futures_util::Stream for FinalizeStream<S>
@@ -340,6 +379,7 @@ impl<S> Drop for FinalizeStream<S> {
     }
 }
 
+/// Extract token counts from JSON or server-sent event response bodies.
 fn usage(body: &str) -> (Option<i64>, Option<i64>) {
     let mut result = (None, None);
     for part in std::iter::once(body).chain(
@@ -367,6 +407,7 @@ fn usage(body: &str) -> (Option<i64>, Option<i64>) {
     result
 }
 
+/// Request log persistence and dashboard aggregation tests.
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -374,6 +415,7 @@ mod tests {
     use axum::{Router, routing::get};
     use tower::ServiceExt;
 
+    /// Persist request bodies and prune expired logs.
     #[tokio::test]
     async fn stores_and_expires_private_request_logs() {
         let path =
@@ -408,6 +450,7 @@ mod tests {
         std::fs::remove_file(path).unwrap();
     }
 
+    /// Concurrent inserts produce one record per request.
     #[tokio::test]
     async fn concurrent_inserts_are_not_duplicated() {
         let path =
@@ -449,6 +492,7 @@ mod tests {
         drop(store);
         std::fs::remove_file(path).unwrap();
     }
+    /// Check dashboard responses for bounded time ranges.
     async fn check_bounded_ranges(app: &Router) {
         let request = |uri: &str| Request::builder().uri(uri).body(Body::empty()).unwrap();
         let response = app
@@ -524,6 +568,7 @@ mod tests {
         }
     }
 
+    /// Apply time bounds to summaries, buckets, and recent logs.
     #[tokio::test]
     async fn range_filters_all_aggregates_and_latest_logs() {
         let path =
@@ -629,6 +674,7 @@ mod tests {
         std::fs::remove_file(path).unwrap();
     }
 
+    /// Select interval thresholds and UTC bucket boundaries.
     #[test]
     fn interval_thresholds_and_utc_bucket_boundaries() {
         let stamp = |year, month, day, hour, minute, second| {
@@ -673,6 +719,7 @@ mod tests {
         assert!(interval(Some(i64::MAX), Some(i64::MAX)).is_err());
     }
 
+    /// Read usage counts from JSON and streaming responses.
     #[test]
     fn extracts_usage_from_streamed_and_nonstreamed_responses() {
         assert_eq!(

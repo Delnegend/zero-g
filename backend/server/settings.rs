@@ -15,46 +15,66 @@ use utoipa::ToSchema;
 
 use crate::database::Database;
 
+/// Reserved secret name for checking the configured encryption key.
 const SENTINEL: &str = "__zero_g_encryption_key_check";
+/// Expected plaintext of the encryption-key sentinel.
 const CHECK: &str = "zero-g encryption key check v1";
 
+/// Database-backed settings and secret encryption context.
 #[derive(Clone)]
 pub(crate) struct SettingsStore {
+    /// Database used for settings, secrets, and virtual keys.
     pub(crate) database: Database,
+    /// AES-256-GCM key used to protect stored secrets.
     encryption_key: [u8; 32],
 }
 
+/// Provider and model restrictions associated with a virtual key.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Permissions {
+    /// Allowed provider IDs; an empty list allows all providers.
     pub(crate) providers: Vec<String>,
+    /// Allowed model IDs; an empty list allows all models.
     pub(crate) models: Vec<String>,
 }
 
 impl Permissions {
+    /// Returns whether the model is allowed by this key's restrictions.
     pub(crate) fn allows_model(&self, model: &str) -> bool {
         self.models.is_empty() || self.models.iter().any(|allowed| allowed == model)
     }
 }
 
+/// Public metadata for a virtual key, excluding its secret token.
 #[derive(Serialize)]
 struct KeyInfo {
+    /// Stable identifier used to revoke the key.
     id: String,
+    /// User-assigned key name.
     name: String,
+    /// Provider IDs allowed by the key.
     providers: Vec<String>,
+    /// Model IDs allowed by the key.
     models: Vec<String>,
+    /// Creation time in Unix seconds.
     created_at: i64,
 }
 
+/// Request to create a named virtual key with optional restrictions.
 #[derive(Deserialize)]
 pub(super) struct CreateKey {
+    /// User-assigned name for the new key.
     name: String,
+    /// Allowed provider IDs; empty permits every provider.
     #[serde(default)]
     providers: Vec<String>,
+    /// Allowed model IDs; empty permits every model.
     #[serde(default)]
     models: Vec<String>,
 }
 
 impl SettingsStore {
+    /// Initializes the store, validates its encryption key, and migrates legacy data.
     pub(crate) async fn new(database: Database, encryption_key: &str) -> Result<Self, String> {
         let key = STANDARD
             .decode(encryption_key.trim())
@@ -104,6 +124,7 @@ impl SettingsStore {
         Ok(store)
     }
 
+    /// Loads an unencrypted setting by name, if present.
     pub(crate) async fn setting_get(&self, name: &str) -> Result<Option<String>, String> {
         Ok(Setting::filter_by_name(name)
             .first()
@@ -113,6 +134,7 @@ impl SettingsStore {
             .map(|row| row.value))
     }
 
+    /// Loads and decrypts a named secret, if present.
     pub(crate) async fn secret_get(&self, name: &str) -> Result<Option<String>, String> {
         let Some(row) = Secret::filter_by_name(name)
             .first()
@@ -125,6 +147,7 @@ impl SettingsStore {
         self.decrypt(name, &row.value).map(Some)
     }
 
+    /// Decrypts nonce-prefixed AES-GCM data using the secret name as associated data.
     fn decrypt(&self, name: &str, data: &[u8]) -> Result<String, String> {
         let Some((nonce, ciphertext)) = data.split_at_checked(12) else {
             return Err("Invalid encrypted secret".into());
@@ -148,6 +171,7 @@ impl SettingsStore {
         String::from_utf8(plaintext.to_vec()).map_err(|e| e.to_string())
     }
 
+    /// Encrypts a secret with a random nonce and its name as associated data.
     pub(crate) fn encrypt(&self, name: &str, value: &str) -> Result<Vec<u8>, String> {
         let mut nonce = [0u8; 12];
         SystemRandom::new()
@@ -169,6 +193,7 @@ impl SettingsStore {
         Ok(stored)
     }
 
+    /// Stores an encrypted secret for tests.
     #[cfg(test)]
     async fn secret_put(&self, name: &str, value: &str) -> Result<(), String> {
         let stored = self.encrypt(name, value)?;
@@ -187,6 +212,7 @@ impl SettingsStore {
             .map_err(|e| e.to_string())
     }
 
+    /// Resolves a token's stored hash to its provider and model restrictions.
     async fn permissions(&self, token: &str) -> Result<Option<Permissions>, String> {
         let hash = digest::digest(&digest::SHA256, token.as_bytes());
         let Some(row) = VirtualKey::filter_by_key_hash(hash.as_ref().to_vec())
@@ -206,19 +232,25 @@ impl SettingsStore {
     }
 }
 
+/// Logs a settings error and returns a generic server error response.
 fn internal_error(err: &str) -> Response {
     tracing::error!("Settings store error: {err}");
     StatusCode::INTERNAL_SERVER_ERROR.into_response()
 }
 
+/// Dashboard-visible settings without the OAuth client secret.
 #[derive(Serialize, ToSchema)]
 pub(crate) struct SettingsResponse {
+    /// Number of days to retain logs.
     #[schema(format = Int64, minimum = 0, maximum = 4_294_967_295_u64)]
     log_retention_days: u32,
+    /// Configured OAuth client ID.
     oauth_client_id: String,
+    /// Whether an OAuth client secret is stored.
     oauth_client_secret_set: bool,
 }
 
+/// Returns current settings and whether an OAuth secret is configured.
 #[utoipa::path(
     get,
     path = "/api/settings",
@@ -229,6 +261,7 @@ pub(crate) struct SettingsResponse {
     )
 )]
 pub(crate) async fn get_settings(State(store): State<SettingsStore>) -> Response {
+    /// Loads the settings and validates any stored OAuth secret.
     async fn load(store: &SettingsStore) -> Result<SettingsResponse, String> {
         store
             .database
@@ -271,14 +304,19 @@ pub(crate) async fn get_settings(State(store): State<SettingsStore>) -> Response
     }
 }
 
+/// Partial settings update supplied by the dashboard.
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct UpdateSettings {
+    /// Optional log retention in days.
     #[schema(format = Int64, minimum = 0, maximum = 4_294_967_295_u64)]
     log_retention_days: Option<u32>,
+    /// Optional replacement OAuth client ID.
     oauth_client_id: Option<String>,
+    /// Optional replacement secret; an empty string clears it.
     oauth_client_secret: Option<String>,
 }
 
+/// Validates and atomically applies supplied settings.
 #[utoipa::path(
     put,
     path = "/api/settings",
@@ -348,7 +386,9 @@ pub(crate) async fn put_settings(
     get_settings(State(store)).await
 }
 
+/// Lists virtual key metadata without exposing key tokens.
 pub(super) async fn list_keys(State(store): State<SettingsStore>) -> Response {
+    /// Loads and decodes stored virtual key metadata.
     async fn list(store: &SettingsStore) -> Result<Vec<KeyInfo>, String> {
         let rows = VirtualKey::all()
             .order_by((
@@ -376,6 +416,7 @@ pub(super) async fn list_keys(State(store): State<SettingsStore>) -> Response {
     }
 }
 
+/// Creates a virtual key and returns its token once.
 pub(super) async fn create_key(
     State(store): State<SettingsStore>,
     Json(input): Json<CreateKey>,
@@ -443,6 +484,7 @@ pub(super) async fn create_key(
     }
 }
 
+/// Deletes a virtual key by ID.
 pub(super) async fn revoke_key(
     State(store): State<SettingsStore>,
     Path(id): Path<String>,
@@ -471,6 +513,7 @@ pub(super) async fn revoke_key(
     }
 }
 
+/// Authenticates a virtual key and attaches provider and permission context.
 pub(crate) async fn virtual_key_auth(
     State((store, kind)): State<(SettingsStore, &'static str)>,
     Path(id): Path<String>,
@@ -545,6 +588,7 @@ pub(crate) async fn virtual_key_auth(
 }
 
 #[cfg(test)]
+/// Exercises settings persistence, encryption, and virtual key authorization.
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
@@ -557,19 +601,23 @@ mod tests {
     use serde_json::Value;
     use tower::ServiceExt;
 
+    /// Generates a unique temporary database path.
     fn path() -> std::path::PathBuf {
         std::env::temp_dir().join(format!("zero-g-settings-{}.db", uuid::Uuid::new_v4()))
     }
 
+    /// Encodes a deterministic 32-byte encryption key for tests.
     fn key(byte: u8) -> String {
         STANDARD.encode([byte; 32])
     }
 
+    /// Parses a response body as JSON.
     async fn json_body(response: Response) -> Value {
         let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
         serde_json::from_slice(&bytes).unwrap()
     }
 
+    /// Settings endpoints retain their response and partial-update behavior.
     #[tokio::test]
     async fn settings_endpoints_preserve_response_and_update_behavior() {
         let path = path();
@@ -600,6 +648,7 @@ mod tests {
         std::fs::remove_file(path).unwrap();
     }
 
+    /// Concurrent settings writes leave complete atomic updates.
     #[tokio::test]
     async fn concurrent_settings_updates_remain_atomic() {
         let path = path();
@@ -634,6 +683,7 @@ mod tests {
         std::fs::remove_file(path).unwrap();
     }
 
+    /// Concurrent initialization establishes only one encryption key.
     #[tokio::test]
     async fn concurrent_initialization_accepts_only_one_encryption_key() {
         let path = path();
@@ -667,6 +717,7 @@ mod tests {
         std::fs::remove_file(path).unwrap();
     }
 
+    /// Concurrent revocations allow only one successful deletion.
     #[tokio::test]
     async fn concurrent_key_revocations_have_one_winner() {
         let path = path();
@@ -699,6 +750,7 @@ mod tests {
         std::fs::remove_file(path).unwrap();
     }
 
+    /// Test handler checks model access using attached permissions.
     async fn model(
         Extension(permissions): Extension<Permissions>,
         uri: axum::http::Uri,
@@ -710,6 +762,7 @@ mod tests {
         }
     }
 
+    /// Encrypted secrets and key validation persist across database reopen.
     #[tokio::test]
     async fn encrypted_secrets_and_key_check_survive_reopen() {
         let path = path();
@@ -750,6 +803,7 @@ mod tests {
 
     // Axum route captures use braces; this exercises the full key lifecycle.
     #[allow(clippy::too_many_lines, clippy::literal_string_with_formatting_args)]
+    /// Virtual keys persist, enforce restrictions, and stop working after revocation.
     #[tokio::test]
     async fn virtual_keys_persist_enforce_permissions_and_revoke() {
         let path = path();

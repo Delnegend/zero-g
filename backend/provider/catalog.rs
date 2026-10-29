@@ -2,6 +2,7 @@ use crate::provider::{ProviderKind, registry::Provider};
 use crate::server::AppState;
 use serde_json::Value;
 
+/// Discovers models using the configured provider's backend.
 pub(crate) async fn discover(state: &AppState, provider: &Provider) -> Result<Vec<Value>, String> {
     ProviderKind::from_str(&provider.kind)
         .ok_or_else(|| "Unsupported provider kind".to_string())?
@@ -9,6 +10,7 @@ pub(crate) async fn discover(state: &AppState, provider: &Provider) -> Result<Ve
         .await
 }
 
+/// Model discovery integration checks.
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -25,6 +27,7 @@ mod tests {
     use serde_json::json;
     use tower::ServiceExt;
 
+    /// Discovery uses the instance credential and retains model metadata.
     #[tokio::test]
     async fn discovery_uses_instance_key_and_preserves_metadata() {
         let app = Router::new().route("/v1/models", get(|headers: HeaderMap| async move {
@@ -64,6 +67,7 @@ mod tests {
         server.abort();
     }
 
+    /// Discovery retries authentication and rate-limit failures only.
     #[tokio::test]
     async fn discovery_retries_only_credential_failures() {
         use std::sync::{

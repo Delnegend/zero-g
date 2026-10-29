@@ -8,40 +8,57 @@ use crate::provider::common::errors::UpstreamError;
 use crate::provider::registry::Provider;
 use crate::server::AppState;
 
+/// Upstream model list, which may use either supported envelope field.
 #[derive(Deserialize)]
 struct CodexModelsResponse {
+    /// Model entries in the primary envelope.
     #[serde(default)]
     models: Option<Vec<CodexModelEntry>>,
+    /// Model entries in the alternate envelope.
     #[serde(default)]
     data: Option<Vec<CodexModelEntry>>,
 }
 
+/// Model metadata returned by the Codex endpoint.
 #[derive(Serialize, Deserialize)]
 struct CodexModelEntry {
+    /// Preferred model identifier.
     slug: Option<String>,
+    /// Alternate model identifier when no slug is provided.
     id: Option<String>,
+    /// Upstream visibility flag used to exclude hidden models.
     visibility: Option<String>,
+    /// Human-readable model name.
     display_name: Option<String>,
+    /// Default reasoning effort, if supplied.
     default_reasoning_level: Option<String>,
+    /// Available reasoning effort metadata.
     supported_reasoning_levels: Option<Vec<CodexReasoningLevel>>,
+    /// Model context window size.
     context_window: Option<u64>,
+    /// Additional upstream metadata retained in the catalog.
     #[serde(flatten)]
     extra: HashMap<String, Value>,
 }
 
+/// One upstream reasoning effort and its additional metadata.
 #[derive(Serialize, Deserialize)]
 struct CodexReasoningLevel {
+    /// Reasoning effort identifier.
     effort: Option<String>,
+    /// Additional upstream metadata for this effort.
     #[serde(flatten)]
     extra: HashMap<String, Value>,
 }
 
+/// Fetches the normalized model list using the supplied credentials.
 pub(crate) async fn fetch_codex_models(
     creds: &CodexCredentials,
 ) -> Result<ModelListResponse, UpstreamError> {
     Ok(fetch_models(creds, false).await?.0)
 }
 
+/// Fetches normalized models and catalog metadata through the provider credential pool.
 pub(crate) async fn fetch_catalog_pool(
     state: &AppState,
     provider: &Provider,
@@ -53,6 +70,7 @@ pub(crate) async fn fetch_catalog_pool(
     .map_err(|e| e.message)
 }
 
+/// Fetches and normalizes an upstream model list, optionally retaining catalog metadata.
 // Fetch and normalize one upstream response together so both views stay consistent.
 #[allow(clippy::too_many_lines)]
 async fn fetch_models(

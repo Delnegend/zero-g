@@ -10,55 +10,92 @@ use serde_with::skip_serializing_none;
 use tokio::sync::RwLock;
 use tracing::info;
 
+/// OAuth client identifier used by Codex.
 pub(crate) const CODEX_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
+/// Endpoint for exchanging and refreshing OAuth tokens.
 pub(super) const CODEX_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
+/// Base URL for the `ChatGPT` backend API.
 pub(super) const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api";
+/// Codex client version sent to the backend.
 pub(super) const CODEX_CLIENT_VERSION: &str = "0.159.0";
+/// Endpoint for starting device authorization.
 pub(crate) const CODEX_DEVICE_USERCODE_URL: &str =
     "https://auth.openai.com/api/accounts/deviceauth/usercode";
+/// Endpoint for polling device authorization.
 pub(crate) const CODEX_DEVICE_TOKEN_URL: &str =
     "https://auth.openai.com/api/accounts/deviceauth/token";
+/// Page where users authorize a device.
 pub(crate) const CODEX_DEVICE_AUTH_URL: &str = "https://auth.openai.com/codex/device";
+/// Redirect URI used for device authorization token exchanges.
 pub(crate) const CODEX_DEVICE_REDIRECT_URI: &str = "https://auth.openai.com/deviceauth/callback";
 
+/// JWT namespace containing account authorization claims.
 const JWT_CLAIM_AUTH: &str = "https://api.openai.com/auth";
+/// JWT namespace containing profile claims.
 const JWT_CLAIM_PROFILE: &str = "https://api.openai.com/profile";
 
+/// Stored OAuth credentials and account metadata for Codex.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct CodexCredentials {
+    /// Bearer token used for API requests.
     pub(super) access_token: String,
+    /// Token used to refresh the access token, when available.
     pub(super) refresh_token: Option<String>,
+    /// `ChatGPT` account identifier from the token claims.
     pub(crate) account_id: Option<String>,
+    /// Account email from the token claims.
     pub(crate) email: Option<String>,
+    /// `ChatGPT` subscription plan from the token claims.
     pub(crate) plan_type: Option<String>,
+    /// Data or compute residency constraint from the access token.
     pub(super) residency: Option<String>,
+    /// Access-token expiration in milliseconds since the Unix epoch.
     pub(super) expires_at: Option<i64>, // Milliseconds since UNIX epoch
 }
 
+/// Loads, refreshes, and persists credentials for one Codex account.
 #[derive(Clone)]
 pub(crate) struct CodexAuthManager {
+    /// Cached credentials shared by manager clones.
     creds: Arc<RwLock<CodexCredentials>>,
+    /// Store holding the credential secret.
     store: SettingsStore,
+    /// Provider owning the credential.
     provider_id: String,
+    /// Identifier of the stored credential.
     credential_id: String,
 }
 
+/// OAuth token refresh response.
 #[derive(Deserialize)]
 struct TokenRefreshResponse {
+    /// Refreshed bearer token.
     access_token: String,
+    /// Replacement refresh token, if issued.
     refresh_token: Option<String>,
+    /// Optional identity token containing profile claims.
     id_token: Option<String>,
+    /// Access-token lifetime in seconds.
     expires_in: i64,
 }
 
+/// Account metadata extracted from OAuth token claims.
 pub(super) struct TokenProfile {
+    /// `ChatGPT` account identifier.
     pub(super) account_id: Option<String>,
+    /// Normalized account email.
     pub(super) email: Option<String>,
+    /// Normalized subscription plan.
     pub(super) plan_type: Option<String>,
+    /// Data or compute residency constraint, if present.
     pub(super) residency: Option<String>,
 }
 
+/// Extracts profile claims from the access token, falling back to the ID token.
+///
+/// Residency is read only from the access token. Tokens are decoded without
+/// verifying their signatures.
 pub(super) fn decode_jwt_profile(access_token: &str, id_token: Option<&str>) -> TokenProfile {
     let access_payload = decode_jwt_payload(access_token);
     let id_payload = id_token.and_then(decode_jwt_payload);
@@ -96,6 +133,7 @@ pub(super) fn decode_jwt_profile(access_token: &str, id_token: Option<&str>) -> 
     }
 }
 
+/// Decodes the JSON payload of a three-part JWT without verifying its signature.
 fn decode_jwt_payload(token: &str) -> Option<serde_json::Value> {
     let mut parts = token.split('.');
     let _header = parts.next()?;
@@ -119,6 +157,7 @@ fn decode_jwt_payload(token: &str) -> Option<serde_json::Value> {
 }
 
 impl CodexAuthManager {
+    /// Loads a credential after checking its provider association.
     pub(crate) async fn load(
         store: SettingsStore,
         provider_id: &str,
@@ -147,6 +186,7 @@ impl CodexAuthManager {
         }))
     }
 
+    /// Reloads stored credentials and refreshes tokens within 60 seconds of expiry.
     pub(crate) async fn get_credentials(&self) -> Result<CodexCredentials, CredentialError> {
         let lock = crate::provider::login::credential_lock(&self.credential_id).await;
         let _guard = lock.lock().await;
@@ -185,6 +225,7 @@ impl CodexAuthManager {
         Ok(r.clone())
     }
 
+    /// Refreshes the cached access token and persists the updated credentials.
     async fn refresh(&self) -> Result<(), CredentialError> {
         let mut updated = self.creds.read().await.clone();
         let refresh_token = updated.refresh_token.clone();
@@ -264,6 +305,7 @@ impl CodexAuthManager {
         Ok(())
     }
 
+    /// Persists OAuth credentials for the specified provider and credential.
     pub(crate) async fn save(
         store: &SettingsStore,
         provider_id: &str,

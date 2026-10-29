@@ -5,21 +5,29 @@ use serde_json::json;
 
 use crate::provider::antigravity::auth::{ANTIGRAVITY_USER_AGENT, CLOUD_CODE_ASSIST_ENDPOINT};
 
+/// Project and tier information returned by Cloud Code Assist.
 #[derive(Deserialize)]
 struct LoadCodeAssistResponse {
+    /// Assigned Cloud AI Companion project identifier.
     #[serde(default, rename = "cloudaicompanionProject")]
     cloudaicompanion_project: Option<String>,
+    /// Current tier metadata, which may contain a name.
     #[serde(default, rename = "currentTier")]
     current_tier: Option<serde_json::Value>,
 }
 
+/// Status of a Cloud Code Assist onboarding operation.
 #[derive(Deserialize)]
 struct OnboardOperation {
+    /// Operation name used to poll its status.
     name: Option<String>,
+    /// Whether the operation has finished.
     done: Option<bool>,
+    /// Error returned by the operation, if any.
     error: Option<serde_json::Value>,
 }
 
+/// Discovers a project, onboarding the account if needed, with an email fallback.
 pub(crate) async fn fetch_or_onboard_project(
     client: &reqwest::Client,
     access_token: &str,
@@ -95,6 +103,7 @@ pub(crate) async fn fetch_or_onboard_project(
     Err("Could not discover or onboard project ID".to_string())
 }
 
+/// Starts free-tier onboarding and polls the resulting operation.
 async fn onboard_user(client: &reqwest::Client, access_token: &str) -> Result<(), String> {
     let onboard_url = format!("{CLOUD_CODE_ASSIST_ENDPOINT}/v1internal:onboardUser");
     let onboard_body = json!({

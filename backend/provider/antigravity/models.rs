@@ -9,37 +9,54 @@ use crate::provider::antigravity::auth::{
 };
 use crate::provider::common::errors::UpstreamError;
 
+/// Sandbox Cloud Code Assist endpoint used as a fallback.
 pub(super) const SANDBOX_ENDPOINT: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com";
+/// Anthropic beta header value enabling interleaved thinking.
 pub(super) const CLAUDE_THINKING_BETA_HEADER: &str = "interleaved-thinking-2025-05-14";
 
+/// Model discovery response returned by Cloud Code Assist.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AntigravityDiscoveryResponse {
+    /// Model metadata keyed by upstream model ID.
     #[serde(default)]
     models: HashMap<String, AntigravityModelInfo>,
 }
 
+/// Metadata for a discovered Antigravity model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct AntigravityModelInfo {
+    /// Human-readable model name.
     #[serde(default, rename = "displayName")]
     pub(crate) display_name: Option<String>,
+    /// Whether the model supports thinking.
     #[serde(default, rename = "supportsThinking")]
     pub(crate) supports_thinking: Option<bool>,
+    /// Maximum token count advertised by the model.
     #[serde(default, rename = "maxTokens")]
     pub(crate) max_tokens: Option<u64>,
+    /// Maximum output token count.
     #[serde(default, rename = "maxOutputTokens")]
     pub(crate) max_output_tokens: Option<u32>,
+    /// Whether the model is disabled.
     #[serde(default)]
     pub(crate) disabled: Option<bool>,
+    /// Additional upstream model metadata.
     #[serde(flatten)]
     pub(crate) extra: HashMap<String, serde_json::Value>,
 }
 
+/// A family is recognized only when discovery supplies multiple sibling tiers.
+/// A lone suffixed ID may be unrelated even if its base ID exists.
 pub(crate) struct ModelFamily {
+    /// Canonical family or standalone model ID.
     pub(crate) id: String,
+    /// Discovered upstream IDs and their metadata.
     pub(crate) variants: Vec<(String, AntigravityModelInfo)>,
+    /// Whether multiple reasoning tiers form this family.
     pub(crate) grouped: bool,
 }
 
+/// Split a recognized reasoning-tier suffix from a model ID.
 fn tier(id: &str) -> Option<(&str, &str)> {
     [("-low", "low"), ("-medium", "medium"), ("-high", "high")]
         .into_iter()
@@ -50,6 +67,7 @@ fn tier(id: &str) -> Option<(&str, &str)> {
         })
 }
 
+/// Group discovered sibling tiers into model families.
 pub(crate) fn normalize_models(
     mut models: Vec<(String, AntigravityModelInfo)>,
 ) -> Vec<ModelFamily> {
@@ -92,10 +110,12 @@ pub(crate) fn normalize_models(
 }
 
 impl ModelFamily {
+    /// Check whether a model or its grouped family is permitted.
     fn allowed(&self, id: &str, permissions: &crate::server::settings::Permissions) -> bool {
         permissions.allows_model(id) || (self.grouped && permissions.allows_model(&self.id))
     }
 
+    /// Build a model listing entry from permitted variants, if any.
     pub(crate) fn entry(
         &self,
         permissions: &crate::server::settings::Permissions,
@@ -145,6 +165,8 @@ impl ModelFamily {
         Some((entry, info))
     }
 
+    /// Resolve only discovered IDs, applying authorization to the actual upstream
+    /// model as well as the family grant. The default is stable and accessible.
     pub(crate) fn resolve(
         &self,
         effort: Option<&str>,
@@ -189,13 +211,17 @@ impl ModelFamily {
     }
 }
 
+/// Failure to resolve an authorized upstream model.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ResolveError {
+    /// No selected model is authorized.
     Forbidden,
+    /// The requested reasoning effort is unavailable.
     Unsupported,
 }
 
 impl AntigravityClient {
+    /// Fetch enabled, user-facing models from the available upstream endpoints.
     pub(crate) async fn fetch_models(
         &self,
         creds: &Credentials,

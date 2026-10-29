@@ -7,17 +7,28 @@ use crate::openai::{
 use crate::provider::antigravity::AntigravityEvent;
 use crate::provider::antigravity::map_finish_reason;
 
+/// Serializes provider events into `OpenAI` chat completion chunks.
 #[allow(clippy::struct_excessive_bools)]
 pub(crate) struct ChatStreamSerializer {
+    /// Identifier shared by chunks in this stream.
     pub(crate) stream_id: String,
+    /// Model name requested by the caller.
     pub(crate) req_model: String,
+    /// Stream creation timestamp.
     pub(crate) created: u64,
+    /// Whether to emit a final usage chunk.
     pub(crate) include_usage: bool,
+    /// Whether the assistant role has been emitted.
     pub(crate) sent_role: bool,
+    /// Whether a tool call has been emitted.
     pub(crate) has_tools: bool,
+    /// Whether a finish chunk has been emitted.
     pub(crate) finish_sent: bool,
+    /// Index assigned to the next tool call.
     pub(crate) tool_call_index: u32,
+    /// Most recently received token usage.
     pub(crate) usage: Usage,
+    /// Whether usage was received from the provider.
     pub(crate) saw_usage: bool,
 }
 
@@ -135,6 +146,7 @@ impl crate::provider::antigravity::sse::SseSerializer for ChatStreamSerializer {
 }
 
 impl ChatStreamSerializer {
+    /// Emits a text or reasoning delta, including the role if needed.
     fn text_event(
         &mut self,
         content: Option<String>,

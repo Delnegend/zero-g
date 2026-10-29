@@ -16,31 +16,45 @@ use crate::provider::login::{credential_lock, error, require_credential, same_or
 use crate::server::AppState;
 use crate::util::urlencode;
 
+/// Completed flow results keyed by OAuth state, with their time and ownership.
 type FlowResults = HashMap<String, (Instant, String, String, Result<(), String>)>;
 
+/// Shared pending flows, completed results, and local listener lock.
 #[derive(Clone, Default)]
 struct OAuthFlows {
+    /// Active flows indexed by OAuth state.
     pending: Arc<tokio::sync::Mutex<HashMap<String, Flow>>>,
+    /// Completed flows awaiting dashboard polling.
     results: Arc<tokio::sync::Mutex<FlowResults>>,
+    /// Ensures only one flow owns the local Google callback listener.
     google_listener: Arc<tokio::sync::Mutex<()>>,
 }
 
+/// State and ownership of a pending Google OAuth flow.
 struct Flow {
+    /// Provider that owns the flow.
     provider_id: String,
+    /// Credential being authenticated.
     credential_id: String,
+    /// Time at which the flow was started.
     created: Instant,
+    /// Whether the callback exchange is already in progress.
     in_flight: bool,
+    /// Signal for shutting down the local callback listener.
     shutdown: Arc<tokio::sync::Notify>,
 }
 
 impl Flow {
+    /// Checks that the flow belongs to the requested provider and credential.
     fn belongs_to(&self, provider: &str, credential: &str) -> bool {
         self.provider_id == provider && self.credential_id == credential
     }
 }
 
+/// Application and OAuth flow state shared by the login routes.
 type LoginState = (AppState, OAuthFlows);
 
+/// Builds the dashboard routes for Google OAuth login.
 pub(crate) fn router(app: AppState) -> Router {
     Router::new()
         .route(
@@ -58,6 +72,7 @@ pub(crate) fn router(app: AppState) -> Router {
         .with_state((app, OAuthFlows::default()))
 }
 
+/// Starts a Google OAuth flow and optionally serves its local callback.
 // Keep the OAuth listener setup and its cleanup together.
 #[allow(clippy::too_many_lines)]
 async fn agy_start(
@@ -173,18 +188,25 @@ async fn agy_start(
     ))
 }
 
+/// Dashboard request containing the Google redirect URL.
 #[derive(Deserialize)]
 struct GoogleFinish {
+    /// Full callback URL containing the OAuth state and authorization code.
     callback_url: String,
 }
 
+/// Token fields returned by Google's authorization-code exchange.
 #[derive(Deserialize)]
 struct GoogleToken {
+    /// Google OAuth access token.
     access_token: String,
+    /// Optional token for refreshing access.
     refresh_token: Option<String>,
+    /// Access-token lifetime in seconds.
     expires_in: i64,
 }
 
+/// Validates the local redirect URL and extracts its state and authorization code.
 fn parse_google_callback(callback_url: &str) -> Result<(String, String), (StatusCode, String)> {
     let url = reqwest::Url::parse(callback_url).map_err(|_| error("Invalid callback URL"))?;
     if url.scheme() != "http"
@@ -217,6 +239,7 @@ fn parse_google_callback(callback_url: &str) -> Result<(String, String), (Status
     Ok((state, code))
 }
 
+/// Validates and completes a pending Google OAuth callback.
 async fn agy_finish(
     State((app, flows)): State<LoginState>,
     Path((provider_id, credential_id)): Path<(String, String)>,
@@ -256,6 +279,7 @@ async fn agy_finish(
     result
 }
 
+/// Exchanges the code, discovers the project, and stores Google credentials.
 async fn finish_google_exchange(
     app: &AppState,
     provider_id: &str,
@@ -331,6 +355,7 @@ async fn finish_google_exchange(
     Ok(Json(json!({"status":"complete"})))
 }
 
+/// Moves a pending flow to completed results and signals listener shutdown.
 async fn complete_google(flows: &OAuthFlows, state: &str, result: Result<(), String>) {
     let mut pending = flows.pending.lock().await;
     if let Some(Flow {
@@ -348,11 +373,14 @@ async fn complete_google(flows: &OAuthFlows, state: &str, result: Result<(), Str
     }
 }
 
+/// Dashboard request to poll a Google OAuth flow.
 #[derive(Deserialize)]
 struct GooglePoll {
+    /// OAuth state identifying the flow.
     id: String,
 }
 
+/// Returns pending status or consumes the completed result for a flow.
 async fn agy_poll(
     State((app, flows)): State<LoginState>,
     Path((provider_id, credential_id)): Path<(String, String)>,

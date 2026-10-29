@@ -4,21 +4,32 @@ use tokio::sync::mpsc;
 
 use crate::openai::Usage;
 
+/// Decoded content, completion, and usage events from Antigravity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum AntigravityEvent {
+    /// A generated text fragment.
     Text(String),
+    /// A generated reasoning fragment.
     Reasoning(String),
+    /// A generated function call.
     ToolCall {
+        /// The upstream or generated call identifier.
         id: String,
+        /// The function name.
         name: String,
+        /// The function arguments serialized as JSON.
         arguments: String,
     },
+    /// The upstream completion signal.
     Finish {
+        /// The upstream finish reason.
         reason: String,
     },
+    /// Token usage reported by the upstream service.
     Usage(Usage),
 }
 
+/// Maps an upstream finish reason to an OpenAI-compatible reason.
 pub(super) fn map_finish_reason(reason: &str, has_tools: bool) -> String {
     match reason {
         "STOP" if has_tools => "tool_calls".to_string(),
@@ -29,12 +40,15 @@ pub(super) fn map_finish_reason(reason: &str, has_tools: bool) -> String {
     }
 }
 
+/// Buffers upstream bytes and decodes complete SSE lines.
 #[derive(Default)]
 struct EventDecoder {
+    /// Bytes not yet consumed as complete lines.
     buffer: Vec<u8>,
 }
 
 impl EventDecoder {
+    /// Appends bytes and decodes complete lines, clearing oversized buffers.
     fn push_chunk(&mut self, chunk: &[u8]) -> Vec<AntigravityEvent> {
         const MAX_BUFFER_BYTES: usize = 1024 * 1024;
         if self.buffer.len().saturating_add(chunk.len()) > MAX_BUFFER_BYTES {
@@ -55,6 +69,7 @@ impl EventDecoder {
     }
 }
 
+/// Extracts events from one upstream SSE data line.
 fn parse_line(line: &str, events: &mut Vec<AntigravityEvent>) {
     let Some(data) = line.strip_prefix("data: ") else {
         return;
@@ -140,6 +155,7 @@ fn parse_line(line: &str, events: &mut Vec<AntigravityEvent>) {
     }
 }
 
+/// Spawns a task that decodes byte chunks into events or a stream error.
 pub(crate) fn spawn_event_stream<S, B, E>(
     stream: S,
 ) -> mpsc::Receiver<Result<AntigravityEvent, String>>

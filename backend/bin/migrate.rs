@@ -1,6 +1,8 @@
+/// Persistent models registered with the migration CLI.
 #[path = "../storage.rs"]
 mod storage;
 
+/// Runs Toasty's migration CLI against the configured database.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = toasty_cli::Config::load()?;

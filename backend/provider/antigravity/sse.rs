@@ -7,18 +7,24 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use crate::provider::antigravity::{AntigravityEvent, spawn_event_stream};
 
+/// Sender for infallible SSE event results.
 type SseSender = mpsc::Sender<Result<Event, Infallible>>;
 
+/// Converts decoded Antigravity events into API-specific SSE events.
 pub(crate) trait SseSerializer {
+    /// Produces events to send before upstream events arrive.
     fn initial(&mut self) -> Vec<Event> {
         Vec::new()
     }
+    /// Converts one upstream event into zero or more SSE events.
     fn handle(&mut self, event: AntigravityEvent) -> Vec<Event>;
+    /// Produces final events after the upstream stream ends successfully.
     fn finish(&mut self) -> Vec<Event> {
         Vec::new()
     }
 }
 
+/// Pumps serialized upstream events to the client and terminates the stream.
 async fn pump<S>(tx: SseSender, upstream: reqwest::Response, mut serializer: S)
 where
     S: SseSerializer,
@@ -68,6 +74,7 @@ where
     let _ = tx.send(Ok(Event::default().data("[DONE]"))).await;
 }
 
+/// Spawns the SSE pump and returns a keep-alive response.
 pub(super) fn spawn_sse<S>(serializer: S, upstream: reqwest::Response) -> Response
 where
     S: SseSerializer + Send + 'static,

@@ -6,6 +6,7 @@ use super::auth::{CODEX_BASE_URL, CODEX_CLIENT_VERSION, CodexAuthManager};
 use crate::provider::quota::{QuotaSnapshot, QuotaWindow};
 use crate::server::settings::SettingsStore;
 
+/// Fetches and parses usage windows for a stored Codex credential.
 pub(crate) async fn fetch(
     store: &SettingsStore,
     provider_id: &str,
@@ -53,6 +54,7 @@ pub(crate) async fn fetch(
     parse_usage(&payload, now)
 }
 
+/// Extracts primary and additional usage windows from a Codex usage payload.
 fn parse_usage(payload: &Value, now: i64) -> Result<QuotaSnapshot, String> {
     let mut windows = Vec::new();
     if let Some(rate_limit) = payload.get("rate_limit") {
@@ -89,6 +91,7 @@ fn parse_usage(payload: &Value, now: i64) -> Result<QuotaSnapshot, String> {
     Ok(QuotaSnapshot::Quota { windows })
 }
 
+/// Appends valid primary and secondary windows, deriving labels and reset times.
 fn append_windows(
     windows: &mut Vec<QuotaWindow>,
     rate_limit: &Value,
@@ -135,6 +138,7 @@ fn append_windows(
     }
 }
 
+/// Formats a duration using the largest evenly divisible supported unit.
 fn format_duration(seconds: u64) -> String {
     for (unit, size) in [("day", 86_400), ("hour", 3_600), ("minute", 60)] {
         if seconds >= size

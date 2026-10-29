@@ -8,6 +8,7 @@ use super::models::SANDBOX_ENDPOINT;
 use crate::provider::quota::{QuotaSnapshot, QuotaWindow};
 use crate::server::settings::SettingsStore;
 
+/// Fetch and parse quota information for an Antigravity credential.
 pub(crate) async fn fetch(
     store: &SettingsStore,
     provider_id: &str,
@@ -67,15 +68,22 @@ pub(crate) async fn fetch(
     Err(last_error)
 }
 
+/// One model quota counter before grouping into shared windows.
 #[derive(Clone)]
 struct Entry {
+    /// Backend provider whose quota pool the model uses.
     provider: String,
+    /// Quota tier, defaulting to `default` when unspecified.
     tier: String,
+    /// Explicit or normalized window label, if supplied.
     window: Option<String>,
+    /// Remaining quota as a percentage, when known.
     percent: Option<f64>,
+    /// Reset time as Unix seconds, when supplied.
     reset: Option<i64>,
 }
 
+/// Returns a nonempty string property from a JSON value.
 fn text<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     value
         .get(key)
@@ -83,6 +91,7 @@ fn text<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
         .filter(|s| !s.is_empty())
 }
 
+/// Identifies the quota backend from provider metadata or model family.
 fn provider(info: &Value, model: &Value, model_id: &str) -> String {
     for name in [
         text(info, "modelProvider"),
@@ -116,6 +125,7 @@ fn provider(info: &Value, model: &Value, model_id: &str) -> String {
     }
 }
 
+/// Normalizes recognizable daily and weekly window labels.
 fn window_name(name: &str) -> String {
     let lower = name.to_lowercase();
     if lower.contains("week")
@@ -132,6 +142,7 @@ fn window_name(name: &str) -> String {
     }
 }
 
+/// Extracts quota counters from an object or array, applying inherited labels.
 fn add_entries(
     entries: &mut Vec<Entry>,
     value: &Value,
@@ -178,6 +189,7 @@ fn add_entries(
     });
 }
 
+/// Collects all supported quota counter representations for a model.
 fn model_entries(model_id: &str, model: &Value) -> Vec<Entry> {
     let mut entries = Vec::new();
     for (field, window) in [
@@ -213,6 +225,7 @@ fn model_entries(model_id: &str, model: &Value) -> Vec<Entry> {
     entries
 }
 
+/// Groups model counters into a quota snapshot by provider, tier, and window.
 fn parse_response(data: &Value) -> Result<QuotaSnapshot, String> {
     let models = data
         .get("models")

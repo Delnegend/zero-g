@@ -1,8 +1,14 @@
+/// Dashboard authentication and session handling.
 pub(crate) mod dashboard_auth;
+/// Cached provider model discovery.
 pub(crate) mod model_catalog;
+/// Model metadata settings and synchronization.
 pub(crate) mod model_settings;
+/// Request logging and dashboard metrics.
 pub(crate) mod observability;
+/// Persistent settings and API keys.
 pub(crate) mod settings;
+/// Embedded dashboard asset serving.
 mod web;
 
 use axum::Router;
@@ -13,14 +19,20 @@ use tower_http::cors::{Any, CorsLayer};
 
 use crate::provider::{self, registry};
 
+/// Shared services used by server routes.
 #[derive(Clone)]
 pub(crate) struct AppState {
+    /// Configured provider clients.
     pub(crate) providers: provider::Providers,
+    /// Persistent settings and credentials.
     pub(crate) settings: settings::SettingsStore,
+    /// Request log storage.
     pub(crate) logs: observability::LogStore,
+    /// Dashboard access protection.
     pub(crate) dashboard_auth: dashboard_auth::DashboardAuth,
 }
 
+/// Assemble public provider routes and protected dashboard routes.
 pub(crate) fn create_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -79,10 +91,12 @@ pub(crate) fn create_router(state: AppState) -> Router {
         ))
 }
 
+/// Return a successful health probe response.
 async fn health_handler() -> impl IntoResponse {
     StatusCode::OK
 }
 
+/// Construct an OpenAI-compatible error object.
 pub(crate) fn error_body(message: &str, error_type: &str, code: Option<&str>) -> serde_json::Value {
     serde_json::json!({
         "error": {

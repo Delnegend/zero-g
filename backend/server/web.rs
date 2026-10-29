@@ -4,11 +4,13 @@ use axum::response::{IntoResponse, Response};
 use rust_embed::Embed;
 use std::borrow::Cow;
 
+/// Dashboard build files embedded in the executable.
 #[derive(Embed)]
 #[folder = "frontend/"]
 #[include = "dist/**"]
 struct DashboardAssets;
 
+/// Serve the dashboard entry point or report a missing build.
 pub(super) async fn index() -> Response {
     serve_asset("dist/index.html").unwrap_or_else(|| {
         (
@@ -19,6 +21,7 @@ pub(super) async fn index() -> Response {
     })
 }
 
+/// Serve static files or the dashboard for client-side routes.
 pub(super) async fn fallback(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
     if crate::provider::is_provider_path(uri.path())
@@ -41,6 +44,7 @@ pub(super) async fn fallback(uri: Uri) -> Response {
     index().await
 }
 
+/// Return an embedded asset with its inferred content type.
 fn serve_asset(path: &str) -> Option<Response> {
     let asset = DashboardAssets::get(path)?;
     let content_type = mime_guess::from_path(path)

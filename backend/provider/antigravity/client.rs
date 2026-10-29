@@ -15,6 +15,7 @@ use crate::provider::antigravity::{AntigravityEvent, map_finish_reason, spawn_ev
 use crate::provider::common::errors::UpstreamError;
 
 impl AntigravityClient {
+    /// Send a streaming generation request, falling back on upstream failures.
     pub(crate) async fn stream_request(
         &self,
         creds: &Credentials,
@@ -63,6 +64,7 @@ impl AntigravityClient {
         Err(last_err)
     }
 
+    /// Collect a streaming generation into a non-streaming chat response.
     pub(crate) async fn complete_non_streaming(
         &self,
         creds: &Credentials,
@@ -87,16 +89,23 @@ impl AntigravityClient {
     }
 }
 
+/// Accumulated events for a non-streaming completion.
 #[derive(Default)]
 struct CollectedResponse {
+    /// Generated response text.
     text: String,
+    /// Generated reasoning text.
     reasoning: String,
+    /// Generated function calls.
     tool_calls: Vec<ToolCall>,
+    /// Upstream finish reason, if received.
     finish_reason: Option<String>,
+    /// Latest token usage reported by the stream.
     usage: Usage,
 }
 
 impl CollectedResponse {
+    /// Incorporate one upstream event into the accumulated response.
     fn apply(&mut self, event: AntigravityEvent) {
         match event {
             AntigravityEvent::Text(text) => self.text.push_str(&text),
@@ -115,6 +124,7 @@ impl CollectedResponse {
         }
     }
 
+    /// Convert accumulated events into an OpenAI-compatible response.
     fn into_response(self, model: String) -> ChatCompletionResponse {
         let created = SystemTime::now()
             .duration_since(UNIX_EPOCH)

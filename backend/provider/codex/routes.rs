@@ -17,6 +17,7 @@ use crate::responses::ResponseCreateRequest;
 use crate::server::AppState;
 use crate::server::settings::{self, Permissions, SettingsStore};
 
+/// Builds the Codex API routes with virtual-key authentication.
 pub(crate) fn router(settings: &SettingsStore) -> Router<AppState> {
     Router::new()
         .route("/v1/models", get(models_handler))
@@ -31,6 +32,7 @@ pub(crate) fn router(settings: &SettingsStore) -> Router<AppState> {
         ))
 }
 
+/// Returns the virtual-key model permission error.
 fn model_forbidden() -> Response {
     (
         StatusCode::FORBIDDEN,
@@ -43,6 +45,7 @@ fn model_forbidden() -> Response {
         .into_response()
 }
 
+/// Removes a recognized Codex provider prefix from a model identifier.
 fn strip_codex_prefix(model: &str) -> String {
     model
         .strip_prefix("openai-codex/")
@@ -51,13 +54,18 @@ fn strip_codex_prefix(model: &str) -> String {
         .to_string()
 }
 
+/// Describes a credential-pool failure and how it should be handled.
 pub(crate) struct PoolError {
+    /// Error message returned to the caller.
     pub(crate) message: String,
+    /// Whether the failure originated locally rather than upstream.
     local: bool,
+    /// Whether another credential may be tried.
     retryable: bool,
 }
 
 impl PoolError {
+    /// Creates a non-retryable local error.
     fn local(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -66,6 +74,7 @@ impl PoolError {
         }
     }
 
+    /// Converts an upstream error, preserving its retryability.
     fn upstream(error: UpstreamError) -> Self {
         Self {
             retryable: error.retryable(),
@@ -74,6 +83,7 @@ impl PoolError {
         }
     }
 
+    /// Converts a credential error, deriving retryability from its upstream status.
     fn credential(error: crate::provider::login::CredentialError) -> Self {
         let retryable = retryable_status(error.upstream_status);
         Self {
@@ -83,6 +93,7 @@ impl PoolError {
         }
     }
 
+    /// Converts the failure into a local or upstream error response.
     fn response(self) -> Response {
         let (status, kind, code) = if self.local {
             (
@@ -101,6 +112,7 @@ impl PoolError {
     }
 }
 
+/// Runs a request against the provider's credentials, retrying eligible failures.
 pub(crate) async fn with_pool<T, F, Fut>(
     state: &AppState,
     provider: &Provider,
@@ -125,6 +137,7 @@ where
     }).await
 }
 
+/// Tries credentials in order until one succeeds or a non-retryable error occurs.
 async fn try_credentials<I, T, F, Fut>(credentials: I, mut request: F) -> Result<T, PoolError>
 where
     I: IntoIterator,
@@ -146,6 +159,7 @@ where
     }))
 }
 
+/// Fetches models and filters them according to virtual-key permissions.
 async fn models_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
@@ -166,6 +180,7 @@ async fn models_handler(
     }
 }
 
+/// Authorizes and forwards a chat completion request through the credential pool.
 async fn chat_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
@@ -195,6 +210,7 @@ async fn chat_handler(
     }
 }
 
+/// Authorizes and forwards a responses request through the credential pool.
 async fn responses_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,

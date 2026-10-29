@@ -12,25 +12,36 @@ use crate::{
     server::settings::SettingsStore,
 };
 
+/// Usage remaining within a provider-defined time window.
 #[derive(Debug, Serialize)]
 pub(crate) struct QuotaWindow {
+    /// Display label for the window.
     pub(crate) label: String,
+    /// Remaining quota as a percentage, when available.
     pub(crate) remaining_percent: Option<f64>,
+    /// Reset timestamp, when provided by the upstream.
     pub(crate) reset_at: Option<i64>,
 }
 
+/// Provider usage represented as quota windows or a monetary balance.
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum QuotaSnapshot {
+    /// Time-windowed quota measurements.
     Quota {
+        /// Individual windows reported by the provider.
         windows: Vec<QuotaWindow>,
     },
+    /// Monetary account balance.
     Balance {
+        /// Balance in the indicated currency.
         amount: f64,
+        /// Currency identifier.
         currency: &'static str,
     },
 }
 
+/// Returns usage for an existing provider credential when supported.
 async fn usage(
     State(store): State<SettingsStore>,
     Path((provider_id, credential_id)): Path<(String, String)>,
@@ -61,6 +72,7 @@ async fn usage(
     }
 }
 
+/// Builds the credential usage route.
 pub(crate) fn router(store: SettingsStore) -> Router {
     Router::new()
         .route(
@@ -70,6 +82,7 @@ pub(crate) fn router(store: SettingsStore) -> Router {
         .with_state(store)
 }
 
+/// Quota parsing and console credential integration checks.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,6 +95,7 @@ mod tests {
     use axum::{body::Body, http::Request};
     use tower::ServiceExt;
 
+    /// Console credentials are scoped, encrypted, and removed with their owner.
     #[tokio::test]
     async fn console_credentials_are_scoped_encrypted_and_deleted() {
         let store = SettingsStore::new(
@@ -182,6 +196,7 @@ mod tests {
                 .is_none()
         );
     }
+    /// Balance conversion uses the upstream microcent value.
     #[test]
     fn balance_uses_actual_microcents() {
         let value = serde_json::json!({"balanceMicroCents":"123456789"});
@@ -190,6 +205,7 @@ mod tests {
         );
         assert!(parse_balance(&serde_json::json!({"availableMicroCents":"1"})).is_err());
     }
+    /// Go usage preserves remaining percentages and requires windows.
     #[test]
     fn go_usage_preserves_remaining_and_rejects_missing_windows() {
         let value = serde_json::json!({"usage":{"rolling":{"percent":25,"resetsAt":"2026-01-01T00:00:00Z"},"weekly":{"percent":80},"monthly":{"percent":101}}});

@@ -23,6 +23,7 @@ use crate::responses::{
 use crate::server::AppState;
 use crate::server::settings::{self, Permissions, SettingsStore};
 
+/// Builds the virtual-key-protected Antigravity API routes.
 pub(crate) fn router(settings: &SettingsStore) -> Router<AppState> {
     Router::new()
         .route("/v1/models", get(models_handler))
@@ -37,6 +38,7 @@ pub(crate) fn router(settings: &SettingsStore) -> Router<AppState> {
         ))
 }
 
+/// Returns the response for a model disallowed by the virtual key.
 fn model_forbidden() -> Response {
     (
         StatusCode::FORBIDDEN,
@@ -49,9 +51,12 @@ fn model_forbidden() -> Response {
         .into_response()
 }
 
+/// Failure while selecting credentials or contacting the upstream service.
 #[derive(Debug)]
 enum PoolError {
+    /// A local configuration or credential failure.
     Internal(String),
+    /// An upstream request failure.
     Upstream(UpstreamError),
 }
 
@@ -64,6 +69,7 @@ impl std::fmt::Display for PoolError {
     }
 }
 
+/// Tries credentials in order, advancing on retryable upstream failures.
 async fn try_candidates<T, F, Fut>(ids: Vec<String>, mut attempt: F) -> Result<T, PoolError>
 where
     F: FnMut(String) -> Fut,
@@ -82,6 +88,7 @@ where
     ))
 }
 
+/// Loads pooled credentials and runs an operation with each eligible candidate.
 async fn with_pool<T, F, Fut>(
     state: &AppState,
     provider: &Provider,
@@ -129,6 +136,7 @@ where
     .await
 }
 
+/// Starts an upstream chat stream using the credential pool.
 async fn pooled_stream(
     state: &AppState,
     provider: &Provider,
@@ -145,6 +153,7 @@ async fn pooled_stream(
     .await
 }
 
+/// Fetches upstream models using the credential pool.
 async fn pool_models(
     state: &AppState,
     provider: &Provider,
@@ -155,6 +164,7 @@ async fn pool_models(
     .await
 }
 
+/// Fetches upstream models, converting pool failures to strings.
 pub(crate) async fn fetch_models(
     state: &AppState,
     provider: &Provider,
@@ -164,6 +174,7 @@ pub(crate) async fn fetch_models(
         .map_err(|error| error.to_string())
 }
 
+/// Converts a pool failure into an API error response.
 fn pool_error_response(error: PoolError) -> Response {
     let (status, kind, code, message) = match error {
         PoolError::Internal(message) => (
@@ -186,6 +197,7 @@ fn pool_error_response(error: PoolError) -> Response {
         .into_response()
 }
 
+/// Lists discovered models permitted by the virtual key.
 async fn models_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
@@ -236,6 +248,7 @@ pub(crate) fn to_model_entry(id: String, info: AntigravityModelInfo) -> ModelEnt
     }
 }
 
+/// Resolves a requested model and reasoning effort against permitted models.
 fn resolve_model(
     models: Vec<(String, AntigravityModelInfo)>,
     model: &str,
@@ -262,12 +275,16 @@ fn resolve_model(
     }
 }
 
+/// Failure fetching or resolving a requested model.
 enum RequestModelError {
+    /// Model discovery failed.
     Pool(PoolError),
+    /// Model resolution or authorization failed.
     Resolve(ResolveError),
 }
 
 impl RequestModelError {
+    /// Converts the failure into an API error response.
     fn into_response(self) -> Response {
         match self {
             Self::Pool(error) => pool_error_response(error),
@@ -285,6 +302,7 @@ impl RequestModelError {
     }
 }
 
+/// Resolves a request model, fetching discovery data when needed.
 async fn resolve_request_model(
     state: &AppState,
     provider: &Provider,
@@ -305,6 +323,7 @@ async fn resolve_request_model(
     resolve_model(models, model, effort, permissions).map_err(RequestModelError::Resolve)
 }
 
+/// Handles streaming and non-streaming chat completion requests.
 async fn chat_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
@@ -341,6 +360,7 @@ async fn chat_handler(
     }
 }
 
+/// Converts an upstream chat stream into chat-completion SSE events.
 async fn handle_chat_streaming(
     state: &AppState,
     provider: &Provider,
@@ -375,6 +395,7 @@ async fn handle_chat_streaming(
     crate::provider::antigravity::sse::spawn_sse(serializer, upstream_resp)
 }
 
+/// Handles streaming and non-streaming Responses API requests.
 // Keep the response assembly and both streaming paths together.
 #[allow(clippy::too_many_lines)]
 async fn responses_handler(
@@ -459,6 +480,7 @@ async fn responses_handler(
     }
 }
 
+/// Converts an upstream chat stream into Responses API SSE events.
 async fn handle_responses_streaming(
     state: &AppState,
     provider: &Provider,

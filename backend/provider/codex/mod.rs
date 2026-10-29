@@ -1,15 +1,24 @@
+/// OAuth credentials and token management for Codex.
 pub(crate) mod auth;
+/// Codex upstream request and stream handling.
 mod client;
+/// Dashboard endpoints for the Codex OAuth flow.
 pub(crate) mod dashboard_login;
+/// Interactive Codex login flow.
 pub(crate) mod login;
+/// Codex model catalog discovery.
 pub(crate) mod models;
+/// Translation of requests into Codex payloads.
 mod payload;
+/// Codex account quota retrieval.
 pub(crate) mod quota;
+/// HTTP routes for Codex requests.
 pub(crate) mod routes;
 
 pub(crate) use auth::CodexAuthManager;
 pub(crate) use client::CodexClient;
 
+/// Codex provider integration for routing, discovery, quota, and dashboard login.
 pub(crate) struct Backend;
 
 impl super::common::Provider for Backend {

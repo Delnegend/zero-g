@@ -6,14 +6,20 @@ use crate::provider::codex::auth::{
     CODEX_CLIENT_ID, CODEX_TOKEN_URL, CodexCredentials, decode_jwt_profile,
 };
 
+/// OAuth authorization-code exchange response.
 #[derive(Deserialize)]
 struct TokenExchangeResponse {
+    /// Access token issued by the OAuth server.
     access_token: String,
+    /// Refresh token, if issued.
     refresh_token: Option<String>,
+    /// Identity token containing optional profile claims.
     id_token: Option<String>,
+    /// Access-token lifetime in seconds.
     expires_in: i64,
 }
 
+/// Exchanges an authorization code and PKCE verifier for Codex credentials.
 pub(crate) async fn exchange_token(
     code: &str,
     verifier: &str,

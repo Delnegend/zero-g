@@ -5,6 +5,7 @@ use crate::responses::{
     ResponseCreateRequest, ResponseInput, ResponseInputItem, ResponseTaggedItem,
 };
 
+/// Converts a chat completion request into the streaming Codex wire payload.
 // These payloads are created as JSON objects; indexing inserts optional wire fields.
 #[allow(clippy::indexing_slicing)]
 pub(super) fn build_codex_payload_from_chat(req: &ChatCompletionRequest) -> Value {
@@ -106,6 +107,7 @@ pub(super) fn build_codex_payload_from_chat(req: &ChatCompletionRequest) -> Valu
     payload
 }
 
+/// Converts a Responses request into the streaming Codex wire payload.
 // The payload is created as a JSON object; indexing inserts optional wire fields.
 #[allow(clippy::indexing_slicing)]
 #[allow(clippy::too_many_lines)]
@@ -235,10 +237,12 @@ pub(super) fn build_codex_payload_from_responses(req: &ResponseCreateRequest) ->
         extract_reasoning_payload(req.reasoning_effort.as_deref(), req.reasoning.as_ref());
     payload
 }
+/// Returns whether a role contributes to the instruction string.
 fn is_system_role(role: &str) -> bool {
     matches!(role, "system" | "developer")
 }
 
+/// Appends nonblank message text to instructions, separated by a blank line.
 fn append_instructions(instructions: &mut String, content: Option<&MessageContent>) {
     let Some(content) = content else { return };
     let text = content.as_text();
@@ -251,6 +255,7 @@ fn append_instructions(instructions: &mut String, content: Option<&MessageConten
     instructions.push_str(&text);
 }
 
+/// Builds reasoning settings, preferring the explicit effort and defaulting summary to auto.
 // Reasoning is created as a JSON object; indexing inserts or replaces wire fields.
 #[allow(clippy::indexing_slicing)]
 fn extract_reasoning_payload(
@@ -279,6 +284,7 @@ fn extract_reasoning_payload(
     reasoning
 }
 
+/// Converts message content to role-appropriate Codex text and image parts.
 fn convert_content_to_input_parts(content: Option<&MessageContent>, role: &str) -> Vec<Value> {
     let mut parts = Vec::new();
     let Some(c) = content else { return parts };

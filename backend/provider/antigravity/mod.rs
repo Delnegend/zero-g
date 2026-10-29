@@ -1,14 +1,26 @@
+/// OAuth credentials and token refresh.
 pub(crate) mod auth;
+/// `OpenAI` chat completion response conversion.
 pub(crate) mod chat;
+/// Upstream HTTP client operations.
 mod client;
+/// Dashboard OAuth login endpoints.
 pub(crate) mod dashboard_login;
+/// Interactive OAuth login flow.
 pub(crate) mod login;
+/// Upstream model discovery and normalization.
 pub(crate) mod models;
+/// Conversion of requests to upstream payloads.
 mod payload;
+/// Account quota discovery and normalization.
 pub(crate) mod quota;
+/// `OpenAI` responses API conversion.
 pub(crate) mod responses;
+/// Provider API routes.
 pub(crate) mod routes;
+/// Server-sent event response handling.
 pub(crate) mod sse;
+/// Upstream streaming event decoding.
 mod stream;
 
 pub(crate) use auth::{AuthManager, Credentials};
@@ -16,11 +28,14 @@ pub(crate) use models::AntigravityModelInfo;
 use stream::map_finish_reason;
 pub(crate) use stream::{AntigravityEvent, spawn_event_stream};
 
+/// HTTP client for the Antigravity upstream API.
 pub(crate) struct AntigravityClient {
+    /// Shared connection pool used for upstream requests.
     client: reqwest::Client,
 }
 
 impl AntigravityClient {
+    /// Creates a client with a fresh HTTP connection pool.
     pub(crate) fn new() -> Self {
         Self {
             client: reqwest::Client::new(),
@@ -28,6 +43,7 @@ impl AntigravityClient {
     }
 }
 
+/// Provider integration for Antigravity.
 pub(crate) struct Backend;
 
 impl super::common::Provider for Backend {

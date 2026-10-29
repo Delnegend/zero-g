@@ -1,11 +1,19 @@
+/// Settings API contract tests.
 #[cfg(test)]
 mod contract;
+/// Database connection and transaction retry support.
 mod database;
+/// OpenAI-compatible chat wire types.
 mod openai;
+/// Upstream provider implementations.
 mod provider;
+/// Responses API wire types and chat conversion.
 mod responses;
+/// HTTP server routes and state.
 mod server;
+/// Persistent database models.
 mod storage;
+/// Shared encoding helpers.
 mod util;
 
 use std::net::SocketAddr;
@@ -20,26 +28,36 @@ use crate::server::observability::LogStore;
 use crate::server::settings::SettingsStore;
 use crate::server::{AppState, create_router};
 
+/// Failures while configuring or serving the proxy.
 #[derive(Debug, thiserror::Error)]
 enum ServerError {
+    /// The retention setting is not an integer.
     #[error("log_retention_days must be a positive integer")]
     InvalidLogRetention(#[source] std::num::ParseIntError),
+    /// The retention setting falls outside the supported range.
     #[error("log_retention_days must be between 1 and 36500")]
     LogRetentionOutOfRange,
+    /// Dashboard authentication could not be configured.
     #[error("{0}")]
     DashboardAuth(String),
+    /// The configured bind address could not be parsed.
     #[error("Invalid bind address: {0}")]
     InvalidBindAddress(#[source] std::net::AddrParseError),
+    /// The listening socket could not be bound.
     #[error("Failed to bind to {addr}: {source}")]
     Bind {
+        /// Address that failed to bind.
         addr: SocketAddr,
+        /// Underlying socket error.
         #[source]
         source: std::io::Error,
     },
+    /// The HTTP server terminated with an I/O error.
     #[error("Server terminated with error: {0}")]
     Serve(#[source] std::io::Error),
 }
 
+/// Initializes storage and runs the web service.
 #[tokio::main]
 async fn main() -> ExitCode {
     if std::env::args_os().nth(1).is_some() {
@@ -67,6 +85,7 @@ async fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Opens settings and request logs and applies the configured retention.
 async fn open_stores() -> Result<(SettingsStore, LogStore), String> {
     let path = std::env::var("ZERO_G_LOG_DB").unwrap_or_else(|_| "zero-g-logs.db".into());
     let key = std::env::var("ZERO_G_ENCRYPTION_KEY")
@@ -87,6 +106,7 @@ async fn open_stores() -> Result<(SettingsStore, LogStore), String> {
     Ok((settings, logs))
 }
 
+/// Constructs shared HTTP state and configures dashboard authentication.
 async fn init_state(settings: SettingsStore, logs: LogStore) -> Result<AppState, ServerError> {
     let dashboard_auth = crate::server::dashboard_auth::DashboardAuth::from_env()
         .await
@@ -100,11 +120,13 @@ async fn init_state(settings: SettingsStore, logs: LogStore) -> Result<AppState,
     })
 }
 
+/// Logs the listening address and inference route format.
 fn log_endpoints(addr: SocketAddr) {
     info!("zero-g multi-provider proxy running at http://{addr}");
     info!("  Inference routes: http://{addr}/{{kind}}/{{id}}/v1");
     info!("  Inference routes require a virtual key");
 }
+/// Waits for an interrupt or, on Unix, a termination signal.
 async fn shutdown_signal() {
     #[cfg(unix)]
     {
@@ -127,6 +149,7 @@ async fn shutdown_signal() {
     }
 }
 
+/// Serves the router until shutdown, then stops the provider process.
 async fn bind_and_serve(
     addr: SocketAddr,
     app: axum::Router,
@@ -148,6 +171,7 @@ async fn bind_and_serve(
     Ok(())
 }
 
+/// Configures the listener, background tasks, and provider process.
 async fn run_server(settings: SettingsStore, logs: LogStore) -> Result<(), ServerError> {
     let bind = std::env::var("ZERO_G_BIND")
         .ok()

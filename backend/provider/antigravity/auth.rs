@@ -9,6 +9,7 @@ use tracing::info;
 use crate::provider::login::CredentialError;
 use crate::server::settings::SettingsStore;
 
+/// Reads the configured nonempty Google OAuth client ID.
 pub(crate) async fn oauth_client_id(store: &SettingsStore) -> Result<String, String> {
     store
         .setting_get("oauth_client_id")
@@ -17,6 +18,7 @@ pub(crate) async fn oauth_client_id(store: &SettingsStore) -> Result<String, Str
         .ok_or_else(|| "Google OAuth client ID is not configured".to_string())
 }
 
+/// Reads the configured nonempty Google OAuth client secret.
 pub(crate) async fn oauth_client_secret(store: &SettingsStore) -> Result<String, String> {
     store
         .secret_get("oauth_client_secret")
@@ -25,11 +27,16 @@ pub(crate) async fn oauth_client_secret(store: &SettingsStore) -> Result<String,
         .ok_or_else(|| "Google OAuth client secret is not configured".to_string())
 }
 
+/// Port used by the local Google OAuth callback listener.
 pub(crate) const OAUTH_CALLBACK_PORT: u16 = 51123;
+/// Path served by the local OAuth callback listener.
 pub(crate) const OAUTH_CALLBACK_PATH: &str = "/oauth-callback";
+/// Redirect URI registered for the local OAuth callback.
 pub(crate) const OAUTH_CALLBACK_URL: &str = "http://127.0.0.1:51123/oauth-callback";
+/// Google endpoint for authorization-code exchanges and token refreshes.
 pub(crate) const OAUTH_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 
+/// Google OAuth scopes requested for Antigravity access.
 pub(crate) const OAUTH_SCOPES: &[&str] = &[
     "https://www.googleapis.com/auth/cloud-platform",
     "https://www.googleapis.com/auth/userinfo.email",
@@ -38,35 +45,52 @@ pub(crate) const OAUTH_SCOPES: &[&str] = &[
     "https://www.googleapis.com/auth/experimentsandconfigs",
 ];
 
+/// Cloud Code Assist API endpoint used by Antigravity.
 pub(super) const CLOUD_CODE_ASSIST_ENDPOINT: &str = "https://daily-cloudcode-pa.googleapis.com";
+/// User agent sent to Cloud Code Assist.
 pub(super) const ANTIGRAVITY_USER_AGENT: &str =
     "antigravity/hub/2.19.1 (aidev_client; os_type=linux; arch=x64; cl=963137146)";
 
+/// Stored Google credentials and associated Cloud Code Assist project.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Credentials {
+    /// Google OAuth access token.
     pub(crate) access_token: String,
+    /// Optional token used to refresh access.
     pub(crate) refresh_token: Option<String>,
+    /// Cloud Code Assist project identifier.
     pub(crate) project_id: String,
+    /// Access-token expiration in milliseconds since the Unix epoch.
     pub(crate) expires_at: Option<i64>, // Milliseconds since UNIX epoch
+    /// Email address associated with the Google account, when available.
     pub(crate) email: Option<String>,
 }
 
+/// Loads, refreshes, and persists credentials for one provider credential.
 #[derive(Clone)]
 pub(crate) struct AuthManager {
+    /// Current credentials shared by manager clones.
     creds: Arc<RwLock<Credentials>>,
+    /// Store containing OAuth configuration and credentials.
     store: SettingsStore,
+    /// Provider that owns the credential.
     provider_id: String,
+    /// Identifier of the credential in the settings store.
     credential_id: String,
 }
 
+/// Fields returned by Google's token refresh endpoint.
 #[derive(Deserialize)]
 struct TokenRefreshResponse {
+    /// Refreshed access token.
     access_token: String,
+    /// Access-token lifetime in seconds.
     expires_in: i64,
 }
 
 impl AuthManager {
+    /// Loads stored credentials after validating their provider association.
     pub(crate) async fn load(
         store: SettingsStore,
         provider_id: &str,
@@ -95,6 +119,7 @@ impl AuthManager {
         }))
     }
 
+    /// Reloads credentials and refreshes an access token nearing expiration.
     pub(crate) async fn get_credentials(&self) -> Result<Credentials, CredentialError> {
         let lock = crate::provider::login::credential_lock(&self.credential_id).await;
         let _guard = lock.lock().await;
@@ -133,6 +158,7 @@ impl AuthManager {
         Ok(r.clone())
     }
 
+    /// Refreshes and saves the access token when a refresh token is available.
     async fn refresh(&self) -> Result<(), CredentialError> {
         let current = self.creds.read().await.clone();
         let refresh_token = current.refresh_token.clone();
@@ -199,6 +225,7 @@ impl AuthManager {
         Ok(())
     }
 
+    /// Serializes and stores credentials for the specified provider credential.
     pub(crate) async fn save(
         store: &SettingsStore,
         provider_id: &str,

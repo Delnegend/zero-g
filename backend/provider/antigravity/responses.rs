@@ -4,17 +4,28 @@ use serde_json::json;
 use crate::provider::antigravity::AntigravityEvent;
 use crate::responses::{ResponseContentPart, ResponseObject, ResponseOutputItem, ResponseUsage};
 
+/// Serializes provider events into Responses API stream events.
 #[allow(clippy::struct_excessive_bools)]
 pub(crate) struct ResponsesStreamSerializer {
+    /// Response identifier.
     pub(crate) resp_id: String,
+    /// Identifier for the assistant message item.
     pub(crate) msg_id: String,
+    /// Response creation timestamp.
     pub(crate) created: u64,
+    /// Model name requested by the caller.
     pub(crate) original_model: String,
+    /// Whether an assistant message is currently open.
     pub(crate) message_in_progress: bool,
+    /// Output index of the current assistant message.
     pub(crate) message_index: Option<usize>,
+    /// Index assigned to the next output item.
     pub(crate) next_output_index: usize,
+    /// Accumulated assistant text.
     pub(crate) full_text: String,
+    /// Most recently received token usage.
     pub(crate) usage: ResponseUsage,
+    /// Completed output items paired with their output indices.
     pub(crate) output_items: Vec<(usize, ResponseOutputItem)>,
 }
 
@@ -209,6 +220,7 @@ impl crate::provider::antigravity::sse::SseSerializer for ResponsesStreamSeriali
 }
 
 impl ResponsesStreamSerializer {
+    /// Appends stream events for a function call and records its output item.
     fn tool_call_events(
         &mut self,
         id: String,

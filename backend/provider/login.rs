@@ -4,13 +4,17 @@ use std::sync::{Arc, LazyLock, Weak};
 use axum::http::{HeaderMap, StatusCode, header};
 use tokio::sync::Mutex;
 
+/// Credential operation failure, optionally carrying an upstream HTTP status.
 #[derive(Debug)]
 pub(crate) struct CredentialError {
+    /// Human-readable error detail.
     pub(crate) message: String,
+    /// Status returned by the upstream, if available.
     pub(crate) upstream_status: Option<reqwest::StatusCode>,
 }
 
 impl CredentialError {
+    /// Creates an error from an upstream response.
     pub(crate) const fn upstream(status: reqwest::StatusCode, message: String) -> Self {
         Self {
             message,
@@ -36,9 +40,11 @@ impl From<String> for CredentialError {
     }
 }
 
+/// Weakly held per-credential locks used to serialize credential operations.
 static REFRESH_LOCKS: LazyLock<Mutex<HashMap<String, Weak<Mutex<()>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// Returns the shared lock for an identifier, removing expired entries.
 pub(crate) async fn credential_lock(id: &str) -> Arc<Mutex<()>> {
     let mut locks = REFRESH_LOCKS.lock().await;
     locks.retain(|_, lock| lock.strong_count() > 0);
@@ -50,6 +56,7 @@ pub(crate) async fn credential_lock(id: &str) -> Arc<Mutex<()>> {
     lock
 }
 
+/// Rejects requests whose Origin does not match the Host and effective port.
 pub(crate) fn same_origin(headers: &HeaderMap) -> Result<(), (StatusCode, String)> {
     let origin = headers
         .get(header::ORIGIN)
@@ -82,10 +89,12 @@ pub(crate) fn same_origin(headers: &HeaderMap) -> Result<(), (StatusCode, String
     Ok(())
 }
 
+/// Creates a bad-request response with the supplied message.
 pub(crate) fn error(message: impl Into<String>) -> (StatusCode, String) {
     (StatusCode::BAD_REQUEST, message.into())
 }
 
+/// Requires a configured provider of the expected kind.
 pub(crate) async fn require_provider(
     store: &crate::server::settings::SettingsStore,
     id: &str,
@@ -106,6 +115,7 @@ pub(crate) async fn require_provider(
     Ok(())
 }
 
+/// Requires an enabled credential belonging to a provider of the expected kind.
 pub(crate) async fn require_credential(
     store: &crate::server::settings::SettingsStore,
     provider_id: &str,
@@ -128,12 +138,14 @@ pub(crate) async fn require_credential(
     Ok(())
 }
 
+/// Credential isolation and origin validation checks.
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::same_origin;
     use axum::http::{HeaderMap, HeaderValue, header};
 
+    /// Deleted credentials cannot be restored by stale login state.
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn credentials_are_isolated_and_cannot_be_resurrected() {
@@ -311,6 +323,7 @@ mod tests {
         );
     }
 
+    /// Origin checks use Host rather than forwarded headers.
     #[test]
     fn origin_checks_public_host_without_trusting_forwarded_headers() {
         let mut headers = HeaderMap::new();

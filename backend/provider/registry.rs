@@ -15,11 +15,16 @@ use crate::{
     storage::{ProviderCredential, ProviderRecord, Secret, Setting, VirtualKey},
 };
 
+/// Active configured provider instance exposed by the registry.
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct Provider {
+    /// Stable instance identifier.
     pub(crate) id: String,
+    /// User-facing instance name.
     pub(crate) name: String,
+    /// Backend kind identifier.
     pub(crate) kind: String,
+    /// Configured upstream base URL.
     pub(crate) base_url: String,
 }
 
@@ -34,6 +39,7 @@ impl From<ProviderRecord> for Provider {
     }
 }
 
+/// Retrieves an active provider by identifier.
 pub(crate) async fn get(database: &Database, id: &str) -> Result<Option<Provider>, String> {
     Ok(ProviderRecord::filter_by_id(id)
         .first()
@@ -44,6 +50,7 @@ pub(crate) async fn get(database: &Database, id: &str) -> Result<Option<Provider
         .map(Provider::from))
 }
 
+/// Lists all active providers.
 pub(crate) async fn list(database: &Database) -> Result<Vec<Provider>, String> {
     Ok(ProviderRecord::all()
         .exec(&mut (*database.db).clone())
@@ -55,23 +62,32 @@ pub(crate) async fn list(database: &Database) -> Result<Vec<Provider>, String> {
         .collect())
 }
 
+/// Request to create a provider instance.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CreateProvider {
+    /// Requested instance identifier for non-fixed kinds.
     id: Option<String>,
+    /// Requested instance name for non-fixed kinds.
     name: Option<String>,
+    /// Backend kind identifier.
     kind: String,
+    /// Upstream base URL, empty when the backend supplies a default.
     #[serde(default)]
     base_url: String,
 }
 
+/// Mutable provider instance properties.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct UpdateProvider {
+    /// Replacement display name, if supplied.
     name: Option<String>,
+    /// Replacement upstream base URL, if supplied.
     base_url: Option<String>,
 }
 
+/// Validates provider identity, kind, and upstream URL.
 fn validate(id: &str, name: &str, kind: &str, base_url: &str) -> Result<(), &'static str> {
     if id.is_empty()
         || id.len() > 64
@@ -103,6 +119,7 @@ fn validate(id: &str, name: &str, kind: &str, base_url: &str) -> Result<(), &'st
     Ok(())
 }
 
+/// Checks whether another active provider conflicts by kind or base URL.
 fn duplicate(rows: &[ProviderRecord], id: &str, kind: &str, base_url: &str) -> bool {
     rows.iter()
         .filter(|row| !row.deleted && row.id != id && row.kind == kind)
@@ -124,15 +141,18 @@ fn duplicate(rows: &[ProviderRecord], id: &str, kind: &str, base_url: &str) -> b
         })
 }
 
+/// Logs registry storage errors and returns a generic server response.
 fn internal_error(error: &str) -> Response {
     tracing::error!("Provider registry error: {error}");
     (StatusCode::INTERNAL_SERVER_ERROR, "Provider registry error").into_response()
 }
 
+/// Returns the supported provider kind descriptors.
 async fn list_provider_kinds() -> impl IntoResponse {
     Json(json!({"kinds": PROVIDER_KINDS}))
 }
 
+/// Returns the active provider instances.
 async fn list_providers(State(store): State<SettingsStore>) -> Response {
     let providers = match list(&store.database).await {
         Ok(providers) => providers,
@@ -141,6 +161,7 @@ async fn list_providers(State(store): State<SettingsStore>) -> Response {
     Json(json!({"providers": providers})).into_response()
 }
 
+/// Creates a provider after validating identity and uniqueness.
 async fn create_provider(
     State(store): State<SettingsStore>,
     Json(input): Json<CreateProvider>,
@@ -237,6 +258,7 @@ async fn create_provider(
     }
 }
 
+/// Updates a provider's mutable properties.
 async fn update_provider(
     State(store): State<SettingsStore>,
     Path(id): Path<String>,
@@ -304,6 +326,7 @@ async fn update_provider(
     }
 }
 
+/// Deletes a provider and its associated credentials and state.
 async fn delete_provider(State(store): State<SettingsStore>, Path(id): Path<String>) -> Response {
     let provider_lock = crate::provider::login::credential_lock(&format!("provider:{id}")).await;
     let _provider_guard = provider_lock.lock().await;
@@ -442,6 +465,7 @@ pub(crate) async fn migrate_fixed_identities(store: &SettingsStore) -> Result<()
     }).await.map_err(|e| e.to_string())?
 }
 
+/// Builds provider registry management routes.
 pub(crate) fn router(store: SettingsStore) -> Router {
     Router::new()
         .route("/api/provider-kinds", route_get(list_provider_kinds))
@@ -457,6 +481,7 @@ pub(crate) fn router(store: SettingsStore) -> Router {
         .merge(credentials::router(store))
 }
 
+/// Provider registry and credential lifecycle integration checks.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -466,6 +491,7 @@ mod tests {
     };
     use tower::ServiceExt;
 
+    /// Sends a JSON request to a registry test router.
     async fn request(
         router: &Router,
         method: &str,
@@ -492,6 +518,7 @@ mod tests {
         )
     }
 
+    /// Credentials remain isolated and are deleted with their provider.
     #[tokio::test]
     async fn credentials_are_isolated_encrypted_and_deleted_with_provider() {
         let database = Database::open(":memory:").await.unwrap();
@@ -594,6 +621,7 @@ mod tests {
         assert!(store.secret_get(&secret_name).await.unwrap().is_none());
     }
 
+    /// Provider uniqueness and credential input validation are enforced.
     #[tokio::test]
     async fn provider_uniqueness_and_credential_validation() {
         let store = SettingsStore::new(
@@ -660,6 +688,7 @@ mod tests {
             StatusCode::CONFLICT
         );
     }
+    /// Built-in provider identifiers and names cannot be overridden.
     #[tokio::test]
     async fn fixed_provider_identity_is_enforced() {
         let store = SettingsStore::new(
@@ -723,6 +752,7 @@ mod tests {
         );
     }
 
+    /// Recreating a provider respects existing virtual-key restrictions.
     #[tokio::test]
     async fn provider_recreation_respects_virtual_keys() {
         let store = SettingsStore::new(
@@ -798,6 +828,7 @@ mod tests {
         assert_eq!(request(&router, "POST", "/api/providers", r#"{"id":"custom","name":"Custom","kind":"openai","base_url":"https://example.com"}"#).await.0, StatusCode::CONFLICT);
     }
 
+    /// Creates a store with data for identity cutover checks.
     async fn cutover_fixture() -> SettingsStore {
         let store = SettingsStore::new(
             Database::open(":memory:").await.unwrap(),
@@ -853,6 +884,7 @@ mod tests {
         store
     }
 
+    /// Identity cutover is atomic and retains access restrictions.
     #[tokio::test]
     async fn identity_cutover_is_atomic_and_preserves_restrictions() {
         let store = cutover_fixture().await;

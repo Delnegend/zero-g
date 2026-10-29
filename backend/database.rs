@@ -1,13 +1,17 @@
 use std::{future::Future, sync::Arc, time::Duration};
 
+/// Schema migrations embedded at compile time.
 static MIGRATIONS: toasty::migration::MigrationSet = toasty::embed_migrations!();
 
+/// Shared connection to the application database.
 #[derive(Clone)]
 pub(crate) struct Database {
+    /// Toasty connection shared by the stores.
     pub(crate) db: Arc<toasty::Db>,
 }
 
 impl Database {
+    /// Opens the database, registers models, and applies embedded migrations.
     pub(crate) async fn open(path: &str) -> Result<Self, String> {
         if path != ":memory:" {
             let mut options = std::fs::OpenOptions::new();

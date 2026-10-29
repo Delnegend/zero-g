@@ -7,39 +7,64 @@
  */
 import * as zod from "zod";
 
+/**
+ * @summary Returns current settings and whether an OAuth secret is configured.
+ */
 export const getSettingsResponseLogRetentionDaysMin = 0;
 export const getSettingsResponseLogRetentionDaysMax = 4294967295;
 
-export const GetSettingsResponse = zod.object({
-  log_retention_days: zod
-    .int()
-    .min(getSettingsResponseLogRetentionDaysMin)
-    .max(getSettingsResponseLogRetentionDaysMax),
-  oauth_client_id: zod.string(),
-  oauth_client_secret_set: zod.boolean(),
-});
+export const GetSettingsResponse = zod
+  .object({
+    log_retention_days: zod
+      .int()
+      .min(getSettingsResponseLogRetentionDaysMin)
+      .max(getSettingsResponseLogRetentionDaysMax)
+      .describe("Number of days to retain logs."),
+    oauth_client_id: zod.string().describe("Configured OAuth client ID."),
+    oauth_client_secret_set: zod
+      .boolean()
+      .describe("Whether an OAuth client secret is stored."),
+  })
+  .describe("Dashboard-visible settings without the OAuth client secret.");
 
+/**
+ * @summary Validates and atomically applies supplied settings.
+ */
 export const updateSettingsBodyLogRetentionDaysMin = 0;
 export const updateSettingsBodyLogRetentionDaysMax = 4294967295;
 
-export const UpdateSettingsBody = zod.object({
-  log_retention_days: zod
-    .int()
-    .min(updateSettingsBodyLogRetentionDaysMin)
-    .max(updateSettingsBodyLogRetentionDaysMax)
-    .nullish(),
-  oauth_client_id: zod.string().nullish(),
-  oauth_client_secret: zod.string().nullish(),
-});
+export const UpdateSettingsBody = zod
+  .object({
+    log_retention_days: zod
+      .int()
+      .min(updateSettingsBodyLogRetentionDaysMin)
+      .max(updateSettingsBodyLogRetentionDaysMax)
+      .nullish()
+      .describe("Optional log retention in days."),
+    oauth_client_id: zod
+      .string()
+      .nullish()
+      .describe("Optional replacement OAuth client ID."),
+    oauth_client_secret: zod
+      .string()
+      .nullish()
+      .describe("Optional replacement secret; an empty string clears it."),
+  })
+  .describe("Partial settings update supplied by the dashboard.");
 
 export const updateSettingsResponseLogRetentionDaysMin = 0;
 export const updateSettingsResponseLogRetentionDaysMax = 4294967295;
 
-export const UpdateSettingsResponse = zod.object({
-  log_retention_days: zod
-    .int()
-    .min(updateSettingsResponseLogRetentionDaysMin)
-    .max(updateSettingsResponseLogRetentionDaysMax),
-  oauth_client_id: zod.string(),
-  oauth_client_secret_set: zod.boolean(),
-});
+export const UpdateSettingsResponse = zod
+  .object({
+    log_retention_days: zod
+      .int()
+      .min(updateSettingsResponseLogRetentionDaysMin)
+      .max(updateSettingsResponseLogRetentionDaysMax)
+      .describe("Number of days to retain logs."),
+    oauth_client_id: zod.string().describe("Configured OAuth client ID."),
+    oauth_client_secret_set: zod
+      .boolean()
+      .describe("Whether an OAuth client secret is stored."),
+  })
+  .describe("Dashboard-visible settings without the OAuth client secret.");

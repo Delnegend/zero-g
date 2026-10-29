@@ -1,5 +1,6 @@
 use utoipa::OpenApi;
 
+/// `OpenAPI` document for the settings endpoints.
 #[derive(OpenApi)]
 #[openapi(
     paths(
@@ -13,16 +14,19 @@ use utoipa::OpenApi;
 )]
 struct SettingsApi;
 
+/// Serializes the settings `OpenAPI` document as formatted JSON.
 fn openapi_json() -> Result<String, serde_json::Error> {
     SettingsApi::openapi().to_pretty_json()
 }
 
+/// Settings API contract coverage.
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use serde_json::Value;
 
+    /// Checks operation IDs, response schemas, and retention integer bounds.
     #[test]
     fn settings_contract_exposes_operations_and_u32_bounds() {
         let json = openapi_json().unwrap();

@@ -18,24 +18,37 @@ use serde_json::{Value, json};
 use crate::server::{AppState, settings::SettingsStore};
 use crate::storage::Setting;
 
+/// Settings key for model synchronization configuration.
 const CONFIG_KEY: &str = "model_settings";
+/// Settings key for the cached pricing sheet.
 const PRICING_KEY: &str = "model_pricing_datasheet";
+/// Settings key for the cached model parameters sheet.
 const PARAMETERS_KEY: &str = "model_parameters_datasheet";
 // The Bifrost parameters datasheet is tens of megabytes. Bound both the wire
 // body and time spent downloading it without rejecting the published sheet.
+/// Maximum accepted size of a downloaded sheet.
 const MAX_DATASHEET_BYTES: usize = 128 * 1024 * 1024;
+/// Overall timeout for downloading a sheet.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(120);
+/// Frequency at which background jobs check their schedules.
 const SCHEDULER_POLL: Duration = Duration::from_secs(5);
+/// Conflict reported when sheet URLs change during synchronization.
 const SETTINGS_CHANGED: &str =
     "Datasheet URLs changed during sync; retry with the current settings";
+/// Serializes concurrent datasheet synchronizations.
 static SYNC_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// URLs and intervals governing model metadata refreshes.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ModelSettings {
+    /// Pricing datasheet URL.
     pricing_url: String,
+    /// Model parameters datasheet URL.
     parameters_url: String,
+    /// Datasheet refresh interval in hours; zero disables refresh.
     pricing_interval_hours: u64,
+    /// Provider discovery interval in minutes; zero disables discovery.
     discovery_interval_minutes: u64,
 }
 
@@ -51,6 +64,7 @@ impl Default for ModelSettings {
 }
 
 impl ModelSettings {
+    /// Validate URLs and ensure intervals fit when converted to seconds.
     fn validate(&self) -> Result<(), &'static str> {
         validate_url(&self.pricing_url)?;
         validate_url(&self.parameters_url)?;
@@ -63,6 +77,7 @@ impl ModelSettings {
     }
 }
 
+/// Accept only HTTP(S) URLs without credentials or fragments.
 fn validate_url(input: &str) -> Result<reqwest::Url, &'static str> {
     let url =
         reqwest::Url::parse(input).map_err(|_| "Datasheet URL must be a valid HTTP(S) URL")?;
@@ -77,6 +92,7 @@ fn validate_url(input: &str) -> Result<reqwest::Url, &'static str> {
     Ok(url)
 }
 
+/// Load saved configuration or use defaults when none exists.
 async fn load_settings(store: &SettingsStore) -> Result<ModelSettings, String> {
     store
         .setting_get(CONFIG_KEY)
@@ -91,6 +107,7 @@ async fn load_settings(store: &SettingsStore) -> Result<ModelSettings, String> {
         )
 }
 
+/// Return the current model synchronization settings.
 async fn get_settings(State(state): State<AppState>) -> Response {
     load_settings(&state.settings).await.map_or_else(
         |_| {
@@ -103,6 +120,7 @@ async fn get_settings(State(state): State<AppState>) -> Response {
     )
 }
 
+/// Validate and persist model synchronization settings.
 async fn put_settings(
     State(state): State<AppState>,
     Json(mut settings): Json<ModelSettings>,
@@ -146,16 +164,19 @@ async fn put_settings(
     Json(settings).into_response()
 }
 
+/// Construct a JSON error response.
 fn error(status: StatusCode, message: &str) -> Response {
     (status, Json(json!({"error": message}))).into_response()
 }
 
+/// Download a datasheet within the configured timeout.
 async fn fetch_datasheet(input: &str) -> Result<String, String> {
     tokio::time::timeout(FETCH_TIMEOUT, fetch_datasheet_inner(input))
         .await
         .map_err(|_| "Datasheet request timed out")?
 }
 
+/// Download and validate a size-limited JSON object without following redirects.
 async fn fetch_datasheet_inner(input: &str) -> Result<String, String> {
     let url = validate_url(input)?;
     let client = reqwest::Client::builder()
@@ -196,6 +217,7 @@ async fn fetch_datasheet_inner(input: &str) -> Result<String, String> {
     String::from_utf8(body).map_err(|_| "Datasheet is not valid UTF-8".into())
 }
 
+/// Fetch both sheets under the synchronization lock and save them together.
 async fn sync_datasheets(store: &SettingsStore) -> Result<(), String> {
     let _guard = SYNC_LOCK.lock().await;
     let settings = load_settings(store).await?;
@@ -209,6 +231,7 @@ async fn sync_datasheets(store: &SettingsStore) -> Result<(), String> {
     save_datasheets(store, &settings, &pricing, &parameters).await
 }
 
+/// Atomically save both sheets only if their configured URLs are unchanged.
 async fn save_datasheets(
     store: &SettingsStore,
     settings: &ModelSettings,
@@ -256,6 +279,7 @@ async fn save_datasheets(
     }
 }
 
+/// Handle an on-demand datasheet synchronization.
 async fn sync(State(state): State<AppState>) -> Response {
     match sync_datasheets(&state.settings).await {
         Ok(()) => Json(json!({"ok": true})).into_response(),
@@ -264,13 +288,17 @@ async fn sync(State(state): State<AppState>) -> Response {
     }
 }
 
+/// Model identifiers used to select relevant datasheet entries.
 #[derive(Default)]
 struct CatalogModels {
+    /// Discovered model identifiers.
     ids: HashSet<String>,
+    /// Pairs of provider identifier or kind and model identifier.
     provider_models: HashSet<(String, String)>,
 }
 
 impl CatalogModels {
+    /// Collect model identifiers and provider associations from a catalog.
     fn from_catalog(catalog: &Value) -> Self {
         let mut result = Self::default();
         if let Some(providers) = catalog.get("providers").and_then(Value::as_array) {
@@ -294,6 +322,7 @@ impl CatalogModels {
         result
     }
 
+    /// Match either the sheet key or its provider and base model.
     fn matches(&self, key: &str, value: &Value) -> bool {
         if self.ids.contains(key) {
             return true;
@@ -310,6 +339,7 @@ impl CatalogModels {
     }
 }
 
+/// Streaming deserializer retaining only entries relevant to the catalog.
 // Parse one entry at a time instead of constructing the entire large sheet.
 // Retain original keys so the UI can match exactly as it does with the source.
 struct RelevantEntries<'a>(&'a CatalogModels);
@@ -343,6 +373,7 @@ impl<'de> Visitor<'de> for RelevantEntries<'_> {
     }
 }
 
+/// Filter a cached datasheet to discovered models.
 fn filter_datasheet(sheet: &str, models: &CatalogModels) -> Result<Value, String> {
     let mut deserializer = serde_json::Deserializer::from_str(sheet);
     let selected = RelevantEntries(models)
@@ -352,6 +383,7 @@ fn filter_datasheet(sheet: &str, models: &CatalogModels) -> Result<Value, String
     Ok(Value::Object(selected))
 }
 
+/// Return cached pricing and parameters for discovered models.
 async fn get_data(State(state): State<AppState>) -> Response {
     async fn read(
         store: &SettingsStore,
@@ -395,6 +427,7 @@ async fn get_data(State(state): State<AppState>) -> Response {
     }
 }
 
+/// Build routes for model configuration and metadata.
 pub(crate) fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/model-settings", get(get_settings).put(put_settings))
@@ -403,10 +436,12 @@ pub(crate) fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
+/// Determine whether a nonzero interval has elapsed since the last run.
 fn due(last: Option<Instant>, seconds: u64) -> bool {
     seconds != 0 && last.is_none_or(|last| last.elapsed().as_secs() >= seconds)
 }
 
+/// Run independent periodic datasheet and provider-discovery loops.
 pub(crate) async fn run_background(state: AppState) {
     // Discovery must not wait behind large or slow datasheet downloads.
     let pricing = async {
@@ -444,10 +479,12 @@ pub(crate) async fn run_background(state: AppState) {
     tokio::join!(pricing, discovery);
 }
 
+/// Model metadata validation, scheduling, and persistence tests.
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Reject invalid URLs and overflowing refresh intervals.
     #[test]
     fn validates_urls_and_intervals() {
         let mut settings = ModelSettings::default();
@@ -465,6 +502,7 @@ mod tests {
         assert!(settings.validate().is_err());
     }
 
+    /// Accept local HTTP datasheets without following redirects.
     #[tokio::test]
     async fn fetches_local_http_and_rejects_redirects() {
         let app = Router::new()
@@ -537,6 +575,7 @@ mod tests {
         server.abort();
     }
 
+    /// Zero intervals disable jobs and new schedules run immediately.
     #[test]
     fn disabled_and_initial_schedules() {
         assert!(!due(None, 0));
@@ -544,6 +583,7 @@ mod tests {
         assert!(!due(Some(Instant::now()), 60));
     }
 
+    /// Select datasheet entries corresponding to discovered models.
     #[test]
     fn filters_datasheets_by_catalog() {
         let models = CatalogModels::from_catalog(&json!({
@@ -563,6 +603,7 @@ mod tests {
         assert!(filter_datasheet("{} trailing", &models).is_err());
     }
 
+    /// Reject stale downloads without replacing the cached pair.
     #[tokio::test]
     async fn changed_urls_do_not_replace_cached_pair() {
         let database = crate::database::Database::open(":memory:").await.unwrap();

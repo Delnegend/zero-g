@@ -6,14 +6,20 @@ use serde_json::{Value, json};
 use crate::openai::{ChatCompletionRequest, ChatMessage, ContentPart, MessageContent, Tool};
 use crate::provider::antigravity::AntigravityClient;
 
+/// Per-request identifiers and model-specific metadata.
 struct RequestMeta {
+    /// Whether the wire model is a Claude model.
     is_claude: bool,
+    /// Generated session identifier.
     session_id: String,
+    /// Generated trajectory identifier.
     traj_id: String,
+    /// Generated upstream request identifier.
     request_id: String,
 }
 
 impl AntigravityClient {
+    /// Converts a chat completion request into the upstream request envelope.
     // These values are constructed as JSON objects; mutable indexing inserts optional fields.
     #[allow(clippy::indexing_slicing)]
     pub(crate) fn build_request_payload(
@@ -66,6 +72,7 @@ impl AntigravityClient {
         })
     }
 
+    /// Generates request identifiers and detects Claude models.
     fn new_request_meta(wire_model: &str) -> RequestMeta {
         use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -87,6 +94,7 @@ impl AntigravityClient {
         }
     }
 
+    /// Separates system prompts from converted conversation contents.
     fn collect_messages(messages: &[ChatMessage]) -> (Vec<String>, Vec<Value>) {
         let mut system_prompts = Vec::new();
         let mut contents = Vec::new();
@@ -113,6 +121,7 @@ impl AntigravityClient {
         (system_prompts, contents)
     }
 
+    /// Collects nonempty system or developer message text.
     fn handle_system_message(msg: &ChatMessage, system_prompts: &mut Vec<String>) {
         if let Some(content) = &msg.content {
             let text = content.as_text();
@@ -122,6 +131,7 @@ impl AntigravityClient {
         }
     }
 
+    /// Appends a user message when it contains supported content.
     fn handle_user_message(msg: &ChatMessage, contents: &mut Vec<Value>) {
         let parts = Self::user_content_parts(msg.content.as_ref());
         if !parts.is_empty() {
@@ -132,6 +142,7 @@ impl AntigravityClient {
         }
     }
 
+    /// Converts user text and inline images into upstream content parts.
     fn user_content_parts(content: Option<&MessageContent>) -> Vec<Value> {
         let mut parts = Vec::new();
         if let Some(content) = content {
@@ -167,6 +178,7 @@ impl AntigravityClient {
         parts
     }
 
+    /// Appends an assistant message and records its tool call names.
     fn handle_assistant_message(
         msg: &ChatMessage,
         contents: &mut Vec<Value>,
@@ -181,6 +193,7 @@ impl AntigravityClient {
         }
     }
 
+    /// Converts assistant text and tool calls into upstream parts.
     fn assistant_parts(
         msg: &ChatMessage,
         tool_call_names: &mut HashMap<String, String>,
@@ -210,6 +223,7 @@ impl AntigravityClient {
         parts
     }
 
+    /// Converts a tool result and merges it with adjacent tool responses.
     // The function response is constructed as a JSON object, and indexing inserts its optional id.
     #[allow(clippy::indexing_slicing)]
     fn handle_tool_message(
@@ -254,6 +268,7 @@ impl AntigravityClient {
         }
     }
 
+    /// Adds a tool response to the preceding tool-response message if possible.
     fn try_merge_tool_response(contents: &mut [Value], part: &Value) -> bool {
         if let Some(last) = contents.last_mut()
             && last.get("role").and_then(|r| r.as_str()) == Some("user")
@@ -270,6 +285,7 @@ impl AntigravityClient {
         }
     }
 
+    /// Builds generation settings, applying model-specific output token limits.
     // The generation config is constructed as a JSON object; indexing inserts fields.
     #[allow(clippy::indexing_slicing)]
     fn build_generation_config(req: &ChatCompletionRequest, is_claude: bool) -> Value {
@@ -293,6 +309,7 @@ impl AntigravityClient {
         generation_config
     }
 
+    /// Builds trajectory and model-specific request labels.
     // Labels are constructed as a JSON object; indexing inserts optional fields.
     #[allow(clippy::indexing_slicing)]
     fn build_labels(traj_id: &str, is_claude: bool) -> Value {
@@ -307,6 +324,7 @@ impl AntigravityClient {
         labels
     }
 
+    /// Converts function tools into upstream function declarations.
     // Each declaration is constructed as a JSON object; indexing inserts optional fields.
     #[allow(clippy::indexing_slicing)]
     fn tool_declarations(tools: &[Tool]) -> Vec<Value> {
@@ -327,6 +345,7 @@ impl AntigravityClient {
     }
 }
 
+/// Appends an inline image part for a supported base64 data URL.
 fn push_inline_image(parts: &mut Vec<Value>, url: &str) {
     if let Some((mime, data)) = parse_data_url(url) {
         parts.push(json!({
@@ -338,6 +357,7 @@ fn push_inline_image(parts: &mut Vec<Value>, url: &str) {
     }
 }
 
+/// Splits a base64 data URL into its MIME type and encoded data.
 fn parse_data_url(url: &str) -> Option<(&str, &str)> {
     let rest = url.strip_prefix("data:")?;
     let (mime, after_semi) = rest.split_once(';')?;

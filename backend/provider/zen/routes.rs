@@ -10,6 +10,7 @@ use crate::provider::registry::Provider;
 use crate::server::AppState;
 use crate::server::settings::{self, Permissions, SettingsStore};
 
+/// Build authenticated Zen model and chat routes.
 pub(crate) fn router(settings: &SettingsStore) -> Router<AppState> {
     Router::new()
         .route("/v1/models", get(models_handler))
@@ -22,6 +23,7 @@ pub(crate) fn router(settings: &SettingsStore) -> Router<AppState> {
         ))
 }
 
+/// Return Zen models filtered by virtual-key permissions.
 async fn models_handler(Extension(permissions): Extension<Permissions>) -> Json<Value> {
     let mut models = crate::provider::zen::models_json();
     if let Some(data) = models.get_mut("data").and_then(Value::as_array_mut) {
@@ -35,6 +37,7 @@ async fn models_handler(Extension(permissions): Extension<Permissions>) -> Json<
     Json(models)
 }
 
+/// Check model permissions and forward a Zen chat request.
 async fn chat_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
@@ -56,6 +59,7 @@ async fn chat_handler(
     send(&state.settings, &provider, &req).await
 }
 
+/// Resolve a Zen credential and send a chat request.
 pub(crate) async fn send(
     settings: &SettingsStore,
     provider: &Provider,
@@ -97,6 +101,7 @@ pub(crate) async fn send(
     })
 }
 
+/// Convert a settings error into an HTTP response.
 fn settings_error(error: &str) -> Response {
     tracing::error!("Failed to load Zen settings: {error}");
     (

@@ -16,6 +16,7 @@ use crate::server::{
     settings::{self, Permissions, SettingsStore},
 };
 
+/// Build authenticated routes for an OpenAI-compatible provider.
 pub(crate) fn router(settings: &SettingsStore) -> Router<AppState> {
     Router::new()
         .route("/v1/models", get(models_handler))
@@ -30,6 +31,7 @@ pub(crate) fn router(settings: &SettingsStore) -> Router<AppState> {
         ))
 }
 
+/// Resolve credentials and send a request upstream.
 async fn send(
     settings: &SettingsStore,
     provider: &Provider,
@@ -85,6 +87,7 @@ async fn send(
     })
 }
 
+/// Fetch and filter models allowed by the virtual key.
 async fn models_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
@@ -137,6 +140,7 @@ async fn models_handler(
     result
 }
 
+/// Forward an inference request after checking model permissions.
 async fn inference(
     state: AppState,
     permissions: Permissions,
@@ -165,6 +169,7 @@ async fn inference(
     }
 }
 
+/// Handle chat completion requests.
 async fn chat_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
@@ -185,6 +190,7 @@ async fn chat_handler(
     .await
 }
 
+/// Handle responses API requests.
 async fn responses_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
