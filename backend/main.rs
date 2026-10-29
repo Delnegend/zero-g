@@ -56,12 +56,25 @@ enum ServerError {
     Serve(#[source] std::io::Error),
 }
 
-/// Initializes storage and runs the web service.
+/// Exports the `OpenAPI` document when requested, otherwise starts the service.
 #[tokio::main]
 async fn main() -> ExitCode {
     if std::env::args_os().nth(1).is_some() {
         eprintln!("zero-g is a web service and does not accept command-line arguments");
         return ExitCode::from(2);
+    }
+    if let Some(path) = std::env::var_os("ZERO_G_OPENAPI_OUTPUT") {
+        let result = contract::openapi()
+            .to_pretty_json()
+            .map_err(|error| error.to_string())
+            .and_then(|json| std::fs::write(path, json).map_err(|error| error.to_string()));
+        return match result {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("OpenAPI export failed: {error}");
+                ExitCode::FAILURE
+            }
+        };
     }
     dotenvy::dotenv().ok();
     let subscriber = FmtSubscriber::builder()

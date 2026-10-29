@@ -66,6 +66,8 @@ Clippy also requires documentation comments on private Rust items, including fie
 
 Rust handlers and their request and response types define the OpenAPI document. After changing a dashboard or inference contract, run `just api-generate` and commit the generated files in `frontend/src/server/api/generated/`. Orval generates the dashboard request functions and Zod response validators from that document; `just check` detects stale generated files and runs the frontend client tests.
 
+The recipes export the contract by starting `zero-g` with `ZERO_G_OPENAPI_OUTPUT` set to an output path. In this mode the binary writes the document and exits without opening the database or starting the server.
+
 Shared TanStack Query options and cache keys live with the corresponding API functions in `frontend/src/server/api/`. Components call `useQuery` with those options and reuse their keys when updating or invalidating cached data.
 
 ## Database migrations

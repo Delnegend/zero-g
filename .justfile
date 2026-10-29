@@ -23,7 +23,7 @@ lint:
 
 # Regenerate the consolidated OpenAPI and dashboard client contracts
 api-generate:
-    ZERO_G_OPENAPI_OUTPUT="$PWD/frontend/src/server/api/generated/openapi.json" cargo test --quiet --bin zero-g contract::tests::settings_contract_exposes_operations_and_u32_bounds -- --exact
+    ZERO_G_OPENAPI_OUTPUT="$PWD/frontend/src/server/api/generated/openapi.json" cargo run --quiet --bin zero-g
     bun fmt --no-script frontend/src/server/api/generated/openapi.json
     cd frontend && bun run orval --config orval.config.ts
     bun fmt --no-script frontend/src/server/api/generated
@@ -38,7 +38,7 @@ api-check:
     cp frontend/orval.config.ts "$tmp/frontend/"
     cp frontend/src/server/api/client.ts "$tmp/frontend/src/server/api/"
     ln -s "$PWD/frontend/node_modules" "$tmp/frontend/node_modules"
-    ZERO_G_OPENAPI_OUTPUT="$tmp/frontend/src/server/api/generated/openapi.json" cargo test --quiet --bin zero-g contract::tests::settings_contract_exposes_operations_and_u32_bounds -- --exact
+    ZERO_G_OPENAPI_OUTPUT="$tmp/frontend/src/server/api/generated/openapi.json" cargo run --quiet --bin zero-g
     bun fmt --no-script "$tmp/frontend/src/server/api/generated/openapi.json"
     (cd "$tmp/frontend" && bun run orval --config orval.config.ts)
     bun fmt --no-script "$tmp/frontend/src/server/api/generated"
