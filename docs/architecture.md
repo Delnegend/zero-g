@@ -17,16 +17,21 @@ flowchart TD
 
 ## Core Components
 
-- **Axum HTTP Layer (`backend/server/`):** Exposes provider-specific routes (`/agy/v1`, `/codex/v1`, `/zen/v1`, `/openai/v1`) requiring virtual-key Bearer authentication. Dashboard authentication is separate. Unprefixed routes are rejected.
+- **Axum HTTP Layer (`backend/server/`):** Combines provider-owned routers with dashboard authentication, virtual-key settings and observability. Named provider routes (`/{kind}/{id}/v1`) require a virtual key; unprefixed routes are rejected.
 - **Dashboard OIDC (`backend/server/dashboard_auth.rs`):** Uses `openidconnect` for discovery, PKCE, token exchange and signed ID-token validation. Signing keys are refreshed at login; local sessions and email/group authorization remain in zero-g.
 - **Protocol Models (`backend/openai.rs`, `backend/responses.rs`):** Strongly typed Serde models for Chat Completions and Responses API inputs (prompts, messages, tool outputs).
-- **Auth Managers (`backend/provider/antigravity/auth.rs`, `backend/provider/codex/auth.rs`):** Store provider credentials encrypted in the database, import legacy plaintext files once, parse JWT claims, and refresh access tokens near expiration.
-- **Login Flows (`backend/provider/antigravity/login.rs`, `backend/provider/codex/login.rs`):** Run local OAuth callbacks with device-code flow for headless Codex environments.
-- **Wire Translators (`backend/provider/antigravity/`, `backend/provider/codex/`, `backend/provider/zen.rs`):** Translate provider requests and responses; Zen's shim management lives in `backend/provider/shim.rs`.
+- **Auth Managers (`backend/provider/antigravity/auth.rs`, `backend/provider/codex/auth.rs`):** Store provider credentials encrypted in the database, parse JWT claims, and refresh access tokens near expiration.
+- **Login Flows (`backend/provider/login.rs`, `backend/provider/antigravity/login.rs`, `backend/provider/codex/login.rs`):** Handle dashboard sign-in, local OAuth callbacks and device-code flow for headless Codex environments.
+- **Provider Routes (`backend/provider/*/routes.rs`):** Register provider endpoints and translate requests and responses; Zen's shim management lives in `backend/provider/shim.rs`.
+- **Provider kinds (`backend/provider/registry.rs`):** The backend owns the available kinds, labels and credential capabilities; the dashboard loads them from `/api/provider-kinds`.
+- **Credential pools (`backend/provider/credentials.rs`):** Store separately encrypted API keys and OAuth sessions per provider. Selection draws enabled, connected credentials in weighted order; upstream 401, 403 and 429 responses permit trying another credential before a response is sent. Legacy migration preserves credentials and refuses merges that would widen a virtual key's access.
+- **Model catalog (`backend/provider/catalog.rs`, `backend/server/model_catalog.rs`, `backend/server/model_settings.rs`):** Discovers models per provider, persists the last results and synchronized pricing/parameter datasheets, and refreshes them on configurable schedules. A failed provider or datasheet sync retains the last successful data.
 - **OpenAI-compatible provider (`backend/provider/openai.rs`):** Forwards model discovery, Chat Completions and Responses requests to the configured upstream API without translating between the two protocols.
+- **OpenCode Go (`backend/provider/go.rs`):** Forwards both OpenAI APIs with the supplied session header, discovers Go models, and uses the same weighted credential failover.
+- **Account usage (`backend/provider/quota.rs`):** Reads provider quota per credential; Zen balance uses a separately encrypted Console session and workspace ID. The dashboard caches responses for five minutes.
 - **Codex tool history:** Function-call arguments are sent upstream as JSON strings, including when a Responses request supplies an object.
 - **Stream Parsers (`backend/provider/antigravity/stream.rs`, `backend/provider/codex/client.rs`):** Decode upstream SSE streams into standard OpenAI chat completion chunks or Responses API lifecycle events.
-- **Storage:** Toasty with the Turso driver stores settings, encrypted secrets, virtual keys and request logs; embedded migrations run at startup.
+- **Storage (`backend/database.rs`, `backend/storage.rs`):** A shared Toasty connection pool serves providers, settings, encrypted secrets, virtual keys and request logs. Related changes use database transactions; write conflicts are retried for up to five seconds. Dashboard summaries use a consistent read snapshot. Embedded migrations run at startup.
 ## Invariants & Guarantees
 
 - **Token Freshness:** Any request dispatched with a token expiring within 60 seconds triggers a refresh before the upstream connection opens.

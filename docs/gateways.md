@@ -18,17 +18,17 @@ model_list:
   - model_name: agy-claude
     litellm_params:
       model: openai/claude-sonnet-5-5-medium
-      api_base: http://zero-g:8080/agy/v1
+      api_base: http://zero-g:8080/agy/agy/v1
       api_key: os.environ/ZERO_G_VIRTUAL_KEY
   - model_name: zen-beam
     litellm_params:
       model: openai/beam-free
-      api_base: http://zero-g:8080/zen/v1
+      api_base: http://zero-g:8080/zen/zen/v1
       api_key: os.environ/ZERO_G_VIRTUAL_KEY
 ```
 
-LiteLLM calls `zero-g`'s `/agy/v1/chat/completions` for chat traffic and
-forwards `/v1/responses` requests to `zero-g`'s `/agy/v1/responses` endpoint. No
+LiteLLM calls `zero-g`'s `/agy/agy/v1/chat/completions` for chat traffic and
+forwards `/v1/responses` requests to `zero-g`'s `/agy/agy/v1/responses` endpoint. No
 Responses-to-chat bridge is required. Supply the created key securely via the
 gateway environment.
 
@@ -44,7 +44,7 @@ provider prefix in `base_url` because Bifrost appends its OpenAI paths:
       "keys": [
         { "name": "zero-g", "value": "<zero-g-virtual-key>", "models": ["*"] }
       ],
-      "network_config": { "base_url": "http://zero-g:8080/agy" },
+      "network_config": { "base_url": "http://zero-g:8080/agy/agy" },
       "custom_provider_config": {
         "base_provider_type": "openai",
         "allowed_requests": {
@@ -69,8 +69,7 @@ additional configuration.
 
 - The provider key must be a valid `zero-g` virtual key; restrict it to the
   providers and models needed by the gateway. Keep the value secret.
-- Model names are upstream wire IDs — `/agy/v1/models`, `/codex/v1/models`,
-  `/zen/v1/models`, and `/openai/v1/models` list what each backend serves.
-  There is no alias layer; do friendly naming in the gateway.
+- Model names are upstream wire IDs. Each named provider exposes `/{kind}/{id}/v1/models`
+  for model discovery. There is no alias layer; do friendly naming in the gateway.
 - Keep `zero-g` reachable only from the gateway: bind it to a private
   interface and let the gateway enforce authentication.
