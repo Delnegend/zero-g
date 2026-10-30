@@ -18,23 +18,28 @@ The server requires `ZERO_G_ENCRYPTION_KEY`: standard Base64 encoding of exactly
 | `ZERO_G_OIDC_REDIRECT_URL` | None | Required in OIDC mode: the dashboard origin followed by `/auth/callback` |
 
 Register the exact redirect URL with the identity provider. OIDC sessions expire after eight hours and are lost on restart. Dashboard authentication is required; use HTTPS outside localhost.
+
+On HTTPS, OIDC uses `__Host-` session and login-state cookies with `Secure`, `HttpOnly`, and `Path=/`, without a `Domain` attribute. Browsers that enforce the prefix prevent sibling subdomains from setting those cookies. Loopback HTTP uses unprefixed cookies because it cannot reliably use `Secure`. If the same cookie name appears more than once, zero-g uses the last value; duplicate cookies can therefore still cause login failures or session confusion. Existing HTTPS sessions require signing in again after upgrading.
+
+Protected dashboard responses use `Cache-Control: no-store`. Up to 1,024 OIDC login attempts can be pending at once; additional attempts receive HTTP 503 until a pending attempt completes or expires.
+
 At least one allowed email or group is required. If both are configured, a verified email match **or** a group match grants access. Group membership is checked in the signed ID token; the provider must support the `groups` scope. Group names are case-sensitive and may differ from display names. Sessions last eight hours, so membership changes do not invalidate existing sessions until they expire or the server restarts.
 
 ## Dashboard settings and virtual keys
 
-Sign in to the dashboard and open **Settings** to configure log retention (default 30 days, range 1–36500) and the Google OAuth desktop client ID and secret.
+Sign in to the dashboard and open **Settings** to configure log retention (default 30 days, range 1–36500).
 
 The Dashboard's date picker defaults to the last 24 hours and offers presets for 7 days, 1 month, 6 months and 1 year. Select calendar dates and choose **Apply dates** for a custom range, including both full days in your browser's local time zone. Totals and the chart include all retained requests in the selected range; the request list shows the latest 200. The chart groups requests by UTC hour for ranges up to one day, day up to three calendar months, month up to three calendar years, and year for longer ranges. Only periods with requests are shown. Preset months and years use calendar dates. Longer ranges cannot show requests already removed by log retention.
 
 Request log rows show the status, request type, model, latency and input/output tokens. Select a row or its timestamp on desktop, or **View** on mobile, to open request details; unavailable token counts are shown as unknown.
 
-Under **Models → Providers**, create one Antigravity, Codex, Zen or OpenCode Go provider per kind, and as many OpenAI-compatible providers as needed for different upstream URLs. Built-in IDs and names are fixed: `agy` / Google Antigravity, `codex` / OpenAI Codex, `zen` / OpenCode Zen, and `go` / OpenCode Go. Custom OpenAI-compatible providers have user-selected IDs and names. All providers share the client base URL `http://127.0.0.1:8080/v1`. Configure a base URL for OpenAI-compatible providers, then add named credentials under the provider. An empty API key explicitly selects a keyless upstream for OpenAI-compatible providers and Zen; OpenCode Go requires an API key and uses its official endpoint by default. Secrets are encrypted at rest. OpenAI-compatible, Go and Zen Chat Completions and Responses are forwarded to their matching upstream endpoints. For Go, pass the client's stable `x-opencode-session` header with requests.
+Under **Models → Providers**, create one instance of each built-in provider and as many OpenAI-compatible providers as needed for different upstream URLs. Built-in IDs are `agy`, `codex`, `claude`, `cursor`, `grok`, `grok-build`, `zen` and `go`; custom providers have user-selected IDs and names. All providers share the client base URL `http://127.0.0.1:8080/v1`. Configure a base URL for OpenAI-compatible providers, then add named credentials under the provider. An empty API key explicitly selects a keyless upstream for OpenAI-compatible providers and Zen; OpenCode Go requires an API key and uses its official endpoint by default. Secrets are encrypted at rest. OpenAI-compatible, Go and Zen Chat Completions and Responses are forwarded to their matching upstream endpoints. For Go, pass the client's stable `x-opencode-session` header with requests.
 
 Zen uses OpenCode's official model list and API for all models, including IDs ending in `:free`. Models requiring other native APIs, such as Jev's System One API, are not translated.
 
 Each enabled, connected credential has a positive weight: a weight of 3 receives roughly three times as many initial requests as a weight of 1. On upstream authentication errors (401 or 403) or rate limits (429), zero-g tries another credential before returning a response. It does not retry after streaming has begun.
 
-Credential cards show available quota windows and reset times for Codex, Antigravity and OpenCode Go. Figures are remaining capacity; unavailable data is shown as unknown or an error rather than an estimated quota. The Providers page fetches usage for connected credentials and treats results as fresh for five minutes; reopening it within that time can reuse the cached result.
+Credential cards show available quota windows and reset times for Codex, Antigravity and OpenCode Go. Figures are remaining capacity; unavailable data is shown as unknown or an error rather than an estimated quota. Antigravity uses the upstream quota summary to show its actual groups and windows, with five-hour windows before longer limits; if the summary is unavailable, the card shows an error. The Providers page fetches usage for connected credentials and treats results as fresh for five minutes; reopening it within that time can reuse the cached result.
 
 Zen balance requires a separate Console login: select **Configure console** on its credential and enter the workspace ID and the value of the `__Host-console_session` cookie. In your browser's developer tools on `opencode.ai`, find the cookie under storage and the workspace ID in the `x-org-id` header of the Console billing request. Treat the session like a password: it grants access to your Console account, is stored encrypted, expires, and can be removed or replaced in the same dialog. An inference API key alone cannot retrieve the balance.
 
@@ -46,9 +51,9 @@ Use model IDs in the form `<provider-id>/<upstream-model-id>`, as returned by `/
 
 Model discovery queries permitted providers concurrently. If some providers fail, the response includes their IDs in an `errors` field alongside successful results; if all fail, it returns an error. Providers that do not support a requested API still return an error for that API.
 
-For Codex and Antigravity, send a stable conversation ID in `session_id` or `x-session-id` to retain upstream session affinity across turns. Accepted headers, in precedence order, are `x-bf-eh-session_id`, `session_id`, `session-id`, `x-session-id`, `x-opencode-session`, `conversation_id` and `conversation-id`. IDs must be 1–128 visible ASCII characters without whitespace; missing, invalid or duplicate values start a fresh session. IDs are scoped to the virtual key and provider so different keys do not share an upstream session.
+For Codex, Antigravity, Claude, Cursor and Grok, send a stable conversation ID in `session_id` or `x-session-id` to retain upstream session affinity across turns. Accepted headers, in precedence order, are `x-bf-eh-session_id`, `session_id`, `session-id`, `x-session-id`, `x-opencode-session`, `conversation_id` and `conversation-id`. IDs must be 1–128 visible ASCII characters without whitespace; missing, invalid or duplicate values start a fresh session. IDs are scoped to the virtual key and provider so different keys do not share an upstream session.
 
-Antigravity responses may include `provider_parts` and tool-call `thought_signature` fields. Clients that support these fields should return them unchanged with the assistant message on later turns to preserve upstream reasoning signatures.
+Antigravity and Claude responses may include `provider_parts`; Antigravity tool calls may also include `thought_signature`. Clients should return these fields unchanged on later turns to preserve ordered upstream reasoning signatures.
 
 For compatible Antigravity models, Chat Completions accepts inline WAV or MP3 audio as `{"type":"input_audio","input_audio":{"format":"wav","data":"<base64>"}}`, and PDFs as `{"type":"file","file":{"filename":"document.pdf","file_data":"data:application/pdf;base64,<base64>"}}`. Responses accepts the same PDF data as `{"type":"input_file","filename":"document.pdf","file_data":"data:application/pdf;base64,<base64>"}`. For video, use `{"type":"video_url","video_url":{"url":"data:video/mp4;base64,<base64>"}}` or `{"type":"input_video","video_url":"data:video/mp4;base64,<base64>"}`. These are inline inputs; external URLs and uploaded file IDs are not supported for Antigravity.
 
@@ -72,15 +77,23 @@ For a normalized Antigravity model, pass its base ID and set `reasoning_effort` 
 
 **Models → Settings** configures pricing and model-parameter datasheet URLs and automatic refresh intervals. Defaults use Bifrost's public datasheets, synced every 24 hours; provider discovery runs every 60 minutes. Set either interval to zero to disable that automatic task, or use the manual buttons. Leave a URL blank to restore its default. Datasheets are cached in the database; a failed sync keeps the last successful pair. Pricing is informational and is not a billed-cost record.
 
-## Google OAuth
+## Provider sign-in
 
-Create a Desktop app OAuth client in [Google Cloud Console](https://console.cloud.google.com/) under **APIs & Services → Credentials**, with the required `cloud-platform`, `userinfo.email`, `userinfo.profile`, `cclog` and `experimentsandconfigs` scopes. Enter its client ID and secret in Settings.
+OAuth application credentials for Antigravity, Codex, Claude, Cursor and Grok are built into the binary. These shared application credentials are public and may be revoked by their providers. Your account tokens are stored separately and encrypted in the database.
+
+Previously configured Google OAuth client settings remain in existing databases but are no longer used. The previously stored client secret remains encrypted.
 
 Create an Antigravity provider under **Models → Providers**, add a credential, and start Google sign-in for that credential. When your browser is on the server machine, the local callback can complete sign-in automatically. If the browser is on another machine, copy the entire redirected loopback URL from its address bar and paste it into the dashboard, even if the loopback page does not load. The URL contains a temporary authorization code; keep it private. For Codex, add a credential to its provider, start sign-in, open the device authorization link, and enter the displayed code. Repeat for each account.
 
+For Claude Code, open the authorization link and paste the returned code or callback URL. Anthropic's [authentication terms](https://code.claude.com/docs/en/legal-and-compliance#authentication-and-credential-use) prohibit third-party applications from routing Claude subscription credentials; use of this integration may violate those terms and may stop working. Cursor uses an undocumented agent protocol; the gateway never executes upstream shell or filesystem requests. Cursor supports `tool_choice: none` and `auto`; named and `required` choices return an error.
+
+`grok` sends OAuth requests to `api.x.ai`, while `grok-build` uses the Grok CLI proxy; they are separate providers and never fall back to one another. Their quotas and billing may differ. The Grok Build proxy is undocumented and its model discovery depends on upstream support. Grok Chat returns an error for unsupported output formats, stop sequences, strict tools, non-text tool results and image detail settings rather than silently dropping them.
+
+The provider implementations refer to [OMP's provider registry](https://github.com/can1357/oh-my-pi/tree/main/packages/catalog/src/compat/rules/auth) and [T3 Code's provider integrations](https://github.com/pingdotgg/t3code/tree/main/packages).
+
 ## Running and credentials
 
-Run `zero-g` to start the server. Use the dashboard **Models → Providers** page for provider sign-in and status. Provider credentials and OAuth settings are read from the database; they are not imported from environment variables or plaintext credential files. Discover models through the authenticated `/v1/models` endpoint.
+Run `zero-g` to start the server. Use the dashboard **Models → Providers** page for provider sign-in and status. Account credentials are read from the database; they are not imported from environment variables or plaintext credential files. Discover models through the authenticated `/v1/models` endpoint.
 
 The API reference at `/redoc` and its OpenAPI document at `/api/openapi.json` require dashboard authentication. ReDoc's JavaScript is bundled with zero-g; it does not require a third-party CDN.
 

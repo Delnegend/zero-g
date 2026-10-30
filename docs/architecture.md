@@ -2,7 +2,7 @@
 
 ## Overview
 
-`zero-g` exposes one OpenAI-compatible API for multiple providers. Requests name a provider and model, such as `codex/gpt-5.3-codex`. Antigravity and Codex requests are translated to their upstream protocols; OpenCode Go, Zen and custom OpenAI-compatible providers are forwarded. Zen uses the official API for all models. Provider credentials, virtual keys, settings and request logs are stored in the local database.
+`zero-g` exposes one OpenAI-compatible API for multiple providers. Requests name a provider and model, such as `codex/gpt-5.3-codex`. Antigravity, Codex, Claude Code and Cursor requests are translated to their upstream protocols; Grok and Grok Build use separate xAI and CLI-proxy endpoints. OpenCode Go, Zen and custom OpenAI-compatible providers are forwarded. Provider credentials, virtual keys, settings and request logs are stored in the local database.
 
 ```mermaid
 flowchart TD
@@ -14,6 +14,9 @@ flowchart TD
     Router -->|Load provider credentials| DB
     Router --> AGY[Antigravity translation]
     Router --> Codex[Codex translation]
+    Router --> Claude[Claude Code translation]
+    Router --> Cursor[Cursor agent protocol]
+    Router --> Grok[Grok and Grok Build]
     Router --> Zen[Zen API]
     Router --> Go[OpenCode Go]
     Router --> Custom[OpenAI-compatible upstream]
@@ -27,7 +30,7 @@ flowchart TD
 
 - **Axum HTTP Layer (`backend/server/`):** The unified `/v1` API requires a virtual key and dispatches `provider/model` IDs to provider-owned routers. Dashboard authentication and observability remain separate.
 - **Server endpoints (`backend/server/`):** Endpoint handlers live in dedicated files within their feature directories; shared storage, authentication, and middleware stay alongside them.
-- **Dashboard OIDC (`backend/server/dashboard_auth/`):** Uses `openidconnect` for discovery, PKCE, token exchange and signed ID-token validation. Signing keys are refreshed at login; local sessions and email/group authorization remain in zero-g.
+- **Dashboard authentication (`backend/server/dashboard_auth_config.rs`):** Maps Zero-G configuration to `axum-auth-gate`, which implements Basic and OIDC authentication, discovery, PKCE, token exchange, signed ID-token validation, and process-local sessions. Signing keys are refreshed at login.
 - **Protocol Models (`backend/openai.rs`, `backend/responses.rs`):** Strongly typed Serde models for Chat Completions and Responses API inputs (prompts, messages, tool outputs).
 - **Auth Managers (`backend/provider/antigravity/auth.rs`, `backend/provider/codex/auth.rs`):** Load encrypted OAuth credentials and refresh access tokens near a known expiration. Codex also reads account information from its token.
 - **Login Flows (`backend/provider/*/dashboard_login.rs`):** Each OAuth provider owns its dashboard sign-in and pending state. `backend/provider/login.rs` contains shared origin and credential checks and refresh locks.

@@ -4,7 +4,7 @@
 
 Install with `brew install Delnegend/tap/zero-g`, download a [release](https://github.com/Delnegend/zero-g/releases/latest), or build from checkout with `(cd frontend && bun install --frozen-lockfile) && just frontend-build && cargo install --path .`.
 
-Copy `.env.example` to `.env`, set `ZERO_G_ENCRYPTION_KEY` to the output of `openssl rand -base64 32`, and set a strong dashboard password. Keep this key unchanged across restarts and backups. Protect `.env` from other users. Run `zero-g`, sign in at `http://127.0.0.1:8080/`, and create entries under **Providers**. Configure Google OAuth under **Settings** before adding a credential and signing in to an Antigravity entry; see [configuration](configuration.md#google-oauth). For Codex, add a credential and start device sign-in from its entry. Create and copy a virtual key under **Virtual keys**, then use it with the shared `/v1` API and provider-prefixed model IDs.
+Copy `.env.example` to `.env`, set `ZERO_G_ENCRYPTION_KEY` to the output of `openssl rand -base64 32`, and set a strong dashboard password. Keep this key unchanged across restarts and backups. Protect `.env` from other users. Run `zero-g`, sign in at `http://127.0.0.1:8080/`, and create entries under **Providers**. Add a credential and sign in to an Antigravity or Codex entry; see [configuration](configuration.md#provider-sign-in). Create and copy a virtual key under **Virtual keys**, then use it as the bearer token for every inference request, including model discovery.
 Set `ZERO_G_DASHBOARD_ORIGIN` to the exact browser-facing origin: `http://127.0.0.1:8080` for local provisioning, or the public HTTPS origin behind a reverse proxy. Update it when changing the dashboard origin.
 
 
