@@ -459,57 +459,65 @@ export function ModelCatalogPage() {
 
 function SettingsForm({ initial }: { initial: Settings }) {
   const queryClient = useQueryClient();
-  const [status, setStatus] = useState("");
-  const [error, setError] = useState("");
+  const [validationError, setValidationError] = useState("");
   const save = useMutation({
     mutationFn: saveModelSettings,
+    onSuccess: async (updated, value) => {
+      await queryClient.cancelQueries({
+        queryKey: modelSettingsQueryOptions().queryKey,
+      });
+      if (form.state.values.pricing_url === value.pricing_url) {
+        form.setFieldValue("pricing_url", updated.pricing_url);
+      }
+      if (form.state.values.parameters_url === value.parameters_url) {
+        form.setFieldValue("parameters_url", updated.parameters_url);
+      }
+      queryClient.setQueryData(modelSettingsQueryOptions().queryKey, updated);
+    },
   });
   const sync = useMutation({
     mutationFn: syncModelSettings,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: modelCatalogQueryOptions().queryKey,
+      });
+    },
   });
+  const error =
+    validationError ||
+    (save.error ? message(save.error) : "") ||
+    (sync.error ? message(sync.error) : "");
+  const status = save.isSuccess
+    ? "Settings saved."
+    : sync.isSuccess
+      ? "Datasheets synced."
+      : "";
+  function clearStatus() {
+    if (save.isSuccess) save.reset();
+    if (sync.isSuccess) sync.reset();
+  }
   const form = useForm({
     defaultValues: initial,
-    onSubmit: async ({ value }) => {
-      setStatus("");
-      setError("");
+    onSubmit: ({ value }) => {
+      save.reset();
+      sync.reset();
+      setValidationError("");
       if (
         ![value.pricing_interval_hours, value.discovery_interval_minutes].every(
           (n) => Number.isSafeInteger(n) && n >= 0,
         )
       ) {
-        setError("Intervals must be non-negative whole numbers.");
+        setValidationError("Intervals must be non-negative whole numbers.");
         return;
       }
-      try {
-        const updated = await save.mutateAsync(value);
-        await queryClient.cancelQueries({
-          queryKey: modelSettingsQueryOptions().queryKey,
-        });
-        if (form.state.values.pricing_url === value.pricing_url) {
-          form.setFieldValue("pricing_url", updated.pricing_url);
-        }
-        if (form.state.values.parameters_url === value.parameters_url) {
-          form.setFieldValue("parameters_url", updated.parameters_url);
-        }
-        queryClient.setQueryData(modelSettingsQueryOptions().queryKey, updated);
-        setStatus("Settings saved.");
-      } catch (err) {
-        setError(message(err));
-      }
+      save.mutate(value);
     },
   });
-  async function forceSync() {
-    setStatus("");
-    setError("");
-    try {
-      await sync.mutateAsync();
-      await queryClient.invalidateQueries({
-        queryKey: modelCatalogQueryOptions().queryKey,
-      });
-      setStatus("Datasheets synced.");
-    } catch (err) {
-      setError(message(err));
-    }
+  function forceSync() {
+    save.reset();
+    sync.reset();
+    setValidationError("");
+    sync.mutate();
   }
   return (
     <>
@@ -541,7 +549,7 @@ function SettingsForm({ initial }: { initial: Settings }) {
                   value={field.state.value}
                   onBlur={field.handleBlur}
                   onChange={(event) => {
-                    setStatus("");
+                    clearStatus();
                     field.handleChange(event.target.value);
                   }}
                 />
@@ -558,7 +566,7 @@ function SettingsForm({ initial }: { initial: Settings }) {
                   value={field.state.value}
                   onBlur={field.handleBlur}
                   onChange={(event) => {
-                    setStatus("");
+                    clearStatus();
                     field.handleChange(event.target.value);
                   }}
                 />
@@ -584,7 +592,7 @@ function SettingsForm({ initial }: { initial: Settings }) {
                     }
                     onBlur={field.handleBlur}
                     onChange={(event) => {
-                      setStatus("");
+                      clearStatus();
                       field.handleChange(event.target.valueAsNumber);
                     }}
                   />
@@ -606,7 +614,7 @@ function SettingsForm({ initial }: { initial: Settings }) {
                     }
                     onBlur={field.handleBlur}
                     onChange={(event) => {
-                      setStatus("");
+                      clearStatus();
                       field.handleChange(event.target.valueAsNumber);
                     }}
                   />

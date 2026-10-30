@@ -108,7 +108,8 @@ const { ObservabilityPage } = await import("./App");
 const { Credentials } = await import("./components/providers/Credentials");
 const { CredentialUsage } = await import("./components/CredentialUsage");
 const { ProviderCard } = await import("./components/providers/ProviderCard");
-const { ModelCatalogPage } = await import("./Models");
+const { ProviderForm } = await import("./components/providers/ProviderForm");
+const { ModelCatalogPage, ModelSettingsPage } = await import("./Models");
 const { TooltipProvider } = await import("./components/ui/tooltip");
 const originalFetch = globalThis.fetch;
 
@@ -127,6 +128,88 @@ function mount(element: React.ReactNode) {
 }
 
 const settings = { log_retention_days: 30 };
+test("provider save stays open on failure and closes after a successful retry", async () => {
+  let attempts = 0;
+  let closed = false;
+  globalThis.fetch = (async (_url, options) => {
+    if (options?.method === "POST") {
+      attempts++;
+      return attempts === 1
+        ? new Response("Save failed", { status: 500 })
+        : Response.json({
+            id: "codex",
+            name: "Codex",
+            kind: "codex",
+            base_url: "",
+          });
+    }
+    throw new Error("Unexpected request");
+  }) as typeof fetch;
+  const user = userEvent.setup();
+  mount(
+    <ProviderForm
+      kinds={[
+        {
+          value: "codex",
+          label: "Codex",
+          api_key: false,
+          oauth: true,
+          fixed_id: "codex",
+          fixed_name: "Codex",
+        },
+      ]}
+      onDone={() => {
+        closed = true;
+      }}
+      onCancel={() => {}}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Add provider" }));
+  assert.ok(await screen.findByRole("alert"));
+  assert.equal(closed, false);
+  await user.click(screen.getByRole("button", { name: "Add provider" }));
+  await waitFor(() => assert.equal(closed, true));
+  assert.equal(attempts, 2);
+});
+
+test("model settings retain edits made while saving and clear success on edit", async () => {
+  const initial = {
+    pricing_url: "",
+    parameters_url: "",
+    pricing_interval_hours: 1,
+    discovery_interval_minutes: 5,
+  };
+  let release!: (response: Response) => void;
+  globalThis.fetch = (async (_url, options) => {
+    if (options?.method === "PUT") {
+      return new Promise<Response>((resolve) => {
+        release = resolve;
+      });
+    }
+    return Response.json(initial);
+  }) as typeof fetch;
+  const user = userEvent.setup();
+  mount(<ModelSettingsPage />);
+  const pricing = await screen.findByLabelText("Pricing datasheet URL");
+  await user.type(pricing, "https://example.test/first");
+  await user.click(screen.getByRole("button", { name: "Save settings" }));
+  assert.ok(
+    (screen.getByRole("button", { name: "Saving…" }) as HTMLButtonElement)
+      .disabled,
+  );
+  await user.type(pricing, "-edited");
+  release(
+    Response.json({ ...initial, pricing_url: "https://example.test/first" }),
+  );
+  await screen.findByText("Settings saved.");
+  assert.equal(
+    (pricing as HTMLInputElement).value,
+    "https://example.test/first-edited",
+  );
+  await user.type(pricing, "x");
+  assert.equal(screen.queryByText("Settings saved."), null);
+});
+
 test("settings save log retention without provider OAuth settings", async () => {
   const bodies: unknown[] = [];
   globalThis.fetch = (async (_url, options) => {
