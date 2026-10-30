@@ -929,7 +929,7 @@
     "/api/settings": {
       "get": {
         "tags": [],
-        "summary": "Returns current settings and whether an OAuth secret is configured.",
+        "summary": "Returns current global settings.",
         "operationId": "getSettings",
         "responses": {
           "200": {
@@ -2357,12 +2357,8 @@
       },
       "SettingsResponse": {
         "type": "object",
-        "description": "Dashboard-visible settings without the OAuth client secret.",
-        "required": [
-          "log_retention_days",
-          "oauth_client_id",
-          "oauth_client_secret_set"
-        ],
+        "description": "Dashboard-visible global settings.",
+        "required": ["log_retention_days"],
         "properties": {
           "log_retention_days": {
             "type": "integer",
@@ -2370,14 +2366,6 @@
             "description": "Number of days to retain logs.",
             "maximum": 4294967295,
             "minimum": 0
-          },
-          "oauth_client_id": {
-            "type": "string",
-            "description": "Configured OAuth client ID."
-          },
-          "oauth_client_secret_set": {
-            "type": "boolean",
-            "description": "Whether an OAuth client secret is stored."
           }
         }
       },
@@ -2406,14 +2394,6 @@
             "description": "Optional log retention in days.",
             "maximum": 4294967295,
             "minimum": 0
-          },
-          "oauth_client_id": {
-            "type": ["string", "null"],
-            "description": "Optional replacement OAuth client ID."
-          },
-          "oauth_client_secret": {
-            "type": ["string", "null"],
-            "description": "Optional replacement secret; an empty string clears it."
           }
         }
       }

@@ -1,6 +1,6 @@
 use super::{SettingsResponse, SettingsStore, UpdateSettings, get_settings, internal_error};
 use crate::database::transaction_with_retry;
-use crate::storage::{Secret, Setting};
+use crate::storage::Setting;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
@@ -27,39 +27,12 @@ pub(crate) async fn put_settings(
     {
         return (StatusCode::BAD_REQUEST, "Invalid log retention").into_response();
     }
-    let values = [
-        ("oauth_client_id", input.oauth_client_id),
-        (
-            "log_retention_days",
-            input.log_retention_days.map(|v| v.to_string()),
-        ),
-    ];
-    let secret = match input.oauth_client_secret {
-        Some(value) if value.is_empty() => Some(None),
-        Some(value) => match store.encrypt("oauth_client_secret", &value) {
-            Ok(encrypted) => Some(Some(encrypted)),
-            Err(err) => return internal_error(&err),
-        },
-        None => None,
-    };
     let result = transaction_with_retry!(store.database, |mut tx| {
-        for (name, value) in &values {
-            if let Some(value) = value {
-                Setting::upsert_by_name(*name)
-                    .value(value.as_str())
-                    .exec(&mut tx)
-                    .await?;
-            }
-        }
-        if let Some(value) = &secret {
-            if let Some(encrypted) = value {
-                Secret::upsert_by_name("oauth_client_secret")
-                    .value(encrypted.clone())
-                    .exec(&mut tx)
-                    .await?;
-            } else {
-                Secret::delete_by_name(&mut tx, "oauth_client_secret").await?;
-            }
+        if let Some(days) = input.log_retention_days {
+            Setting::upsert_by_name("log_retention_days")
+                .value(days.to_string())
+                .exec(&mut tx)
+                .await?;
         }
         tx.commit().await?;
         Ok(())

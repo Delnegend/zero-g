@@ -212,7 +212,7 @@ impl SettingsStore {
     }
 
     /// Decrypts nonce-prefixed AES-GCM data using the secret name as associated data.
-    fn decrypt(&self, name: &str, data: &[u8]) -> Result<String, String> {
+    pub(crate) fn decrypt(&self, name: &str, data: &[u8]) -> Result<String, String> {
         let Some((nonce, ciphertext)) = data.split_at_checked(12) else {
             return Err("Invalid encrypted secret".into());
         };
@@ -297,16 +297,12 @@ fn internal_error(err: &str) -> Response {
     tracing::error!("Settings store error: {err}");
     StatusCode::INTERNAL_SERVER_ERROR.into_response()
 }
-/// Dashboard-visible settings without the OAuth client secret.
+/// Dashboard-visible global settings.
 #[derive(Serialize, ToSchema)]
 pub(crate) struct SettingsResponse {
     /// Number of days to retain logs.
     #[schema(format = Int64, minimum = 0, maximum = 4_294_967_295_u64)]
     log_retention_days: u32,
-    /// Configured OAuth client ID.
-    oauth_client_id: String,
-    /// Whether an OAuth client secret is stored.
-    oauth_client_secret_set: bool,
 }
 
 /// Partial settings update supplied by the dashboard.
@@ -315,10 +311,6 @@ pub(crate) struct UpdateSettings {
     /// Optional log retention in days.
     #[schema(format = Int64, minimum = 0, maximum = 4_294_967_295_u64)]
     log_retention_days: Option<u32>,
-    /// Optional replacement OAuth client ID.
-    oauth_client_id: Option<String>,
-    /// Optional replacement secret; an empty string clears it.
-    oauth_client_secret: Option<String>,
 }
 
 #[cfg(test)]
@@ -361,61 +353,17 @@ mod tests {
         let database = Database::open(path.to_str().unwrap()).await.unwrap();
         let store = SettingsStore::new(database, &key(1)).await.unwrap();
 
-        let input = serde_json::from_value(json!({
-            "log_retention_days": 7,
-            "oauth_client_id": "client",
-            "oauth_client_secret": "secret"
-        }))
-        .unwrap();
+        let input = serde_json::from_value(json!({"log_retention_days": 7})).unwrap();
         let response = put_settings(State(store.clone()), Json(input)).await;
         assert_eq!(response.status(), StatusCode::OK);
         let body = json_body(response).await;
         assert_eq!(body["log_retention_days"], 7);
-        assert_eq!(body["oauth_client_id"], "client");
-        assert_eq!(body["oauth_client_secret_set"], true);
-        assert!(body.get("oauth_client_secret").is_none());
-        let input = serde_json::from_value(json!({"oauth_client_secret": ""})).unwrap();
-        let body = json_body(put_settings(State(store.clone()), Json(input)).await).await;
-        assert_eq!(body["oauth_client_secret_set"], false);
+        assert!(body.get("oauth_client_id").is_none());
+        assert!(body.get("oauth_client_secret_set").is_none());
 
         let input = serde_json::from_value(json!({"log_retention_days": 0})).unwrap();
         let response = put_settings(State(store.clone()), Json(input)).await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        drop(store);
-        std::fs::remove_file(path).unwrap();
-    }
-
-    /// Concurrent settings writes leave complete atomic updates.
-    #[tokio::test]
-    async fn concurrent_settings_updates_remain_atomic() {
-        let path = path();
-        let database = Database::open(path.to_str().unwrap()).await.unwrap();
-        let store = SettingsStore::new(database, &key(1)).await.unwrap();
-        let first = UpdateSettings {
-            log_retention_days: Some(7),
-            oauth_client_id: Some("first".into()),
-            oauth_client_secret: Some("secret".into()),
-        };
-        let second = UpdateSettings {
-            log_retention_days: Some(14),
-            oauth_client_id: Some("second".into()),
-            oauth_client_secret: Some(String::new()),
-        };
-        let (first, second) = tokio::join!(
-            put_settings(State(store.clone()), Json(first)),
-            put_settings(State(store.clone()), Json(second)),
-        );
-        assert_eq!(first.status(), StatusCode::OK);
-        assert_eq!(second.status(), StatusCode::OK);
-        let body = json_body(get_settings(State(store.clone())).await).await;
-        assert!(
-            (body["log_retention_days"] == 7
-                && body["oauth_client_id"] == "first"
-                && body["oauth_client_secret_set"] == true)
-                || (body["log_retention_days"] == 14
-                    && body["oauth_client_id"] == "second"
-                    && body["oauth_client_secret_set"] == false)
-        );
         drop(store);
         std::fs::remove_file(path).unwrap();
     }

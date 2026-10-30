@@ -155,9 +155,6 @@ async fn agy_start(
 ) -> Result<Json<AntigravityStartResponse>, (StatusCode, String)> {
     same_origin(&headers)?;
     require_credential(&settings, &provider_id, &credential_id, "agy").await?;
-    let client_id = agy::oauth_client_id(&settings).await.map_err(error)?;
-    // Check configuration before starting a flow.
-    agy::oauth_client_secret(&settings).await.map_err(error)?;
     let listener_guard = flows.google_listener.clone().try_lock_owned().ok();
     let shutdown = Arc::new(tokio::sync::Notify::new());
     let state = Uuid::new_v4().to_string();
@@ -252,7 +249,7 @@ async fn agy_start(
     }
     let url = format!(
         "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}&access_type=offline&prompt=consent&code_challenge={}&code_challenge_method=S256",
-        urlencode(&client_id),
+        urlencode(agy::OAUTH_CLIENT_ID),
         urlencode(agy::OAUTH_CALLBACK_URL),
         urlencode(&agy::OAUTH_SCOPES.join(" ")),
         urlencode(&state),
@@ -378,8 +375,6 @@ async fn finish_google_exchange(
     code: &str,
     verifier: &str,
 ) -> Result<Json<AntigravityFinishResponse>, (StatusCode, String)> {
-    let client_id = agy::oauth_client_id(settings).await.map_err(error)?;
-    let client_secret = agy::oauth_client_secret(settings).await.map_err(error)?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
@@ -387,8 +382,8 @@ async fn finish_google_exchange(
     let response = client
         .post(&flows.token_url)
         .form(&[
-            ("client_id", client_id.as_str()),
-            ("client_secret", client_secret.as_str()),
+            ("client_id", agy::OAUTH_CLIENT_ID),
+            ("client_secret", agy::OAUTH_CLIENT_SECRET),
             ("code", code),
             ("grant_type", "authorization_code"),
             ("redirect_uri", agy::OAUTH_CALLBACK_URL),
@@ -535,7 +530,6 @@ mod tests {
     use axum::{
         body::{Body, to_bytes},
         http::Request,
-        routing::put,
     };
     use openidconnect::PkceCodeVerifier;
     use tower::ServiceExt;
@@ -576,26 +570,24 @@ mod tests {
             database::Database,
             provider::{credentials, registry},
         };
+        use base64::Engine as _;
         let store = SettingsStore::new(
             Database::open(":memory:").await.unwrap(),
             "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
         )
         .await
         .unwrap();
-        let settings = Router::new()
-            .route("/api/settings", put(crate::server::settings::put_settings))
-            .with_state(store.clone());
-        assert_eq!(
-            request(
-                &settings,
-                "PUT",
-                "/api/settings",
-                json!({"oauth_client_id":"custom-client","oauth_client_secret":"custom-secret"})
+        let config: toml::Value = toml::from_str(include_str!("../oauth-clients.toml")).unwrap();
+        let decode = |key: &str| {
+            String::from_utf8(
+                base64::engine::general_purpose::STANDARD
+                    .decode(config["antigravity"][key].as_str().unwrap())
+                    .unwrap(),
             )
-            .await
-            .0,
-            StatusCode::OK
-        );
+            .unwrap()
+        };
+        let expected_id = decode("client_id");
+        let expected_secret = decode("client_secret");
         assert_eq!(
             request(
                 &registry::router(store.clone()),
@@ -630,14 +622,28 @@ mod tests {
         let fake = Router::new()
             .route("/token", post({
                 let challenge = challenge.clone();
+                let expected_id = expected_id.clone();
+                let expected_secret = expected_secret.clone();
                 move |axum::Form(form): axum::Form<HashMap<String, String>>| {
                     let challenge = challenge.clone();
+                    let expected_id = expected_id.clone();
+                    let expected_secret = expected_secret.clone();
                     async move {
+                        if form.get("grant_type").is_some_and(|v| v == "refresh_token") {
+                            let valid = form.get("client_id") == Some(&expected_id)
+                                && form.get("client_secret") == Some(&expected_secret)
+                                && form.get("refresh_token").is_some_and(|v| v == "new-refresh");
+                            return if valid {
+                                (StatusCode::OK, Json(json!({"access_token":"refreshed-access","expires_in":3600})))
+                            } else {
+                                (StatusCode::BAD_REQUEST, Json(json!({"error":"invalid_grant"})))
+                            };
+                        }
                         let verifier = PkceCodeVerifier::new(form.get("code_verifier").cloned().unwrap_or_default());
                         let valid = verifier.secret().len() >= 43 && verifier.secret().len() <= 128
                             && PkceCodeChallenge::from_code_verifier_sha256(&verifier).as_str() == *challenge.lock().await
-                            && form.get("client_id").is_some_and(|v| v == "custom-client")
-                            && form.get("client_secret").is_some_and(|v| v == "custom-secret")
+                            && form.get("client_id") == Some(&expected_id)
+                            && form.get("client_secret") == Some(&expected_secret)
                             && form.get("code").is_some_and(|v| v == "authorized-code")
                             && form.get("redirect_uri").is_some_and(|v| v == agy::OAUTH_CALLBACK_URL);
                         if valid { (StatusCode::OK, Json(json!({"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600}))) }
@@ -701,6 +707,7 @@ mod tests {
         let state = flow["id"].as_str().unwrap();
         let url = reqwest::Url::parse(flow["url"].as_str().unwrap()).unwrap();
         let params: HashMap<_, _> = url.query_pairs().into_owned().collect();
+        assert_eq!(params.get("client_id"), Some(&expected_id));
         assert_eq!(params.get("code_challenge_method").unwrap(), "S256");
         assert_eq!(params.get("access_type").unwrap(), "offline");
         assert!(
@@ -819,6 +826,15 @@ mod tests {
             .unwrap();
         assert_eq!(stored.access_token, "new-access");
         assert_eq!(stored.project_id, "real-project");
+        let manager = AuthManager::load(store.clone(), "agy", id)
+            .await
+            .unwrap()
+            .unwrap();
+        manager.refresh_at(&flows.token_url).await.unwrap();
+        assert_eq!(
+            manager.get_credentials().await.unwrap().access_token,
+            "refreshed-access"
+        );
         let (_, flow) = request(&router, "POST", &start, json!({})).await;
         let state = flow["id"].as_str().unwrap();
         flows.pending.lock().await.get_mut(state).unwrap().created = Instant::now()

@@ -7,7 +7,7 @@ RUN bun install --frozen-lockfile && bun run tsc -b && bun run --bun vite build
 FROM rust:alpine AS builder
 RUN apk add --no-cache musl-dev clang-dev cmake make
 WORKDIR /app
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml Cargo.lock build.rs ./
 COPY assets ./assets
 COPY backend ./backend
 COPY Toasty.toml ./

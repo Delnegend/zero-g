@@ -1264,12 +1264,8 @@ export const SettingsResponse = zod
       .min(settingsResponseLogRetentionDaysMin)
       .max(settingsResponseLogRetentionDaysMax)
       .describe("Number of days to retain logs."),
-    oauth_client_id: zod.string().describe("Configured OAuth client ID."),
-    oauth_client_secret_set: zod
-      .boolean()
-      .describe("Whether an OAuth client secret is stored."),
   })
-  .describe("Dashboard-visible settings without the OAuth client secret.");
+  .describe("Dashboard-visible global settings.");
 
 export type SettingsResponse = zod.input<typeof SettingsResponse>;
 export type SettingsResponseOutput = zod.output<typeof SettingsResponse>;
@@ -1301,14 +1297,6 @@ export const UpdateSettings = zod
       .max(updateSettingsLogRetentionDaysMax)
       .nullish()
       .describe("Optional log retention in days."),
-    oauth_client_id: zod
-      .string()
-      .nullish()
-      .describe("Optional replacement OAuth client ID."),
-    oauth_client_secret: zod
-      .string()
-      .nullish()
-      .describe("Optional replacement secret; an empty string clears it."),
   })
   .describe("Partial settings update supplied by the dashboard.");
 
@@ -1508,14 +1496,6 @@ export const UpdateSettingsBody = zod
       .max(updateSettingsBodyLogRetentionDaysMax)
       .nullish()
       .describe("Optional log retention in days."),
-    oauth_client_id: zod
-      .string()
-      .nullish()
-      .describe("Optional replacement OAuth client ID."),
-    oauth_client_secret: zod
-      .string()
-      .nullish()
-      .describe("Optional replacement secret; an empty string clears it."),
   })
   .describe("Partial settings update supplied by the dashboard.");
 

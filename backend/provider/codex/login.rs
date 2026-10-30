@@ -25,6 +25,16 @@ pub(crate) async fn exchange_token(
     verifier: &str,
     redirect_uri: &str,
 ) -> Result<CodexCredentials, String> {
+    exchange_token_at(code, verifier, redirect_uri, CODEX_TOKEN_URL).await
+}
+
+/// Exchanges an authorization code at the supplied token endpoint.
+pub(super) async fn exchange_token_at(
+    code: &str,
+    verifier: &str,
+    redirect_uri: &str,
+    token_url: &str,
+) -> Result<CodexCredentials, String> {
     let client = reqwest::Client::new();
     let params = [
         ("grant_type", "authorization_code"),
@@ -35,7 +45,7 @@ pub(crate) async fn exchange_token(
     ];
 
     let token_resp = client
-        .post(CODEX_TOKEN_URL)
+        .post(token_url)
         .form(&params)
         .send()
         .await

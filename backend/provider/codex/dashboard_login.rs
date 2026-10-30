@@ -110,17 +110,10 @@ enum CodexPollResponse {
 )]
 pub(crate) struct Api;
 
-/// Starts a device authorization flow for a Codex credential.
-#[utoipa::path(post, path = "/api/providers/{id}/credentials/{credential_id}/codex/start", operation_id = "startCodexLogin", params(("id" = String, Path), ("credential_id" = String, Path)), responses((status = 200, body = CodexStartResponse)))]
-async fn codex_start(
-    State((app, flows)): State<LoginState>,
-    Path((provider_id, credential_id)): Path<(String, String)>,
-    headers: HeaderMap,
-) -> Result<Json<CodexStartResponse>, (StatusCode, String)> {
-    same_origin(&headers)?;
-    require_credential(&app.settings, &provider_id, &credential_id, "codex").await?;
+/// Requests a device code from the authorization endpoint.
+async fn request_device_code(url: &str) -> Result<DeviceStart, (StatusCode, String)> {
     let response = reqwest::Client::new()
-        .post(CODEX_DEVICE_USERCODE_URL)
+        .post(url)
         .json(&json!({"client_id": CODEX_CLIENT_ID}))
         .send()
         .await
@@ -131,10 +124,22 @@ async fn codex_start(
             response.status()
         )));
     }
-    let data: DeviceStart = response
+    response
         .json()
         .await
-        .map_err(|e| error(format!("Invalid device response: {e}")))?;
+        .map_err(|e| error(format!("Invalid device response: {e}")))
+}
+
+/// Starts a device authorization flow for a Codex credential.
+#[utoipa::path(post, path = "/api/providers/{id}/credentials/{credential_id}/codex/start", operation_id = "startCodexLogin", params(("id" = String, Path), ("credential_id" = String, Path)), responses((status = 200, body = CodexStartResponse)))]
+async fn codex_start(
+    State((app, flows)): State<LoginState>,
+    Path((provider_id, credential_id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Json<CodexStartResponse>, (StatusCode, String)> {
+    same_origin(&headers)?;
+    require_credential(&app.settings, &provider_id, &credential_id, "codex").await?;
+    let data = request_device_code(CODEX_DEVICE_USERCODE_URL).await?;
     let seconds = data
         .interval
         .and_then(|v| {
@@ -298,6 +303,40 @@ async fn codex_poll(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Device authorization sends the configured client ID.
+    #[tokio::test]
+    #[allow(clippy::unwrap_used)]
+    async fn device_authorization_uses_configured_client() {
+        let config: toml::Value = toml::from_str(include_str!("../oauth-clients.toml")).unwrap();
+        let expected = config["codex"]["client_id"].as_str().unwrap().to_owned();
+        let upstream = Router::new().route(
+            "/",
+            post(move |Json(body): Json<serde_json::Value>| {
+                let expected = expected.clone();
+                async move {
+                    if body["client_id"].as_str() == Some(expected.as_str()) {
+                        (
+                            StatusCode::OK,
+                            Json(json!({"device_auth_id":"device", "user_code":"code"})),
+                        )
+                    } else {
+                        (
+                            StatusCode::BAD_REQUEST,
+                            Json(json!({"error":"invalid_client"})),
+                        )
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+        let response = request_device_code(&url).await.unwrap();
+        assert_eq!(response.device_auth_id, "device");
+        assert_eq!(response.user_code, "code");
+        server.abort();
+    }
 
     #[test]
     fn flow_is_bound_to_provider_and_credential() {

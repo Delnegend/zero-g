@@ -124,59 +124,25 @@ function mount(element: React.ReactNode) {
   );
 }
 
-const settings = {
-  log_retention_days: 30,
-  oauth_client_id: "original-client",
-  oauth_client_secret_set: true,
-};
+const settings = { log_retention_days: 30 };
 
-test("settings retain a blank secret, and clear it only when requested", async () => {
+test("settings save log retention without provider OAuth settings", async () => {
   const bodies: unknown[] = [];
-  let stored = { ...settings };
   globalThis.fetch = (async (_url, options) => {
-    if (options?.method === "PUT") {
-      const body = JSON.parse(String(options.body));
-      bodies.push(body);
-      stored = {
-        ...stored,
-        log_retention_days: body.log_retention_days,
-        oauth_client_id: body.oauth_client_id,
-        oauth_client_secret_set:
-          body.oauth_client_secret === ""
-            ? false
-            : stored.oauth_client_secret_set,
-      };
-    }
-    return Response.json(stored);
+    if (options?.method === "PUT")
+      bodies.push(JSON.parse(String(options.body)));
+    return Response.json(settings);
   }) as typeof fetch;
   const user = userEvent.setup();
   mount(<Management page="settings" />);
-  await screen.findByDisplayValue("original-client");
+  await screen.findByDisplayValue("30");
+  assert.equal(screen.queryByLabelText(/Google OAuth/), null);
   await user.click(screen.getByRole("button", { name: "Save settings" }));
   await screen.findByText("Settings saved.");
-  assert.deepEqual(bodies[0], {
-    log_retention_days: 30,
-    oauth_client_id: "original-client",
-  });
-  await user.click(
-    screen.getByRole("checkbox", { name: "Clear Google OAuth client secret" }),
-  );
-  assert.equal(
-    (screen.getByLabelText(/^Google OAuth client secret/) as HTMLInputElement)
-      .disabled,
-    true,
-  );
-  await user.click(screen.getByRole("button", { name: "Save settings" }));
-  await waitFor(() => assert.equal(bodies.length, 2));
-  assert.deepEqual(bodies[1], {
-    log_retention_days: 30,
-    oauth_client_id: "original-client",
-    oauth_client_secret: "",
-  });
-  await screen.findByText(/not configured/);
+  assert.deepEqual(bodies, [{ log_retention_days: 30 }]);
 });
 
-test("edits made during a delayed settings save survive the response and can be saved", async () => {
+test("edits made during a delayed settings save survive the response", async () => {
   const bodies: unknown[] = [];
   let release!: (response: Response) => void;
   const delayed = new Promise<Response>((resolve) => {
@@ -184,32 +150,27 @@ test("edits made during a delayed settings save survive the response and can be 
   });
   globalThis.fetch = (async (_url, options) => {
     if (options?.method !== "PUT") return Response.json(settings);
-    const body = JSON.parse(String(options.body));
-    bodies.push(body);
+    bodies.push(JSON.parse(String(options.body)));
     if (bodies.length === 1) return delayed;
-    return Response.json({
-      log_retention_days: 30,
-      oauth_client_id: "later-client",
-      oauth_client_secret_set: true,
-    });
+    return Response.json({ log_retention_days: 40 });
   }) as typeof fetch;
   const user = userEvent.setup();
   mount(<Management page="settings" />);
-  const clientId = await screen.findByDisplayValue("original-client");
-  await user.clear(clientId);
-  await user.type(clientId, "first-client");
+  const retention = await screen.findByLabelText("Log retention (days)");
+  await user.clear(retention);
+  await user.type(retention, "35");
   await user.click(screen.getByRole("button", { name: "Save settings" }));
   await waitFor(() => assert.equal(bodies.length, 1));
-  await user.clear(clientId);
-  await user.type(clientId, "later-client");
-  release(Response.json({ ...settings, oauth_client_id: "first-client" }));
+  await user.clear(retention);
+  await user.type(retention, "40");
+  release(Response.json({ log_retention_days: 35 }));
   await screen.findByText("Settings saved.");
-  assert.equal((clientId as HTMLInputElement).value, "later-client");
+  assert.equal((retention as HTMLInputElement).value, "40");
   await user.click(screen.getByRole("button", { name: "Save settings" }));
   await waitFor(() => assert.equal(bodies.length, 2));
   assert.deepEqual(bodies, [
-    { log_retention_days: 30, oauth_client_id: "first-client" },
-    { log_retention_days: 30, oauth_client_id: "later-client" },
+    { log_retention_days: 35 },
+    { log_retention_days: 40 },
   ]);
 });
 

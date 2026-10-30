@@ -64,9 +64,6 @@ function SettingsPage() {
   const form = useForm({
     defaultValues: {
       log_retention_days: settings?.log_retention_days ?? 1,
-      oauth_client_id: settings?.oauth_client_id ?? "",
-      oauthSecret: "",
-      clearOauth: false,
     },
     onSubmit: ({ value }) => save(value),
   });
@@ -74,16 +71,10 @@ function SettingsPage() {
   useEffect(() => {
     if (settings && !draftStarted.current) {
       form.setFieldValue("log_retention_days", settings.log_retention_days);
-      form.setFieldValue("oauth_client_id", settings.oauth_client_id);
     }
   }, [settings, form]);
 
-  async function save(value: {
-    log_retention_days: number;
-    oauth_client_id: string;
-    oauthSecret: string;
-    clearOauth: boolean;
-  }) {
+  async function save(value: { log_retention_days: number }) {
     if (!settings) return;
     saveController.current?.abort();
     const controller = new AbortController();
@@ -94,10 +85,7 @@ function SettingsPage() {
     try {
       const body: SettingsUpdate = {
         log_retention_days: value.log_retention_days,
-        oauth_client_id: value.oauth_client_id,
       };
-      if (value.clearOauth || value.oauthSecret)
-        body.oauth_client_secret = value.clearOauth ? "" : value.oauthSecret;
       const updated = await saveMutation.mutateAsync({
         body,
         signal: controller.signal,
@@ -110,20 +98,9 @@ function SettingsPage() {
         current.log_retention_days === value.log_retention_days
           ? updated.log_retention_days
           : current.log_retention_days;
-      const oauthClientId =
-        current.oauth_client_id === value.oauth_client_id
-          ? updated.oauth_client_id
-          : current.oauth_client_id;
-      draftStarted.current =
-        logRetention !== updated.log_retention_days ||
-        oauthClientId !== updated.oauth_client_id;
+      draftStarted.current = logRetention !== updated.log_retention_days;
       queryClient.setQueryData(settingsOptions().queryKey, updated);
       form.setFieldValue("log_retention_days", logRetention);
-      form.setFieldValue("oauth_client_id", oauthClientId);
-      if (current.oauthSecret === value.oauthSecret)
-        form.setFieldValue("oauthSecret", "");
-      if (current.clearOauth === value.clearOauth)
-        form.setFieldValue("clearOauth", false);
       setSaved(true);
     } catch (err) {
       if (!controller.signal.aborted) setError(message(err));
@@ -137,8 +114,7 @@ function SettingsPage() {
     <main className="mx-auto w-full min-w-0 max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
       <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
       <p className="mt-2 text-sm text-muted-foreground">
-        Configure the gateway and provider credentials. Some changes may require
-        a restart.
+        Configure the gateway. Some changes may require a restart.
       </p>
       {displayError && (
         <Alert variant="destructive" className="mt-5">
@@ -180,63 +156,6 @@ function SettingsPage() {
                 </Label>
               )}
             </form.Field>
-            <form.Field name="oauth_client_id">
-              {(field) => (
-                <Label className="block text-sm font-medium">
-                  Google OAuth client ID
-                  <Input
-                    className={inputClass}
-                    value={field.state.value}
-                    onBlur={field.handleBlur}
-                    onChange={(e) => {
-                      draftStarted.current = true;
-                      field.handleChange(e.target.value);
-                    }}
-                  />
-                </Label>
-              )}
-            </form.Field>
-            <form.Subscribe selector={(state) => state.values.clearOauth}>
-              {(clearOauth) => (
-                <form.Field name="oauthSecret">
-                  {(field) => (
-                    <Label className="block text-sm font-medium">
-                      Google OAuth client secret{" "}
-                      <span className="font-normal text-muted-foreground">
-                        (
-                        {settings.oauth_client_secret_set
-                          ? "configured; leave blank to retain"
-                          : "not configured"}
-                        )
-                      </span>
-                      <Input
-                        className={inputClass}
-                        type="password"
-                        autoComplete="new-password"
-                        disabled={clearOauth}
-                        value={field.state.value}
-                        onBlur={field.handleBlur}
-                        onChange={(e) => field.handleChange(e.target.value)}
-                      />
-                    </Label>
-                  )}
-                </form.Field>
-              )}
-            </form.Subscribe>
-            {settings.oauth_client_secret_set && (
-              <form.Field name="clearOauth">
-                {(field) => (
-                  <Label htmlFor="clear-oauth" className="text-sm">
-                    <Checkbox
-                      id="clear-oauth"
-                      checked={field.state.value}
-                      onCheckedChange={field.handleChange}
-                    />
-                    Clear Google OAuth client secret
-                  </Label>
-                )}
-              </form.Field>
-            )}
             <div>
               <Button type="submit" disabled={busy}>
                 {busy ? "Saving…" : "Save settings"}

@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 /// OAuth client identifier used by Codex.
-pub(crate) const CODEX_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
+pub(crate) const CODEX_CLIENT_ID: &str = env!("CODEX_OAUTH_CLIENT_ID");
 /// Endpoint for exchanging and refreshing OAuth tokens.
 pub(super) const CODEX_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 /// Base URL for the `ChatGPT` backend API.
@@ -227,6 +227,11 @@ impl CodexAuthManager {
 
     /// Refreshes the cached access token and persists the updated credentials.
     async fn refresh(&self) -> Result<(), CredentialError> {
+        self.refresh_at(CODEX_TOKEN_URL).await
+    }
+
+    /// Refreshes using the supplied token endpoint.
+    async fn refresh_at(&self, token_url: &str) -> Result<(), CredentialError> {
         let mut updated = self.creds.read().await.clone();
         let refresh_token = updated.refresh_token.clone();
 
@@ -245,7 +250,7 @@ impl CodexAuthManager {
         ];
 
         let resp = client
-            .post(CODEX_TOKEN_URL)
+            .post(token_url)
             .form(&params)
             .send()
             .await
@@ -323,6 +328,92 @@ impl CodexAuthManager {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    /// The token endpoint accepts the configured client for both login and refresh.
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn configured_client_is_used_for_exchange_and_refresh() {
+        use crate::{
+            database::Database,
+            storage::{ProviderCredential, ProviderRecord},
+        };
+        use axum::{Json, Router, http::StatusCode, routing::post};
+        use std::collections::HashMap;
+
+        let config: toml::Value = toml::from_str(include_str!("../oauth-clients.toml")).unwrap();
+        let expected_id = config["codex"]["client_id"].as_str().unwrap().to_owned();
+        let upstream = Router::new().route("/token", post(move |axum::Form(form): axum::Form<HashMap<String, String>>| {
+            let expected_id = expected_id.clone();
+            async move {
+                let valid = form.get("client_id") == Some(&expected_id)
+                    && match form.get("grant_type").map(String::as_str) {
+                        Some("authorization_code") => form.get("code").is_some_and(|v| v == "code")
+                            && form.get("code_verifier").is_some_and(|v| v == "verifier"),
+                        Some("refresh_token") => form.get("refresh_token").is_some_and(|v| v == "refresh"),
+                        _ => false,
+                    };
+                if valid {
+                    let access = if form.get("grant_type").is_some_and(|v| v == "refresh_token") { "refreshed" } else { "access" };
+                    (StatusCode::OK, Json(serde_json::json!({"access_token":access, "refresh_token":"refresh", "expires_in":3600})))
+                } else {
+                    (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"invalid_client"})))
+                }
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/token", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+        let creds = super::super::login::exchange_token_at(
+            "code",
+            "verifier",
+            "http://localhost/callback",
+            &endpoint,
+        )
+        .await
+        .unwrap();
+        assert_eq!(creds.access_token, "access");
+
+        let store = SettingsStore::new(
+            Database::open(":memory:").await.unwrap(),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )
+        .await
+        .unwrap();
+        let mut db = (*store.database.db).clone();
+        toasty::create!(ProviderRecord {
+            id: "codex".to_string(),
+            name: "Codex".to_string(),
+            kind: "codex".to_string(),
+            base_url: String::new(),
+            deleted: false
+        })
+        .exec(&mut db)
+        .await
+        .unwrap();
+        toasty::create!(ProviderCredential {
+            id: "account".to_string(),
+            provider_id: "codex".to_string(),
+            name: "Account".to_string(),
+            weight: 1,
+            enabled: true
+        })
+        .exec(&mut db)
+        .await
+        .unwrap();
+        CodexAuthManager::save(&store, "codex", "account", &creds)
+            .await
+            .unwrap();
+        let manager = CodexAuthManager::load(store, "codex", "account")
+            .await
+            .unwrap()
+            .unwrap();
+        manager.refresh_at(&endpoint).await.unwrap();
+        assert_eq!(
+            manager.get_credentials().await.unwrap().access_token,
+            "refreshed"
+        );
+        server.abort();
+    }
 
     #[test]
     fn test_decode_jwt_profile() {

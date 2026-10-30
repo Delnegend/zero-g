@@ -9,23 +9,10 @@ use tracing::info;
 use crate::provider::login::CredentialError;
 use crate::server::settings::SettingsStore;
 
-/// Reads the configured nonempty Google OAuth client ID.
-pub(crate) async fn oauth_client_id(store: &SettingsStore) -> Result<String, String> {
-    store
-        .setting_get("oauth_client_id")
-        .await?
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "Google OAuth client ID is not configured".to_string())
-}
-
-/// Reads the configured nonempty Google OAuth client secret.
-pub(crate) async fn oauth_client_secret(store: &SettingsStore) -> Result<String, String> {
-    store
-        .secret_get("oauth_client_secret")
-        .await?
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "Google OAuth client secret is not configured".to_string())
-}
+/// Public Google OAuth application credentials embedded at build time.
+pub(crate) const OAUTH_CLIENT_ID: &str = env!("AGY_OAUTH_CLIENT_ID");
+/// Public Google OAuth application secret embedded at build time.
+pub(crate) const OAUTH_CLIENT_SECRET: &str = env!("AGY_OAUTH_CLIENT_SECRET");
 
 /// Port used by the local Google OAuth callback listener.
 pub(crate) const OAUTH_CALLBACK_PORT: u16 = 51123;
@@ -72,7 +59,7 @@ pub(crate) struct Credentials {
 pub(crate) struct AuthManager {
     /// Current credentials shared by manager clones.
     creds: Arc<RwLock<Credentials>>,
-    /// Store containing OAuth configuration and credentials.
+    /// Store containing account credentials.
     store: SettingsStore,
     /// Provider that owns the credential.
     provider_id: String,
@@ -160,6 +147,11 @@ impl AuthManager {
 
     /// Refreshes and saves the access token when a refresh token is available.
     async fn refresh(&self) -> Result<(), CredentialError> {
+        self.refresh_at(OAUTH_TOKEN_URL).await
+    }
+
+    /// Refreshes using the supplied token endpoint.
+    pub(super) async fn refresh_at(&self, token_url: &str) -> Result<(), CredentialError> {
         let current = self.creds.read().await.clone();
         let refresh_token = current.refresh_token.clone();
 
@@ -171,17 +163,15 @@ impl AuthManager {
         info!("Refreshing Google Antigravity access token...");
 
         let client = reqwest::Client::new();
-        let client_id = oauth_client_id(&self.store).await?;
-        let client_secret = oauth_client_secret(&self.store).await?;
         let params = [
-            ("client_id", client_id.as_str()),
-            ("client_secret", client_secret.as_str()),
+            ("client_id", OAUTH_CLIENT_ID),
+            ("client_secret", OAUTH_CLIENT_SECRET),
             ("refresh_token", &refresh_token),
             ("grant_type", "refresh_token"),
         ];
 
         let resp = client
-            .post(OAUTH_TOKEN_URL)
+            .post(token_url)
             .form(&params)
             .send()
             .await

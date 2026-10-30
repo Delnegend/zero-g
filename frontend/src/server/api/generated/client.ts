@@ -823,7 +823,7 @@ export const getGetSettingsUrl = () => {
 };
 
 /**
- * @summary Returns current settings and whether an OAuth secret is configured.
+ * @summary Returns current global settings.
  */
 export const getSettings = async (
   options?: Parameters<typeof request>[1],
