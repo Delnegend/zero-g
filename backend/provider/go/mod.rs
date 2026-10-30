@@ -492,7 +492,7 @@ mod tests {
             providers: crate::provider::Providers::new(),
             settings: store,
             logs: crate::server::observability::LogStore::new(database),
-            dashboard_auth: crate::server::dashboard_auth::DashboardAuth::test().unwrap(),
+            dashboard_auth: crate::server::dashboard_auth_config::test_auth().await,
         };
         let provider = Provider {
             id: "go".into(),

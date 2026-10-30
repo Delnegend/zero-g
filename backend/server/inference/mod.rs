@@ -194,7 +194,7 @@ mod tests {
             providers: crate::provider::Providers::new(),
             settings: store.clone(),
             logs: LogStore::new(database),
-            dashboard_auth: crate::server::dashboard_auth::DashboardAuth::test().unwrap(),
+            dashboard_auth: crate::server::dashboard_auth_config::test_auth().await,
         };
         for (id, base) in [("first", first), ("second", second)] {
             let response = registry::router(store.clone())

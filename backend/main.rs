@@ -120,7 +120,7 @@ async fn open_stores() -> Result<(SettingsStore, LogStore), String> {
 
 /// Constructs shared HTTP state and configures dashboard authentication.
 async fn init_state(settings: SettingsStore, logs: LogStore) -> Result<AppState, ServerError> {
-    let dashboard_auth = crate::server::dashboard_auth::DashboardAuth::from_env()
+    let dashboard_auth = crate::server::dashboard_auth_config::from_env()
         .await
         .map_err(ServerError::DashboardAuth)?;
 

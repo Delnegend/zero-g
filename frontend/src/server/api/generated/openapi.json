@@ -992,7 +992,7 @@
       "get": {
         "tags": [],
         "summary": "Consumes OIDC callback state and creates a session after successful verification.",
-        "operationId": "dashboardOidcCallback",
+        "operationId": "oidcCallback",
         "parameters": [
           {
             "name": "state",
@@ -1024,7 +1024,7 @@
         ],
         "responses": {
           "303": {
-            "description": "Signed in; redirects to the dashboard"
+            "description": "Signed in; redirects to the original path"
           },
           "400": {
             "description": "Invalid or expired login state"

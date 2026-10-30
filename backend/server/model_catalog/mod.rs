@@ -348,21 +348,25 @@ fn normalize_pricing(kind: &str, price: &Value) -> CatalogPricing {
             .filter(|n| n.is_finite())
     };
     CatalogPricing {
-        input: number(match zen {
-            true => fields.input,
-            false => fields.input_cost_per_token,
+        input: number(if zen {
+            fields.input
+        } else {
+            fields.input_cost_per_token
         }),
-        output: number(match zen {
-            true => fields.output,
-            false => fields.output_cost_per_token,
+        output: number(if zen {
+            fields.output
+        } else {
+            fields.output_cost_per_token
         }),
-        cache_write: number(match zen {
-            true => fields.cache_write,
-            false => fields.cache_creation_input_token_cost,
+        cache_write: number(if zen {
+            fields.cache_write
+        } else {
+            fields.cache_creation_input_token_cost
         }),
-        cache_read: number(match zen {
-            true => fields.cache_read,
-            false => fields.cache_read_input_token_cost,
+        cache_read: number(if zen {
+            fields.cache_read
+        } else {
+            fields.cache_read_input_token_cost
         }),
         source: match zen {
             true => "models.dev",
@@ -750,7 +754,7 @@ mod tests {
         let state = AppState {
             providers: crate::provider::Providers::new(),
             logs: crate::server::observability::LogStore::new(store.database.clone()),
-            dashboard_auth: crate::server::dashboard_auth::DashboardAuth::test().unwrap(),
+            dashboard_auth: crate::server::dashboard_auth_config::test_auth().await,
             settings: store,
         };
         let response = router(state)

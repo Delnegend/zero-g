@@ -1,5 +1,5 @@
-/// Dashboard authentication and session handling.
-pub(crate) mod dashboard_auth;
+/// Dashboard authentication environment configuration.
+pub(crate) mod dashboard_auth_config;
 /// Health probe endpoint.
 mod health;
 /// Unified public inference API.
@@ -38,7 +38,7 @@ pub(crate) struct AppState {
     /// Request log storage.
     pub(crate) logs: observability::LogStore,
     /// Dashboard access protection.
-    pub(crate) dashboard_auth: dashboard_auth::DashboardAuth,
+    pub(crate) dashboard_auth: axum_auth_gate::Auth,
 }
 
 /// Health and API reference operations.
@@ -142,7 +142,7 @@ mod tests {
             providers: provider::Providers::new(),
             settings,
             logs: observability::LogStore::new(database),
-            dashboard_auth: dashboard_auth::DashboardAuth::test().unwrap(),
+            dashboard_auth: dashboard_auth_config::test_auth().await,
         });
         for path in ["/redoc", "/api/openapi.json", "/redoc.standalone.js"] {
             let request = Request::builder()

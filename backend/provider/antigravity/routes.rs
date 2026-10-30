@@ -985,7 +985,7 @@ mod tests {
             providers,
             settings: store,
             logs: crate::server::observability::LogStore::new(database),
-            dashboard_auth: crate::server::dashboard_auth::DashboardAuth::test().unwrap(),
+            dashboard_auth: crate::server::dashboard_auth_config::test_auth().await,
         };
         let app = Router::new()
             .route("/v1/chat/completions", post(chat_handler))

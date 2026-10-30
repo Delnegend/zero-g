@@ -8,7 +8,7 @@ struct Api;
 pub(crate) fn openapi() -> utoipa::openapi::OpenApi {
     let mut document = Api::openapi();
     document.merge(crate::server::Api::openapi());
-    document.merge(crate::server::dashboard_auth::Api::openapi());
+    document.merge(axum_auth_gate::Api::openapi());
     document.merge(crate::server::settings::Api::openapi());
     document.merge(crate::server::observability::Api::openapi());
     document.merge(crate::server::model_catalog::Api::openapi());
@@ -52,6 +52,22 @@ mod tests {
                 &document["components"]["schemas"][schema]["properties"]["log_retention_days"];
             assert_eq!(retention["minimum"], 0);
             assert_eq!(retention["maximum"], 4_294_967_295u64);
+        }
+    }
+
+    /// The shared authentication callback remains part of the dashboard contract.
+    #[test]
+    fn dashboard_callback_contract_is_merged() {
+        let document: Value = serde_json::to_value(openapi()).unwrap();
+        let callback = &document["paths"]["/auth/callback"]["get"];
+        for name in ["state", "code", "error"] {
+            assert!(
+                callback["parameters"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|p| p["name"] == name)
+            );
         }
     }
 }

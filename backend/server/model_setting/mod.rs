@@ -148,8 +148,7 @@ mod test_support {
         database::Database,
         provider::Providers,
         server::{
-            AppState, dashboard_auth::DashboardAuth, observability::LogStore,
-            settings::SettingsStore,
+            AppState, dashboard_auth_config, observability::LogStore, settings::SettingsStore,
         },
     };
 
@@ -166,7 +165,7 @@ mod test_support {
             providers: Providers::new(),
             settings,
             logs: LogStore::new(database),
-            dashboard_auth: DashboardAuth::test().unwrap(),
+            dashboard_auth: dashboard_auth_config::test_auth().await,
         }
     }
 }
