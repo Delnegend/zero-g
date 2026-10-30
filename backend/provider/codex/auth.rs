@@ -115,6 +115,15 @@ pub(super) fn decode_jwt_profile(access_token: &str, id_token: Option<&str>) -> 
 
     let email = get_claim(&access_payload, JWT_CLAIM_PROFILE, "email")
         .or_else(|| get_claim(&id_payload, JWT_CLAIM_PROFILE, "email"))
+        .or_else(|| {
+            id_payload
+                .as_ref()?
+                .get("email")?
+                .as_str()
+                .map(str::trim)
+                .filter(|email| !email.is_empty())
+                .map(str::to_string)
+        })
         .map(|e| e.to_lowercase());
 
     let plan_type = get_claim(&access_payload, JWT_CLAIM_AUTH, "chatgpt_plan_type")
@@ -447,6 +456,14 @@ mod tests {
         assert_eq!(profile.plan_type.as_deref(), Some("pro"));
         assert_eq!(profile.email.as_deref(), Some("user@example.com"));
         assert_eq!(profile.residency.as_deref(), Some("us"));
+    }
+
+    /// Standard ID token email claims are retained for the account display.
+    #[test]
+    fn extracts_standard_id_token_email() {
+        let payload = URL_SAFE_NO_PAD.encode(br#"{"email":" User@Example.COM "}"#);
+        let profile = decode_jwt_profile("invalid", Some(&format!("header.{payload}.signature")));
+        assert_eq!(profile.email.as_deref(), Some("user@example.com"));
     }
 
     #[test]
