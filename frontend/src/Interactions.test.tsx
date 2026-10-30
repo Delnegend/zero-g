@@ -631,6 +631,11 @@ test("OpenRouter credentials configure and remove a management key and show bala
     />,
   );
   assert.ok(await screen.findByText("$12.50"));
+  assert.equal(
+    screen.getByRole("button", { name: "Configure management key" })
+      .parentElement,
+    screen.getByRole("button", { name: "Delete Account" }).parentElement,
+  );
   await user.click(
     screen.getByRole("button", { name: "Configure management key" }),
   );
@@ -670,6 +675,59 @@ test("OpenRouter credentials configure and remove a management key and show bala
     method: "DELETE",
     body: undefined,
   });
+});
+
+test("Zen console configuration sits with credential actions and can be saved", async () => {
+  let saved = false;
+  globalThis.fetch = (async (url, options) => {
+    const path = String(url);
+    if (path.endsWith("/console") && options?.method === "PUT") {
+      saved = true;
+      return new Response(null, { status: 204 });
+    }
+    if (path.endsWith("/usage"))
+      return Response.json({ kind: "balance", amount: 10, currency: "USD" });
+    return Response.json({
+      credentials: [
+        {
+          id: "account",
+          name: "Account",
+          weight: 1,
+          enabled: true,
+          connected: true,
+        },
+      ],
+    });
+  }) as typeof fetch;
+  const user = userEvent.setup();
+  mount(
+    <Credentials
+      provider={{ id: "zen", name: "OpenCode Zen", kind: "zen", base_url: "" }}
+      kind={{
+        value: "zen",
+        label: "Zen",
+        api_key: true,
+        oauth: false,
+        fixed_id: "zen",
+        fixed_name: "OpenCode Zen",
+      }}
+      onLogin={() => {}}
+      loginBusy={false}
+    />,
+  );
+  const configure = await screen.findByRole("button", {
+    name: "Configure console",
+  });
+  assert.equal(
+    configure.parentElement,
+    screen.getByRole("button", { name: "Delete Account" }).parentElement,
+  );
+  await user.click(configure);
+  await user.type(screen.getByLabelText("Workspace ID"), "workspace");
+  await user.type(screen.getByLabelText("Console session"), "test-session");
+  await user.click(screen.getByRole("button", { name: "Save session" }));
+  await waitFor(() => assert.equal(saved, true));
+  await waitFor(() => assert.equal(screen.queryByRole("dialog"), null));
 });
 
 test("quota resets show a countdown and reveal the exact time", async () => {

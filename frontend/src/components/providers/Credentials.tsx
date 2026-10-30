@@ -1,7 +1,3 @@
-import { useForm } from "@tanstack/react-form";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Trash2 } from "lucide-react";
-import { useState } from "react";
 import { CredentialUsage } from "@/components/CredentialUsage";
 import { RowsSkeleton } from "@/components/Loading";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -27,6 +23,11 @@ import {
   type ProviderCredential,
   type ProviderKind,
 } from "@/server/api/providers";
+import { useForm } from "@tanstack/react-form";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Pencil, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { CredentialConfiguration } from "./CredentialConfiguration";
 import { inputClass } from "./inputClass";
 
 export function Credentials({
@@ -166,7 +167,13 @@ export function Credentials({
             key={credential.id}
             className="flex flex-wrap justify-between gap-4 rounded-lg border p-3"
           >
-            <div className="min-w-0">
+            <div
+              className={
+                provider.kind === "zen" || provider.kind === "openrouter"
+                  ? "min-w-0 flex-[1_1_20rem]"
+                  : "min-w-0"
+              }
+            >
               <p className="break-words font-medium">
                 {credential.name}
                 {credential.email && (
@@ -187,7 +194,13 @@ export function Credentials({
                 {credential.enabled ? "Enabled" : "Disabled"} ·{" "}
                 {credential.connected ? "Connected" : "Not connected"}
               </p>
-              <div className="mt-2 flex flex-wrap gap-2">
+              <div
+                className={
+                  provider.kind === "zen" || provider.kind === "openrouter"
+                    ? "mt-2 flex flex-wrap gap-1.5"
+                    : "mt-2 flex flex-wrap gap-2"
+                }
+              >
                 <Button
                   variant="outline"
                   size="icon"
@@ -209,6 +222,15 @@ export function Credentials({
                 >
                   <Trash2 />
                 </Button>
+                {(provider.kind === "zen" ||
+                  provider.kind === "openrouter") && (
+                  <CredentialConfiguration
+                    providerId={provider.id}
+                    credentialId={credential.id}
+                    credentialName={credential.name}
+                    kind={provider.kind}
+                  />
+                )}
                 {kind?.oauth &&
                   [
                     "agy",
