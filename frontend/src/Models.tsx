@@ -24,6 +24,7 @@ import {
 import { CardsSkeleton, FormSkeleton } from "./components/Loading";
 import { RequestBody, requestBodyTheme } from "./RequestBody";
 import { RefreshButton } from "./components/RefreshButton";
+import { ScrollingText } from "./components/ScrollingText";
 import { Alert, AlertDescription } from "./components/ui/alert";
 import { Button } from "./components/ui/button";
 import { Card } from "./components/ui/card";
@@ -126,7 +127,9 @@ function ModelCard({
   ];
   return (
     <Card className="min-w-0 gap-0 p-5">
-      <h3 className="break-words text-lg font-semibold">{title}</h3>
+      <h3 className="min-w-0 text-lg font-semibold">
+        <ScrollingText text={title} />
+      </h3>
       {description && (
         <Tooltip
           onOpenChange={(open, details) => {
@@ -190,7 +193,13 @@ function ModelCard({
                   </Popover>
                 )}
             </dt>
-            <dd className="min-w-0 break-all text-right">{value}</dd>
+            <dd className="min-w-0 text-right">
+              {label === "Model ID" ? (
+                <ScrollingText text={value} align="right" />
+              ) : (
+                <span className="break-all">{value}</span>
+              )}
+            </dd>
           </div>
         ))}
         {model.input_modalities.length > 0 && (

@@ -132,6 +132,67 @@
   }
 }
 
+@keyframes scroll-model-label {
+  0%,
+  15% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(calc(-1 * var(--scroll-distance)));
+  }
+}
+
+.scrolling-text-content {
+  gap: 48px;
+}
+
+.scrolling-text-fade-left,
+.scrolling-text-fade-right {
+  position: absolute;
+  inset-block: 0;
+  width: 12px;
+  pointer-events: none;
+}
+
+.scrolling-text-fade-left {
+  left: 0;
+  opacity: 0;
+  background: linear-gradient(to right, var(--card), transparent);
+}
+
+.scrolling-text-fade-right {
+  right: 0;
+  background: linear-gradient(to left, var(--card), transparent);
+}
+
+@keyframes scroll-model-fade-left {
+  0%,
+  15%,
+  100% {
+    opacity: 0;
+  }
+  18%,
+  97% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .scrolling-text-overflow .scrolling-text-content {
+    animation: scroll-model-label var(--scroll-duration) linear infinite paused;
+  }
+
+  .scrolling-text-overflow .scrolling-text-fade-left {
+    animation: scroll-model-fade-left var(--scroll-duration) linear infinite
+      paused;
+  }
+
+  .scrolling-text[data-scrolling="true"] .scrolling-text-content,
+  .scrolling-text[data-scrolling="true"] .scrolling-text-fade-left {
+    animation-play-state: running;
+  }
+}
+
 .request-chart {
   --ts-chart-tooltip-background: var(--popover);
   --ts-chart-tooltip-color: var(--popover-foreground);

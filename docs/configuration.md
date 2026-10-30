@@ -68,6 +68,8 @@ Deleting a provider removes its credentials. Custom provider IDs cannot be reuse
 **Models → Catalog** shows discovered models as cards grouped by provider, with available context, output limits and pricing. Antigravity models with matching low, medium or high reasoning variants share one model ID and display their available efforts as badges; the unified `/v1/models` endpoint exposes the same normalized model with its provider prefix. Search by model or provider, filter by provider, and expand a card's details for syntax-highlighted metadata and datasheets. Descriptions are limited to three lines; hover or focus to see the full text. Each provider's models appear in a swipeable row with navigation controls; a faded edge indicates more cards in that direction. A dash means the information is unavailable. Refresh the catalog to fetch models immediately; failed providers retain their last successful list and show an error. Zen uses OpenCode's model endpoint.
 
 
+Long model names and IDs scroll in a continuous loop with a pause while their cards are visible; hovering reveals the full text. Scrolling is disabled when your device requests reduced motion.
+
 Input types use icons for text, images, audio, video and PDFs; hover over an icon to see its label. Unrecognized input types remain visible as text.
 
 Antigravity input icons reflect the model's advertised capabilities, including enabled MIME types. Actual media support depends on the selected model and upstream service.
