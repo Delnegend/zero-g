@@ -97,7 +97,17 @@ pub(super) fn build_codex_payload_from_chat(req: &ChatCompletionRequest) -> Valu
     }
 
     if let Some(choice) = &req.tool_choice {
-        payload["tool_choice"] = choice.clone();
+        payload["tool_choice"] = if choice.get("type").and_then(Value::as_str) == Some("function")
+            && choice
+                .get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(Value::as_str)
+                .is_some()
+        {
+            json!({"type": "function", "name": choice["function"]["name"]})
+        } else {
+            choice.clone()
+        };
     }
 
     payload["reasoning"] =
@@ -257,12 +267,12 @@ pub(super) fn build_codex_payload_from_responses(req: &ResponseCreateRequest) ->
     payload
 }
 
-/// Repairs call IDs consistently and drops results with no matching call.
+/// Repairs incomplete tool history without discarding the original context.
 #[allow(clippy::indexing_slicing)]
 fn repair_call_ids(items: &mut Vec<Value>) {
-    let mut pending: Vec<(String, String)> = Vec::new();
+    let mut pending: Vec<(String, String, usize)> = Vec::new();
     let mut used = std::collections::HashSet::new();
-    items.retain_mut(|item| {
+    for (position, item) in items.iter_mut().enumerate() {
         let kind = item.get("type").and_then(Value::as_str).unwrap_or_default();
         let original = item
             .get("call_id")
@@ -270,28 +280,61 @@ fn repair_call_ids(items: &mut Vec<Value>) {
             .unwrap_or_default()
             .to_owned();
         if kind == "function_call" {
-            let mut id: String = original
+            let base: String = original
                 .chars()
                 .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
                 .take(64)
                 .collect();
-            if id.is_empty() || used.contains(&id) {
-                id = format!("call_{}", uuid::Uuid::new_v4().simple());
+            let base = if base.is_empty() {
+                "call".to_owned()
+            } else {
+                base
+            };
+            let mut id = base.clone();
+            let mut suffix = 1usize;
+            while used.contains(&id) {
+                let ending = format!("_{suffix}");
+                let prefix: String = base
+                    .chars()
+                    .take(64usize.saturating_sub(ending.len()))
+                    .collect();
+                id = format!("{prefix}{ending}");
+                suffix = suffix.saturating_add(1);
             }
             used.insert(id.clone());
-            pending.push((original, id.clone()));
+            pending.push((original, id.clone(), position));
             item["call_id"] = json!(id);
         } else if kind == "function_call_output" {
             let index = pending
                 .iter()
-                .position(|(source, _)| source == &original)
+                .position(|(source, _, _)| source == &original)
                 .or_else(|| (original.is_empty() && pending.len() == 1).then_some(0));
-            let Some(index) = index else { return false };
-            let (_, id) = pending.remove(index);
-            item["call_id"] = json!(id);
+            if let Some(index) = index {
+                let (_, id, _) = pending.remove(index);
+                item["call_id"] = json!(id);
+            } else {
+                let output = item
+                    .get("output")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                *item = json!({
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": format!("[Previous tool result; call_id={original}]\n{output}")}],
+                });
+            }
         }
-        true
-    });
+    }
+    for (_, id, position) in pending.into_iter().rev() {
+        items.insert(
+            position.saturating_add(1),
+            json!({
+                "type": "function_call_output",
+                "call_id": id,
+                "output": "[No tool output recorded; the tool call may have been interrupted.]",
+            }),
+        );
+    }
 }
 /// Returns whether a role contributes to the instruction string.
 fn is_system_role(role: &str) -> bool {
@@ -414,6 +457,81 @@ fn convert_content_to_input_parts(content: Option<&MessageContent>, role: &str) 
 mod tests {
     use super::*;
     use crate::openai::ChatMessage;
+
+    /// Interrupted Chat history retains context and maps a named tool selection.
+    #[test]
+    fn chat_repairs_interrupted_history_and_maps_named_tool_choice() {
+        let req: ChatCompletionRequest = serde_json::from_value(json!({
+            "model": "gpt-5.5",
+            "messages": [
+                {"role": "user", "content": "Find the file"},
+                {"role": "assistant", "tool_calls": [
+                    {"id": "call|1", "type": "function", "function": {"name": "read", "arguments": "{}"}}
+                ]},
+                {"role": "tool", "tool_call_id": "missing", "content": "Important previous result"},
+                {"role": "user", "content": "Continue"}
+            ],
+            "tool_choice": {"type": "function", "function": {"name": "read"}}
+        })).unwrap();
+        let payload = build_codex_payload_from_chat(&req);
+        assert_eq!(
+            payload["tool_choice"],
+            json!({"type": "function", "name": "read"})
+        );
+        assert_eq!(payload["input"][0]["content"][0]["text"], "Find the file");
+        assert_eq!(payload["input"][1]["call_id"], "call1");
+        assert_eq!(payload["input"][2]["type"], "function_call_output");
+        assert_eq!(payload["input"][2]["call_id"], "call1");
+        assert!(
+            payload["input"][2]["output"]
+                .as_str()
+                .unwrap()
+                .contains("No tool output recorded")
+        );
+        assert_eq!(payload["input"][3]["role"], "assistant");
+        let note = payload["input"][3]["content"][0]["text"].as_str().unwrap();
+        assert!(note.contains("missing"));
+        assert!(note.contains("Important previous result"));
+        assert_eq!(payload["input"][4]["content"][0]["text"], "Continue");
+        assert_eq!(payload, build_codex_payload_from_chat(&req));
+    }
+
+    /// Responses history retains orphaned results and deterministically pairs calls.
+    #[test]
+    fn responses_repairs_orphans_and_keeps_paired_results_and_ids_stable() {
+        let req: ResponseCreateRequest = serde_json::from_value(json!({
+            "model": "gpt-5.5",
+            "input": [
+                {"type": "function_call", "call_id": "a|b", "name": "read", "arguments": "{}"},
+                {"type": "function_call", "call_id": "ab", "name": "read", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": "ab", "output": "found"},
+                {"type": "function_call_output", "call_id": "lost", "output": "preserve me"},
+                {"type": "message", "role": "user", "content": "continue"}
+            ],
+            "tool_choice": {"type": "function", "name": "read"}
+        }))
+        .unwrap();
+        let payload = build_codex_payload_from_responses(&req);
+        let input = payload["input"].as_array().unwrap();
+        assert_eq!(input[0]["call_id"], "ab");
+        assert_eq!(input[1]["call_id"], "ab");
+        assert_eq!(input[1]["type"], "function_call_output");
+        assert_eq!(input[2]["call_id"], "ab_1");
+        assert_eq!(input[3]["call_id"], "ab_1");
+        assert_eq!(input[3]["output"], "found");
+        assert!(
+            input[4]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("preserve me")
+        );
+        assert_eq!(input[5]["content"][0]["text"], "continue");
+        assert_eq!(
+            payload["tool_choice"],
+            json!({"type": "function", "name": "read"})
+        );
+        assert_eq!(payload, build_codex_payload_from_responses(&req));
+    }
 
     #[test]
     fn test_build_codex_payload_from_chat() {
@@ -617,7 +735,7 @@ mod tests {
         let payload = build_codex_payload_from_responses(&req);
         assert_eq!(payload["input"][0]["arguments"], r#"{"path":"Cargo.toml"}"#);
         assert_eq!(
-            payload["input"][1]["arguments"],
+            payload["input"][2]["arguments"],
             r#"{"path":"backend/main.rs"}"#
         );
     }
