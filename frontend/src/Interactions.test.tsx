@@ -106,6 +106,7 @@ const userEvent = (await import("@testing-library/user-event")).default;
 const { Management } = await import("./Management");
 const { ObservabilityPage } = await import("./App");
 const { Credentials } = await import("./components/providers/Credentials");
+const { CredentialUsage } = await import("./components/CredentialUsage");
 const { ProviderCard } = await import("./components/providers/ProviderCard");
 const { ModelCatalogPage } = await import("./Models");
 const { TooltipProvider } = await import("./components/ui/tooltip");
@@ -233,7 +234,7 @@ test("credential editing retains a blank API key unless keyless is selected", as
     />,
   );
   await screen.findByText(/Weight: 1.*Enabled.*Connected/);
-  await user.click(screen.getByRole("button", { name: "Edit" }));
+  await user.click(screen.getByRole("button", { name: "Edit Production" }));
   let dialog = await screen.findByRole("dialog");
   await user.clear(within(dialog).getByLabelText("Name"));
   await user.type(within(dialog).getByLabelText("Name"), "Renamed");
@@ -244,7 +245,7 @@ test("credential editing retains a blank API key unless keyless is selected", as
   assert.deepEqual(requests[0], { name: "Renamed", weight: 1, enabled: true });
   await screen.findByText("Renamed");
   await screen.findByText(/Weight: 1.*Enabled.*Connected/);
-  await user.click(screen.getByRole("button", { name: "Edit" }));
+  await user.click(screen.getByRole("button", { name: "Edit Renamed" }));
   dialog = await screen.findByRole("dialog");
   await user.click(
     within(dialog).getByRole("checkbox", { name: "Use a keyless upstream" }),
@@ -263,6 +264,299 @@ test("credential editing retains a blank API key unless keyless is selected", as
     enabled: true,
     api_key: "",
   });
+});
+
+test("credential names show available account emails without placeholders", async () => {
+  globalThis.fetch = (async (url) =>
+    String(url).endsWith("/usage")
+      ? Response.json({ kind: "grouped_quota", groups: [] })
+      : Response.json({
+          credentials: [
+            {
+              id: "one",
+              name: "Personal",
+              email: "person@example.test",
+              weight: 1,
+              enabled: true,
+              connected: true,
+            },
+            {
+              id: "two",
+              name: "Work",
+              weight: 1,
+              enabled: true,
+              connected: false,
+            },
+          ],
+        })) as typeof fetch;
+  mount(
+    <Credentials
+      provider={{
+        id: "agy",
+        name: "Google Antigravity",
+        kind: "agy",
+        base_url: "",
+      }}
+      kind={{
+        value: "agy",
+        label: "Antigravity",
+        fixed_id: "agy",
+        fixed_name: "Google Antigravity",
+        oauth: true,
+        api_key: false,
+      }}
+      onLogin={() => {}}
+      loginBusy={false}
+    />,
+  );
+  assert.ok(await screen.findByText("person@example.test", { exact: false }));
+  assert.ok(screen.getByText("Work", { exact: true }));
+  assert.equal(screen.queryByText(/Work •/), null);
+});
+
+test("OpenRouter credentials configure and remove a management key and show balance", async () => {
+  const requests: { url: string; method: string; body: unknown }[] = [];
+  globalThis.fetch = (async (url, options) => {
+    const path = String(url);
+    const method = options?.method ?? "GET";
+    if (method === "PUT" || method === "DELETE") {
+      requests.push({
+        url: path,
+        method,
+        body: options?.body ? JSON.parse(String(options.body)) : undefined,
+      });
+      if (method === "PUT" && requests.length === 1) {
+        return new Response(null, { status: 500 });
+      }
+      return new Response(null, { status: 204 });
+    }
+    if (path.endsWith("/usage")) {
+      return Response.json({ kind: "balance", amount: 12.5, currency: "USD" });
+    }
+    return Response.json({
+      credentials: [
+        {
+          id: "account",
+          name: "Account",
+          weight: 1,
+          enabled: true,
+          connected: true,
+        },
+      ],
+    });
+  }) as typeof fetch;
+  const user = userEvent.setup();
+  mount(
+    <Credentials
+      provider={{
+        id: "openrouter",
+        name: "OpenRouter",
+        kind: "openrouter",
+        base_url: "https://openrouter.ai/api/v1",
+      }}
+      kind={{
+        value: "openrouter",
+        label: "OpenRouter",
+        api_key: true,
+        oauth: false,
+        fixed_id: "openrouter",
+        fixed_name: "OpenRouter",
+      }}
+      onLogin={() => {}}
+      loginBusy={false}
+    />,
+  );
+  assert.ok(await screen.findByText("$12.50"));
+  await user.click(
+    screen.getByRole("button", { name: "Configure management key" }),
+  );
+  await user.type(
+    screen.getByLabelText("Management key"),
+    "test-management-key",
+  );
+  await user.click(screen.getByRole("button", { name: "Save management key" }));
+  assert.ok(
+    await screen.findByText("Could not save the management key. Try again."),
+  );
+  assert.equal(
+    (
+      screen.getByRole("button", {
+        name: "Save management key",
+      }) as HTMLButtonElement
+    ).disabled,
+    false,
+  );
+  await user.click(screen.getByRole("button", { name: "Save management key" }));
+  await waitFor(() => assert.equal(requests.length, 2));
+  assert.deepEqual(requests[1], {
+    url: "/api/providers/openrouter/credentials/account/openrouter/management-key",
+    method: "PUT",
+    body: { management_key: "test-management-key" },
+  });
+  await waitFor(() => assert.equal(screen.queryByRole("dialog"), null));
+  await user.click(
+    screen.getByRole("button", { name: "Configure management key" }),
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Remove management key" }),
+  );
+  await waitFor(() => assert.equal(requests.length, 3));
+  assert.deepEqual(requests[2], {
+    url: "/api/providers/openrouter/credentials/account/openrouter/management-key",
+    method: "DELETE",
+    body: undefined,
+  });
+});
+
+test("quota resets show a countdown and reveal the exact time", async () => {
+  const reset = Math.floor(Date.now() / 1000) + 2 * 3600 + 45;
+  globalThis.fetch = (async () =>
+    Response.json({
+      kind: "quota",
+      windows: [
+        { label: "5 hours", remaining_percent: null, reset_at: reset },
+        { label: "Weekly", remaining_percent: null, reset_at: reset - 86400 },
+      ],
+    })) as typeof fetch;
+  const user = userEvent.setup();
+  mount(
+    <TooltipProvider>
+      <CredentialUsage
+        providerId="codex"
+        credentialId="account"
+        credentialName="Account"
+        kind="codex"
+        connected
+      />
+    </TooltipProvider>,
+  );
+  const trigger = await screen.findByRole("button", {
+    name: "Resets in 2h 1m",
+  });
+  assert.ok(screen.getByRole("button", { name: "Reset due" }));
+  await user.hover(trigger);
+  assert.ok(await screen.findByText(new Date(reset * 1000).toLocaleString()));
+});
+
+test("Antigravity quotas show each pool with its own windows", async () => {
+  globalThis.fetch = (async () =>
+    Response.json({
+      kind: "grouped_quota",
+      groups: [
+        {
+          label: "Gemini Models",
+          windows: [
+            { label: "5 hours", remaining_percent: 80, reset_at: null },
+            { label: "Weekly", remaining_percent: 40, reset_at: null },
+          ],
+        },
+        {
+          label: "Claude and GPT models",
+          windows: [
+            { label: "5 hours", remaining_percent: 30, reset_at: null },
+            { label: "Weekly", remaining_percent: null, reset_at: null },
+            { label: "Daily", remaining_percent: 0, reset_at: null },
+            { label: "Monthly", remaining_percent: 100, reset_at: null },
+          ],
+        },
+      ],
+    })) as typeof fetch;
+  mount(
+    <CredentialUsage
+      providerId="agy"
+      credentialId="account"
+      credentialName="Account"
+      kind="agy"
+      connected
+    />,
+  );
+  const gemini = await screen.findByRole("group", { name: "Gemini Models" });
+  const claude = screen.getByRole("group", { name: "Claude and GPT models" });
+  assert.ok(within(gemini).getByText("80% remaining"));
+  assert.ok(within(gemini).getByText("40% remaining"));
+  assert.ok(within(claude).getByText("30% remaining"));
+  assert.ok(within(claude).getByText("Unknown remaining"));
+  assert.equal(
+    within(gemini)
+      .getByRole("progressbar", { name: "5 hours remaining" })
+      .getAttribute("aria-valuenow"),
+    "80",
+  );
+  assert.equal(
+    within(gemini)
+      .getByRole("progressbar", { name: "Weekly remaining" })
+      .getAttribute("aria-valuenow"),
+    "40",
+  );
+  assert.equal(
+    within(claude).queryByRole("progressbar", { name: "Weekly remaining" }),
+    null,
+  );
+  assert.equal(
+    within(claude)
+      .getByRole("progressbar", { name: "Daily remaining" })
+      .getAttribute("aria-valuenow"),
+    "0",
+  );
+  assert.equal(
+    within(claude)
+      .getByRole("progressbar", { name: "Monthly remaining" })
+      .getAttribute("aria-valuenow"),
+    "100",
+  );
+});
+
+test("connected Claude credentials show subscription quota", async () => {
+  globalThis.fetch = (async (url) =>
+    String(url).endsWith("/usage")
+      ? Response.json({
+          kind: "grouped_quota",
+          groups: [
+            {
+              label: "Claude subscription",
+              windows: [
+                { label: "5 hours", remaining_percent: 80, reset_at: null },
+                { label: "Weekly", remaining_percent: 60, reset_at: null },
+              ],
+            },
+          ],
+        })
+      : Response.json({
+          credentials: [
+            {
+              id: "account",
+              name: "Account",
+              weight: 1,
+              enabled: true,
+              connected: true,
+            },
+          ],
+        })) as typeof fetch;
+  mount(
+    <Credentials
+      provider={{
+        id: "claude",
+        name: "Claude Code",
+        kind: "claude",
+        base_url: "",
+      }}
+      kind={{
+        value: "claude",
+        label: "Claude Code",
+        api_key: false,
+        oauth: true,
+        fixed_id: "claude",
+        fixed_name: "Claude Code",
+      }}
+      onLogin={() => {}}
+      loginBusy={false}
+    />,
+  );
+  const group = await screen.findByRole("group", {
+    name: "Claude subscription",
+  });
+  assert.ok(within(group).getByText("80% remaining"));
+  assert.ok(within(group).getByText("60% remaining"));
 });
 
 for (const [kind, label, host] of [

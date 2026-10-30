@@ -147,6 +147,21 @@ export function deleteConsoleSession(providerId: string, credentialId: string) {
   return api.deleteZenConsole(providerId, credentialId);
 }
 
+export function saveOpenrouterManagementKey(
+  providerId: string,
+  credentialId: string,
+  body: Parameters<typeof api.saveOpenrouterManagementKey>[2],
+) {
+  return api.saveOpenrouterManagementKey(providerId, credentialId, body);
+}
+
+export function deleteOpenrouterManagementKey(
+  providerId: string,
+  credentialId: string,
+) {
+  return api.deleteOpenrouterManagementKey(providerId, credentialId);
+}
+
 export function getCredentials(providerId: string, signal?: AbortSignal) {
   return api.listCredentials(providerId, { signal });
 }

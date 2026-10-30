@@ -46,7 +46,7 @@ Source builds from checkout: run `(cd frontend && bun install --frozen-lockfile)
 ## Highlights
 
 - **Unified API** — All providers share `/v1`; model IDs include the provider ID to distinguish identical names.
-- **Multi-Provider Backends** — Connect Antigravity, Codex, Claude Code, Cursor, Grok, Grok Build, OpenCode Zen and Go, and OpenAI-compatible upstreams.
+- **Multi-Provider Backends** — Connect Antigravity, Codex, Claude Code, Cursor, Grok, Grok Build, OpenCode Zen and Go, OpenRouter, and OpenAI-compatible upstreams.
 - **OAuth Refresh** — Refreshes supported access tokens on demand when they approach expiration.
 - **Claude & Gemini Support** — Formats Anthropic thinking beta headers, system instructions, and tool calling signatures automatically.
 - **Multi-Turn Tool Calling** — End-to-end function declaration, execution, and tool response turn merging.
@@ -71,6 +71,7 @@ flowchart LR
     ZeroG -->|OAuth| Grok[Grok and Grok Build]
     ZeroG -->|OpenAI API| Zen[OpenCode Zen]
     ZeroG -->|OpenAI API| Go[OpenCode Go]
+    ZeroG -->|OpenAI API| OpenRouter[OpenRouter]
     ZeroG -->|OpenAI API| Custom[OpenAI-compatible upstream]
 ```
 

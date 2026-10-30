@@ -2,7 +2,7 @@
 
 ## Overview
 
-`zero-g` exposes one OpenAI-compatible API for multiple providers. Requests name a provider and model, such as `codex/gpt-5.3-codex`. Antigravity, Codex, Claude Code and Cursor requests are translated to their upstream protocols; Grok and Grok Build use separate xAI and CLI-proxy endpoints. OpenCode Go, Zen and custom OpenAI-compatible providers are forwarded. Provider credentials, virtual keys, settings and request logs are stored in the local database.
+`zero-g` exposes one OpenAI-compatible API for multiple providers. Requests name a provider and model, such as `codex/gpt-5.3-codex`. Antigravity, Codex, Claude Code and Cursor requests are translated to their upstream protocols; Grok and Grok Build use separate xAI and CLI-proxy endpoints. OpenCode Go, Zen, OpenRouter and custom OpenAI-compatible providers are forwarded. Provider credentials, virtual keys, settings and request logs are stored in the local database.
 
 ```mermaid
 flowchart TD
@@ -19,6 +19,7 @@ flowchart TD
     Router --> Grok[Grok and Grok Build]
     Router --> Zen[Zen API]
     Router --> Go[OpenCode Go]
+    Router --> OpenRouter[OpenRouter API]
     Router --> Custom[OpenAI-compatible upstream]
     AGY --> Google[Google Cloud Code Assist]
     Codex --> OpenAI[ChatGPT backend]
@@ -42,7 +43,7 @@ flowchart TD
 - **Model settings endpoints (`backend/server/model_setting/`):** `get.rs`, `update.rs`, and `sync.rs` own their respective API actions and tests; `datasheet.rs` handles downloads and filtering, and `schedule.rs` handles background refreshes.
 - **OpenAI-compatible provider (`backend/provider/openai/`):** Forwards model discovery, Chat Completions and Responses requests to the configured upstream API without translating between the two protocols.
 - **OpenCode Go (`backend/provider/go/`):** Forwards both OpenAI APIs with the supplied session header, discovers Go models, and uses the same weighted credential failover.
-- **Account usage (`backend/provider/quota.rs`):** Dispatches to provider-owned quota implementations; Zen balance uses a separately encrypted Console session and workspace ID. The dashboard caches responses for five minutes.
+- **Account usage (`backend/provider/quota.rs`):** Dispatches to provider-owned quota implementations; Zen balance uses a separately encrypted Console session and workspace ID, while OpenRouter credits use a separate encrypted management key. The dashboard caches responses for five minutes.
 - **Codex tool history:** Function-call arguments are sent upstream as JSON strings, including when a Responses request supplies an object.
 - **Stream Parsers (`backend/provider/antigravity/stream.rs`, `backend/provider/codex/client.rs`):** Decode upstream SSE streams into standard OpenAI chat completion chunks or Responses API lifecycle events.
 - **Storage (`backend/database.rs`, `backend/storage.rs`):** A shared Toasty connection pool serves providers, settings, encrypted secrets, virtual keys and request logs. The settings store holds its validated 32-byte encryption key as an `EncryptionKey` type. Related changes use `transaction_with_retry!` to start a fresh transaction for each attempt; write conflicts are retried for up to five seconds, and callers decide whether to commit. Dashboard summaries use a consistent read snapshot. Embedded migrations run at startup.

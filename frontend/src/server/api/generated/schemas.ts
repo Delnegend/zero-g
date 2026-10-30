@@ -553,6 +553,10 @@ export const Credential = zod
     connected: zod
       .boolean()
       .describe("Whether its provider-specific secret exists."),
+    email: zod
+      .string()
+      .nullish()
+      .describe("Account email returned during OAuth sign-in, when available."),
     enabled: zod.boolean().describe("Whether the credential is enabled."),
     id: zod.string().describe("Stable credential identifier."),
     name: zod.string().describe("User-facing credential name."),
@@ -587,6 +591,12 @@ export const CredentialsResponse = zod
             connected: zod
               .boolean()
               .describe("Whether its provider-specific secret exists."),
+            email: zod
+              .string()
+              .nullish()
+              .describe(
+                "Account email returned during OAuth sign-in, when available.",
+              ),
             enabled: zod
               .boolean()
               .describe("Whether the credential is enabled."),
@@ -871,6 +881,17 @@ export const LogEntry = zod
 
 export type LogEntry = zod.input<typeof LogEntry>;
 export type LogEntryOutput = zod.output<typeof LogEntry>;
+
+export const ManagementKey = zod
+  .object({
+    management_key: zod.string().describe("`OpenRouter` management API key."),
+  })
+  .describe(
+    "Management key used only for querying `OpenRouter` account credits.",
+  );
+
+export type ManagementKey = zod.input<typeof ManagementKey>;
+export type ManagementKeyOutput = zod.output<typeof ManagementKey>;
 
 export const modelCatalogProvidersItemModelsItemModelContextWindowMin = 0;
 
@@ -1335,6 +1356,32 @@ export const QuotaWindow = zod
 export type QuotaWindow = zod.input<typeof QuotaWindow>;
 export type QuotaWindowOutput = zod.output<typeof QuotaWindow>;
 
+export const QuotaGroup = zod
+  .object({
+    label: zod.string().describe("Display name of the pool."),
+    windows: zod
+      .array(
+        zod
+          .object({
+            label: zod.string().describe("Display label for the window."),
+            remaining_percent: zod
+              .number()
+              .nullable()
+              .describe("Remaining quota as a percentage, when available."),
+            reset_at: zod
+              .int()
+              .nullable()
+              .describe("Reset timestamp, when provided by the upstream."),
+          })
+          .describe("Usage remaining within a provider-defined time window."),
+      )
+      .describe("Quota windows within the pool."),
+  })
+  .describe("Quota windows sharing a provider-reported model pool.");
+
+export type QuotaGroup = zod.input<typeof QuotaGroup>;
+export type QuotaGroupOutput = zod.output<typeof QuotaGroup>;
+
 export const QuotaSnapshot = zod
   .union([
     zod
@@ -1361,6 +1408,47 @@ export const QuotaSnapshot = zod
           .describe("Individual windows reported by the provider."),
       })
       .describe("Time-windowed quota measurements."),
+    zod
+      .object({
+        groups: zod
+          .array(
+            zod
+              .object({
+                label: zod.string().describe("Display name of the pool."),
+                windows: zod
+                  .array(
+                    zod
+                      .object({
+                        label: zod
+                          .string()
+                          .describe("Display label for the window."),
+                        remaining_percent: zod
+                          .number()
+                          .nullable()
+                          .describe(
+                            "Remaining quota as a percentage, when available.",
+                          ),
+                        reset_at: zod
+                          .int()
+                          .nullable()
+                          .describe(
+                            "Reset timestamp, when provided by the upstream.",
+                          ),
+                      })
+                      .describe(
+                        "Usage remaining within a provider-defined time window.",
+                      ),
+                  )
+                  .describe("Quota windows within the pool."),
+              })
+              .describe(
+                "Quota windows sharing a provider-reported model pool.",
+              ),
+          )
+          .describe("Model pools and their quota windows."),
+        kind: zod.enum(["grouped_quota"]),
+      })
+      .describe("Time-windowed quota measurements grouped by model pool."),
     zod
       .object({
         amount: zod.number().describe("Balance in the indicated currency."),
@@ -1656,6 +1744,21 @@ export const PollGrokLoginBody = zod
 
 export type PollGrokLoginBody = zod.input<typeof PollGrokLoginBody>;
 export type PollGrokLoginBodyOutput = zod.output<typeof PollGrokLoginBody>;
+
+export const SaveOpenrouterManagementKeyBody = zod
+  .object({
+    management_key: zod.string().describe("`OpenRouter` management API key."),
+  })
+  .describe(
+    "Management key used only for querying `OpenRouter` account credits.",
+  );
+
+export type SaveOpenrouterManagementKeyBody = zod.input<
+  typeof SaveOpenrouterManagementKeyBody
+>;
+export type SaveOpenrouterManagementKeyBodyOutput = zod.output<
+  typeof SaveOpenrouterManagementKeyBody
+>;
 
 export const updateSettingsBodyLogRetentionDaysMin = 0;
 export const updateSettingsBodyLogRetentionDaysMax = 4294967295;

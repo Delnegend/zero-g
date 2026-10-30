@@ -25,6 +25,15 @@ pub(crate) struct QuotaWindow {
     pub(crate) reset_at: Option<i64>,
 }
 
+/// Quota windows sharing a provider-reported model pool.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct QuotaGroup {
+    /// Display name of the pool.
+    pub(crate) label: String,
+    /// Quota windows within the pool.
+    pub(crate) windows: Vec<QuotaWindow>,
+}
+
 /// Provider usage represented as quota windows or a monetary balance.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -33,6 +42,11 @@ pub(crate) enum QuotaSnapshot {
     Quota {
         /// Individual windows reported by the provider.
         windows: Vec<QuotaWindow>,
+    },
+    /// Time-windowed quota measurements grouped by model pool.
+    GroupedQuota {
+        /// Model pools and their quota windows.
+        groups: Vec<QuotaGroup>,
     },
     /// Monetary account balance.
     Balance {
@@ -45,7 +59,10 @@ pub(crate) enum QuotaSnapshot {
 
 /// Credential usage API.
 #[derive(utoipa::OpenApi)]
-#[openapi(paths(usage), components(schemas(QuotaWindow, QuotaSnapshot)))]
+#[openapi(
+    paths(usage),
+    components(schemas(QuotaWindow, QuotaGroup, QuotaSnapshot))
+)]
 pub(crate) struct Api;
 
 /// Returns usage for an existing provider credential when supported.

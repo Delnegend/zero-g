@@ -1272,6 +1272,74 @@
         }
       }
     },
+    "/api/providers/{id}/credentials/{credential_id}/openrouter/management-key": {
+      "put": {
+        "tags": [],
+        "summary": "Save the management key for an `OpenRouter` credential.",
+        "operationId": "saveOpenrouterManagementKey",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManagementKey"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        }
+      },
+      "delete": {
+        "tags": [],
+        "summary": "Delete the management key for an `OpenRouter` credential.",
+        "operationId": "deleteOpenrouterManagementKey",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/api/providers/{id}/credentials/{credential_id}/usage": {
       "get": {
         "tags": [],
@@ -2191,6 +2259,10 @@
             "type": "boolean",
             "description": "Whether its provider-specific secret exists."
           },
+          "email": {
+            "type": ["string", "null"],
+            "description": "Account email returned during OAuth sign-in, when available."
+          },
           "enabled": {
             "type": "boolean",
             "description": "Whether the credential is enabled."
@@ -2543,6 +2615,18 @@
           }
         }
       },
+      "ManagementKey": {
+        "type": "object",
+        "description": "Management key used only for querying `OpenRouter` account credits.",
+        "required": ["management_key"],
+        "properties": {
+          "management_key": {
+            "type": "string",
+            "description": "`OpenRouter` management API key."
+          }
+        },
+        "additionalProperties": false
+      },
       "Model": {
         "type": "object",
         "description": "Model metadata returned by the listing endpoint.",
@@ -2858,6 +2942,24 @@
           }
         }
       },
+      "QuotaGroup": {
+        "type": "object",
+        "description": "Quota windows sharing a provider-reported model pool.",
+        "required": ["label", "windows"],
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "Display name of the pool."
+          },
+          "windows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QuotaWindow"
+            },
+            "description": "Quota windows within the pool."
+          }
+        }
+      },
       "QuotaSnapshot": {
         "oneOf": [
           {
@@ -2875,6 +2977,24 @@
                   "$ref": "#/components/schemas/QuotaWindow"
                 },
                 "description": "Individual windows reported by the provider."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Time-windowed quota measurements grouped by model pool.",
+            "required": ["groups", "kind"],
+            "properties": {
+              "groups": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/QuotaGroup"
+                },
+                "description": "Model pools and their quota windows."
+              },
+              "kind": {
+                "type": "string",
+                "enum": ["grouped_quota"]
               }
             }
           },

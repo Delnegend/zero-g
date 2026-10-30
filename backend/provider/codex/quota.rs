@@ -159,7 +159,7 @@ mod tests {
     fn windows(payload: &Value) -> Vec<QuotaWindow> {
         match parse_usage(payload, 1_700_000_000).unwrap() {
             QuotaSnapshot::Quota { windows } => windows,
-            QuotaSnapshot::Balance { .. } => panic!("expected quota"),
+            _ => panic!("expected quota"),
         }
     }
 

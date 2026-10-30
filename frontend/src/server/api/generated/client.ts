@@ -44,6 +44,7 @@ import type {
   CursorPollInput,
   GetObservabilityParams,
   GrokPollInput,
+  ManagementKey,
   UpdateProvider,
   UpdateSettings,
 } from "./schemas";
@@ -1124,6 +1125,75 @@ export const startGrokLogin = async (
     ...options,
     method: "POST",
     schema: GrokStartResponse,
+  });
+};
+
+export const getSaveOpenrouterManagementKeyUrl = (
+  id: string,
+  credentialId: string,
+) => {
+  return `/api/providers/${encodeURIComponent(String(id))}/credentials/${encodeURIComponent(String(credentialId))}/openrouter/management-key`;
+};
+
+/**
+ * @summary Save the management key for an `OpenRouter` credential.
+ */
+export const saveOpenrouterManagementKey = async (
+  id: string,
+  credentialId: string,
+  managementKey: ManagementKey,
+  options?: Parameters<typeof request>[1],
+): Promise<void> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<
+      string | readonly string[] | undefined
+    >(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return request<void>(getSaveOpenrouterManagementKeyUrl(id, credentialId), {
+    ...options,
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      ...getHeaders(options?.headers),
+    },
+    body: JSON.stringify(managementKey),
+  });
+};
+
+export const getDeleteOpenrouterManagementKeyUrl = (
+  id: string,
+  credentialId: string,
+) => {
+  return `/api/providers/${encodeURIComponent(String(id))}/credentials/${encodeURIComponent(String(credentialId))}/openrouter/management-key`;
+};
+
+/**
+ * @summary Delete the management key for an `OpenRouter` credential.
+ */
+export const deleteOpenrouterManagementKey = async (
+  id: string,
+  credentialId: string,
+  options?: Parameters<typeof request>[1],
+): Promise<void> => {
+  return request<void>(getDeleteOpenrouterManagementKeyUrl(id, credentialId), {
+    ...options,
+    method: "DELETE",
   });
 };
 

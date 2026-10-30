@@ -28,6 +28,9 @@ pub(crate) struct Credential {
     pub(crate) enabled: bool,
     /// Whether its provider-specific secret exists.
     pub(crate) connected: bool,
+    /// Account email returned during OAuth sign-in, when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) email: Option<String>,
 }
 
 /// Builds public credential metadata and checks for its stored secret.
@@ -53,7 +56,43 @@ async fn info(
         weight: row.weight,
         enabled: row.enabled,
         connected,
+        email: None,
     })
+}
+
+/// Profile information stored alongside an OAuth token.
+#[derive(Deserialize)]
+struct AccountProfile {
+    /// Account email supplied by the provider.
+    email: Option<String>,
+}
+
+/// Populate dashboard-only identity metadata without parsing it on inference requests.
+async fn include_emails(
+    store: &SettingsStore,
+    provider_id: &str,
+    credentials: &mut [Credential],
+) -> Result<(), String> {
+    let Some(provider) = registry::get(&store.database, provider_id).await? else {
+        return Ok(());
+    };
+    if !matches!(provider.kind.as_str(), "agy" | "codex" | "claude") {
+        return Ok(());
+    }
+    for credential in credentials
+        .iter_mut()
+        .filter(|credential| credential.connected)
+    {
+        if let Some(secret) = store
+            .secret_get(&format!("credential.{}.credential", credential.id))
+            .await?
+        {
+            let profile: AccountProfile = serde_json::from_str(&secret)
+                .map_err(|_| "Invalid stored account profile".to_string())?;
+            credential.email = profile.email.filter(|email| !email.trim().is_empty());
+        }
+    }
+    Ok(())
 }
 
 /// Retrieves a credential belonging to the named provider, if present.
@@ -208,7 +247,12 @@ async fn list_endpoint(
     Path(provider_id): Path<String>,
 ) -> Response {
     match all(&store, &provider_id).await {
-        Ok(Some(credentials)) => Json(CredentialsResponse { credentials }).into_response(),
+        Ok(Some(mut credentials)) => {
+            match include_emails(&store, &provider_id, &mut credentials).await {
+                Ok(()) => Json(CredentialsResponse { credentials }).into_response(),
+                Err(e) => internal(&e),
+            }
+        }
         Ok(None) => (StatusCode::NOT_FOUND, "Provider not found").into_response(),
         Err(e) => internal(&e),
     }
@@ -354,7 +398,12 @@ async fn update(
     });
     match result {
         Ok(StatusCode::OK) => match get(&store, &provider_id, &id).await {
-            Ok(Some(value)) => Json(value).into_response(),
+            Ok(Some(mut value)) => {
+                match include_emails(&store, &provider_id, std::slice::from_mut(&mut value)).await {
+                    Ok(()) => Json(value).into_response(),
+                    Err(e) => internal(&e),
+                }
+            }
             Ok(None) => (StatusCode::NOT_FOUND, "Credential not found").into_response(),
             Err(e) => internal(&e),
         },
@@ -393,6 +442,7 @@ async fn delete(
             "credential",
             "console_session",
             "console_workspace",
+            "openrouter_management_key",
         ] {
             Secret::delete_by_name(&mut tx, format!("credential.{id}.{suffix}").as_str()).await?;
         }
@@ -529,6 +579,57 @@ pub(crate) async fn migrate_legacy(store: &SettingsStore) -> Result<(), String> 
 mod tests {
     use super::*;
     use crate::database::Database;
+
+    /// Dashboard credential lists expose account email without exposing OAuth secrets.
+    #[tokio::test]
+    async fn dashboard_lists_stored_account_emails_without_tokens() {
+        use axum::body::to_bytes;
+        let store = SettingsStore::new(
+            Database::open(":memory:").await.unwrap(),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )
+        .await
+        .unwrap();
+        let mut db = (*store.database.db).clone();
+        for kind in ["agy", "codex", "claude"] {
+            toasty::create!(ProviderRecord {
+                id: kind.to_string(),
+                name: kind.to_string(),
+                kind: kind.to_string(),
+                base_url: String::new(),
+                deleted: false
+            })
+            .exec(&mut db)
+            .await
+            .unwrap();
+            let id = format!("{kind}-account");
+            toasty::create!(ProviderCredential {
+                id: id.clone(),
+                provider_id: kind.to_string(),
+                name: "Personal".to_string(),
+                weight: 1,
+                enabled: true
+            })
+            .exec(&mut db)
+            .await
+            .unwrap();
+            let name = format!("credential.{id}.credential");
+            let json =
+                serde_json::json!({"email":"person@example.test","access_token":"secret-token"})
+                    .to_string();
+            Secret::upsert_by_name(name.as_str())
+                .value(store.encrypt(&name, &json).unwrap())
+                .exec(&mut db)
+                .await
+                .unwrap();
+            let response = list_endpoint(State(store.clone()), Path(kind.to_string())).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = to_bytes(response.into_body(), 65536).await.unwrap();
+            let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(value["credentials"][0]["email"], "person@example.test");
+            assert!(!String::from_utf8_lossy(&body).contains("secret-token"));
+        }
+    }
 
     #[tokio::test]
     /// Merging legacy credentials must not widen virtual-key access.

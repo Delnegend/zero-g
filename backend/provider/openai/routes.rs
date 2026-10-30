@@ -18,6 +18,19 @@ use crate::server::{
 
 /// Build authenticated routes for an OpenAI-compatible provider.
 pub(crate) fn router(settings: &SettingsStore) -> Router<AppState> {
+    router_for(settings, "openai", None)
+}
+
+/// Optional fixed upstream endpoint for a compatible provider.
+#[derive(Clone)]
+struct FixedBase(Option<std::sync::Arc<str>>);
+
+/// Build routes for an OpenAI-compatible provider kind.
+pub(crate) fn router_for(
+    settings: &SettingsStore,
+    kind: &'static str,
+    fixed_base: Option<&str>,
+) -> Router<AppState> {
     Router::new()
         .route("/v1/models", get(models_handler))
         .route("/v1/models/", get(models_handler))
@@ -25,16 +38,19 @@ pub(crate) fn router(settings: &SettingsStore) -> Router<AppState> {
         .route("/v1/chat/completions/", post(chat_handler))
         .route("/v1/responses", post(responses_handler))
         .route("/v1/responses/", post(responses_handler))
+        .layer(Extension(FixedBase(fixed_base.map(std::sync::Arc::from))))
         .layer(axum::middleware::from_fn_with_state(
-            (settings.clone(), "openai"),
+            (settings.clone(), kind),
             settings::virtual_key_auth,
         ))
 }
 
 /// Resolve credentials and send a request upstream.
+#[allow(clippy::too_many_arguments)]
 async fn send(
     settings: &SettingsStore,
     provider: &Provider,
+    fixed_base: Option<&str>,
     path: &str,
     query: Option<&str>,
     method: Method,
@@ -52,7 +68,7 @@ async fn send(
             .map_err(|_| settings_error())?
             .ok_or_else(settings_error)?;
         let response = openai::send(
-            &provider.base_url,
+            fixed_base.unwrap_or(&provider.base_url),
             &key,
             path,
             query,
@@ -92,12 +108,14 @@ async fn models_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
+    Extension(FixedBase(fixed_base)): Extension<FixedBase>,
     RawQuery(query): RawQuery,
     headers: HeaderMap,
 ) -> Response {
     let response = match send(
         &state.settings,
         &provider,
+        fixed_base.as_deref(),
         "models",
         query.as_deref(),
         Method::GET,
@@ -141,10 +159,12 @@ async fn models_handler(
 }
 
 /// Forward an inference request after checking model permissions.
+#[allow(clippy::too_many_arguments)]
 async fn inference(
     state: AppState,
     permissions: Permissions,
     provider: Provider,
+    fixed_base: Option<&str>,
     query: Option<String>,
     headers: HeaderMap,
     body: Bytes,
@@ -156,6 +176,7 @@ async fn inference(
     match send(
         &state.settings,
         &provider,
+        fixed_base,
         path,
         query.as_deref(),
         Method::POST,
@@ -174,6 +195,7 @@ async fn chat_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
+    Extension(FixedBase(fixed_base)): Extension<FixedBase>,
     RawQuery(query): RawQuery,
     headers: HeaderMap,
     body: Bytes,
@@ -182,6 +204,7 @@ async fn chat_handler(
         state,
         permissions,
         provider,
+        fixed_base.as_deref(),
         query,
         headers,
         body,
@@ -195,6 +218,7 @@ async fn responses_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
+    Extension(FixedBase(fixed_base)): Extension<FixedBase>,
     RawQuery(query): RawQuery,
     headers: HeaderMap,
     body: Bytes,
@@ -203,6 +227,7 @@ async fn responses_handler(
         state,
         permissions,
         provider,
+        fixed_base.as_deref(),
         query,
         headers,
         body,
@@ -268,6 +293,171 @@ mod tests {
             json!({"object":"list", "data":[{"id":"allowed","extra":1}], "next":"page"})
         );
         assert!(!filter_models(&mut json!({"unexpected":[]}), &permissions));
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines, clippy::literal_string_with_formatting_args)]
+    async fn fixed_compatible_router_enforces_scope_and_forwards_nested_models() {
+        use crate::{
+            database::Database,
+            server::{dashboard_auth_config, observability::LogStore},
+            storage::{ProviderCredential, ProviderRecord, Secret, VirtualKey},
+        };
+        use axum::{body::Body, extract::Request, response::Json};
+        use ring::digest;
+        use tokio::sync::mpsc;
+        use tower::ServiceExt;
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let upstream = Router::new().route("/{*path}", axum::routing::any(move |req: Request| {
+            let tx = tx.clone();
+            async move {
+                let (parts, body) = req.into_parts();
+                let body = axum::body::to_bytes(body, 1024 * 1024).await.unwrap();
+                let value: Value = serde_json::from_slice(&body).unwrap();
+                tx.send((parts.uri.path().to_string(), parts.headers, value)).unwrap();
+                let result = if parts.uri.path() == "/v1/chat/completions" {
+                    json!({"id":"chat-result","choices":[{"message":{"role":"assistant","content":"chat answer"}}]})
+                } else {
+                    json!({"id":"response-result","output":[{"type":"message","content":[{"type":"output_text","text":"response answer"}]}]})
+                };
+                Json(result)
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let upstream_task =
+            tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+        let database = Database::open(":memory:").await.unwrap();
+        let store = SettingsStore::new(
+            database.clone(),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )
+        .await
+        .unwrap();
+        let mut db = (*database.db).clone();
+        for (id, kind) in [
+            ("openrouter", "openrouter"),
+            ("other", "openrouter"),
+            ("wrong-kind", "openai"),
+        ] {
+            toasty::create!(ProviderRecord {
+                id: id.to_string(),
+                name: id.to_string(),
+                kind: kind.to_string(),
+                base_url: "http://127.0.0.1:1/untrusted".to_string(),
+                deleted: false
+            })
+            .exec(&mut db)
+            .await
+            .unwrap();
+        }
+        toasty::create!(ProviderCredential {
+            id: "cred".to_string(),
+            provider_id: "openrouter".to_string(),
+            name: "account".to_string(),
+            weight: 1,
+            enabled: true
+        })
+        .exec(&mut db)
+        .await
+        .unwrap();
+        let name = "credential.cred.api_key";
+        Secret::upsert_by_name(name)
+            .value(store.encrypt(name, "upstream-key").unwrap())
+            .exec(&mut db)
+            .await
+            .unwrap();
+        let token = "virtual-key";
+        toasty::create!(VirtualKey {
+            id: "key".to_string(),
+            name: "restricted".to_string(),
+            key_hash: digest::digest(&digest::SHA256, token.as_bytes())
+                .as_ref()
+                .to_vec(),
+            providers: "[\"openrouter\"]".to_string(),
+            models: "[\"vendor/nested-model\"]".to_string(),
+            created_at: 0
+        })
+        .exec(&mut db)
+        .await
+        .unwrap();
+        let state = AppState {
+            providers: crate::provider::Providers::new(),
+            settings: store.clone(),
+            logs: LogStore::new(database),
+            dashboard_auth: dashboard_auth_config::test_auth().await,
+        };
+        let gateway = Router::new()
+            .nest(
+                "/openrouter/{id}",
+                router_for(&store, "openrouter", Some(&base)),
+            )
+            .with_state(state);
+        let request = |provider: &str, endpoint: &str, model: &str, bearer: &str| {
+            Request::builder()
+                .method("POST")
+                .uri(format!("/openrouter/{provider}/v1/{endpoint}"))
+                .header(header::AUTHORIZATION, format!("Bearer {bearer}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"model":model,"input":"hello"}).to_string(),
+                ))
+                .unwrap()
+        };
+        for (provider, model, bearer, status) in [
+            (
+                "wrong-kind",
+                "vendor/nested-model",
+                token,
+                StatusCode::NOT_FOUND,
+            ),
+            ("other", "vendor/nested-model", token, StatusCode::FORBIDDEN),
+            ("openrouter", "vendor/denied", token, StatusCode::FORBIDDEN),
+            (
+                "openrouter",
+                "vendor/nested-model",
+                "invalid",
+                StatusCode::UNAUTHORIZED,
+            ),
+        ] {
+            assert_eq!(
+                gateway
+                    .clone()
+                    .oneshot(request(provider, "responses", model, bearer))
+                    .await
+                    .unwrap()
+                    .status(),
+                status
+            );
+        }
+        assert!(rx.try_recv().is_err());
+        for (endpoint, expected_id) in [
+            ("chat/completions", "chat-result"),
+            ("responses", "response-result"),
+        ] {
+            let response = gateway
+                .clone()
+                .oneshot(request(
+                    "openrouter",
+                    endpoint,
+                    "vendor/nested-model",
+                    token,
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .unwrap();
+            let value: Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(value["id"], expected_id);
+            let (path, headers, body) = rx.recv().await.unwrap();
+            assert_eq!(path, format!("/v1/{endpoint}"));
+            assert_eq!(headers[header::AUTHORIZATION], "Bearer upstream-key");
+            assert_eq!(body["model"], "vendor/nested-model");
+        }
+        upstream_task.abort();
     }
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
@@ -363,6 +553,7 @@ mod tests {
                     let response = send(
                         &store,
                         &provider,
+                        None,
                         "models",
                         None,
                         Method::GET,
@@ -436,6 +627,7 @@ mod tests {
                 send(
                     &store,
                     &provider,
+                    None,
                     "models",
                     None,
                     Method::GET,

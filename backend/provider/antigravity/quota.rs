@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use super::auth::{ANTIGRAVITY_USER_AGENT, AuthManager, CLOUD_CODE_ASSIST_ENDPOINT};
 use super::models::SANDBOX_ENDPOINT;
-use crate::provider::quota::{QuotaSnapshot, QuotaWindow};
+use crate::provider::quota::{QuotaGroup, QuotaSnapshot, QuotaWindow};
 use crate::server::settings::SettingsStore;
 
 /// Fetch quota information for an Antigravity credential.
@@ -189,7 +189,7 @@ fn parse_summary(data: Value) -> Result<QuotaSnapshot, String> {
         group.buckets.sort_by_key(window_order);
     }
     summary.buckets.sort_by_key(window_order);
-    let mut windows = Vec::new();
+    let mut groups: Vec<QuotaGroup> = Vec::new();
     let grouped = summary.groups.iter().any(|group| !group.buckets.is_empty());
     let buckets: Vec<(Option<&str>, &Bucket)> = if grouped {
         summary
@@ -221,24 +221,32 @@ fn parse_summary(data: Value) -> Result<QuotaSnapshot, String> {
                 group.filter(|s| !s.is_empty()).unwrap_or("Antigravity")
             };
         let window = bucket_window(bucket);
-        let mut label = format!("{group} · {window}");
-        if windows
-            .iter()
-            .any(|existing: &QuotaWindow| existing.label == label)
-            && let Some(id) = bucket_id
-        {
-            label = format!("{label} · {id}");
-        }
-        windows.push(QuotaWindow {
-            label,
+        let mut entry = QuotaWindow {
+            label: window.to_string(),
             remaining_percent: percent(bucket.remaining_fraction),
             reset_at: reset_time(bucket.reset_time.as_deref()),
-        });
+        };
+        if let Some(existing) = groups.iter_mut().find(|existing| existing.label == group) {
+            if existing
+                .windows
+                .iter()
+                .any(|item| item.label == entry.label)
+                && let Some(id) = bucket_id
+            {
+                entry.label = format!("{} · {id}", entry.label);
+            }
+            existing.windows.push(entry);
+        } else {
+            groups.push(QuotaGroup {
+                label: group.to_string(),
+                windows: vec![entry],
+            });
+        }
     }
-    if windows.is_empty() {
+    if groups.is_empty() {
         return Err("Antigravity returned no quota information".to_string());
     }
-    Ok(QuotaSnapshot::Quota { windows })
+    Ok(QuotaSnapshot::GroupedQuota { groups })
 }
 
 #[cfg(test)]
@@ -250,12 +258,13 @@ mod tests {
     /// Flat summaries retain their upstream labels and do not invent missing percentages.
     #[test]
     fn flat_summary_preserves_unknown_quota() {
-        let QuotaSnapshot::Quota { windows } = parse_summary(json!({
+        let QuotaSnapshot::GroupedQuota { groups } = parse_summary(json!({
             "buckets": [{"bucketId":"third-party", "displayName":"Five Hour Limit Remaining", "resetTime":"2030-01-01T00:00:00Z"}]
-        })).unwrap() else { panic!("expected quota"); };
-        assert_eq!(windows[0].label, "Antigravity · 5 hours");
-        assert_eq!(windows[0].remaining_percent, None);
-        assert_eq!(windows[0].reset_at, Some(1_893_456_000));
+        })).unwrap() else { panic!("expected grouped quota"); };
+        assert_eq!(groups[0].label, "Antigravity");
+        assert_eq!(groups[0].windows[0].label, "5 hours");
+        assert_eq!(groups[0].windows[0].remaining_percent, None);
+        assert_eq!(groups[0].windows[0].reset_at, Some(1_893_456_000));
     }
 
     /// The native summary preserves the shared pool and distinct five-hour and weekly limits.
@@ -281,47 +290,38 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let QuotaSnapshot::Quota { windows } =
+        let QuotaSnapshot::GroupedQuota { groups } =
             fetch_usage(&reqwest::Client::new(), &[&base], "token", "project")
                 .await
                 .unwrap()
         else {
-            panic!("expected quota");
+            panic!("expected grouped quota");
         };
-        assert_eq!(windows.len(), 5);
         assert_eq!(
-            windows.iter().map(|w| w.label.as_str()).collect::<Vec<_>>(),
-            [
-                "Gemini Models · 5 hours",
-                "Gemini Models · Weekly",
-                "Gemini (Argon) · Weekly",
-                "Claude and GPT models · 5 hours",
-                "Claude and GPT models · Weekly",
-            ]
+            groups.iter().map(|g| g.label.as_str()).collect::<Vec<_>>(),
+            ["Gemini Models", "Gemini (Argon)", "Claude and GPT models"]
         );
-        let window = windows
-            .iter()
-            .find(|w| w.label == "Gemini Models · 5 hours")
-            .unwrap();
-        assert_eq!(window.remaining_percent, Some(80.0));
-        assert_eq!(window.reset_at, Some(1_893_456_000));
-        assert!(
-            windows
+        assert_eq!(
+            groups[0]
+                .windows
                 .iter()
-                .any(|w| w.label == "Gemini (Argon) · Weekly" && w.remaining_percent == Some(60.0))
+                .map(|w| w.label.as_str())
+                .collect::<Vec<_>>(),
+            ["5 hours", "Weekly"]
         );
-        assert!(
-            windows
+        assert_eq!(groups[0].windows[0].remaining_percent, Some(80.0));
+        assert_eq!(groups[0].windows[0].reset_at, Some(1_893_456_000));
+        assert_eq!(groups[1].windows[0].remaining_percent, Some(60.0));
+        assert_eq!(
+            groups[2]
+                .windows
                 .iter()
-                .any(|w| w.label == "Claude and GPT models · 5 hours"
-                    && w.remaining_percent == Some(30.0))
+                .map(|w| w.label.as_str())
+                .collect::<Vec<_>>(),
+            ["5 hours", "Weekly"]
         );
-        assert!(
-            windows
-                .iter()
-                .any(|w| w.label == "Claude and GPT models · Weekly"
-                    && w.remaining_percent == Some(20.0))
-        );
+        assert_eq!(groups[2].windows[0].remaining_percent, Some(30.0));
+        assert_eq!(groups[2].windows[1].remaining_percent, Some(20.0));
         server.abort();
     }
 

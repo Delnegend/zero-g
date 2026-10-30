@@ -1,5 +1,6 @@
 import { useForm } from "@tanstack/react-form";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Pencil, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { CredentialUsage } from "@/components/CredentialUsage";
 import { RowsSkeleton } from "@/components/Loading";
@@ -159,14 +160,22 @@ export function Credentials({
           No credentials configured.
         </p>
       )}
-      <div className="mt-2 grid gap-2">
+      <div className="mt-2 grid grid-cols-[minmax(0,1fr)] gap-2">
         {credentials.data?.credentials.map((credential) => (
           <div
             key={credential.id}
             className="flex flex-wrap justify-between gap-4 rounded-lg border p-3"
           >
             <div className="min-w-0">
-              <p className="break-words font-medium">{credential.name}</p>
+              <p className="break-words font-medium">
+                {credential.name}
+                {credential.email && (
+                  <span className="font-normal text-muted-foreground">
+                    {" "}
+                    • {credential.email}
+                  </span>
+                )}
+              </p>
               <p className="mt-1 text-sm text-muted-foreground">
                 Weight: {credential.weight} ·{" "}
                 {credential.enabled ? "Enabled" : "Disabled"} ·{" "}
@@ -175,20 +184,24 @@ export function Credentials({
               <div className="mt-2 flex flex-wrap gap-2">
                 <Button
                   variant="outline"
+                  size="icon"
+                  aria-label={`Edit ${credential.name}`}
                   disabled={loginBusy}
                   onClick={() => edit(credential)}
                 >
-                  Edit
+                  <Pencil />
                 </Button>
                 <Button
                   variant="outline"
+                  size="icon"
+                  aria-label={`Delete ${credential.name}`}
                   disabled={loginBusy}
                   onClick={() => {
                     setError("");
                     setDeleteTarget(credential);
                   }}
                 >
-                  Delete
+                  <Trash2 />
                 </Button>
                 {kind?.oauth &&
                   [
@@ -220,7 +233,9 @@ export function Credentials({
                   )}
               </div>
             </div>
-            {["codex", "agy", "go", "zen"].includes(provider.kind) && (
+            {["codex", "agy", "claude", "go", "zen", "openrouter"].includes(
+              provider.kind,
+            ) && (
               <CredentialUsage
                 providerId={provider.id}
                 credentialId={credential.id}

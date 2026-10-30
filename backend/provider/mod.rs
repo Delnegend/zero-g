@@ -20,6 +20,8 @@ pub(crate) mod grok;
 pub(crate) mod login;
 /// OpenAI-compatible provider integration.
 pub(crate) mod openai;
+/// `OpenRouter` provider integration.
+pub(crate) mod openrouter;
 /// Quota aggregation and responses.
 pub(crate) mod quota;
 /// Configured provider registry.
@@ -63,6 +65,7 @@ pub(crate) const PROVIDER_KINDS: &[ProviderDescriptor] = &[
     zen::Backend::DESCRIPTOR,
     go::Backend::DESCRIPTOR,
     openai::Backend::DESCRIPTOR,
+    openrouter::Backend::DESCRIPTOR,
 ];
 
 /// Supported provider backend kinds.
@@ -86,10 +89,12 @@ pub(crate) enum ProviderKind {
     Go,
     /// Generic OpenAI-compatible backend.
     Openai,
+    /// `OpenRouter` backend.
+    Openrouter,
 }
 
 /// Provider kinds in registration order.
-const ALL: [ProviderKind; 9] = [
+const ALL: [ProviderKind; 10] = [
     ProviderKind::Antigravity,
     ProviderKind::Codex,
     ProviderKind::Claude,
@@ -98,6 +103,7 @@ const ALL: [ProviderKind; 9] = [
     ProviderKind::GrokBuild,
     ProviderKind::Zen,
     ProviderKind::Go,
+    ProviderKind::Openrouter,
     ProviderKind::Openai,
 ];
 
@@ -118,6 +124,7 @@ impl ProviderKind {
             Self::Zen => zen::Backend::DESCRIPTOR,
             Self::Go => go::Backend::DESCRIPTOR,
             Self::Openai => openai::Backend::DESCRIPTOR,
+            Self::Openrouter => openrouter::Backend::DESCRIPTOR,
         }
     }
     /// Returns the stable provider kind identifier.
@@ -157,6 +164,7 @@ impl ProviderKind {
             Self::Zen => zen::Backend::discover(state, provider).await,
             Self::Go => go::Backend::discover(state, provider).await,
             Self::Openai => openai::Backend::discover(state, provider).await,
+            Self::Openrouter => openrouter::Backend::discover(state, provider).await,
         }
     }
 
@@ -182,7 +190,9 @@ impl ProviderKind {
             Self::Codex => Some(QuotaCapability::Codex),
             Self::Zen => Some(QuotaCapability::Zen),
             Self::Go => Some(QuotaCapability::Go),
-            Self::Openai | Self::Claude | Self::Cursor | Self::Grok | Self::GrokBuild => None,
+            Self::Claude => Some(QuotaCapability::Claude),
+            Self::Openrouter => Some(QuotaCapability::Openrouter),
+            Self::Openai | Self::Cursor | Self::Grok | Self::GrokBuild => None,
         }
     }
 
@@ -198,6 +208,7 @@ impl ProviderKind {
             Self::Zen => zen::Backend::router(settings),
             Self::Go => go::Backend::router(settings),
             Self::Openai => openai::Backend::router(settings),
+            Self::Openrouter => openrouter::Backend::router(settings),
         }
     }
 }
@@ -208,10 +219,14 @@ pub(crate) enum QuotaCapability {
     Antigravity,
     /// Codex quota.
     Codex,
+    /// Claude subscription quota.
+    Claude,
     /// Zen quota.
     Zen,
     /// Go quota.
     Go,
+    /// `OpenRouter` account balance.
+    Openrouter,
 }
 impl QuotaCapability {
     /// Fetches quota for a configured provider credential.
@@ -224,8 +239,10 @@ impl QuotaCapability {
         match self {
             Self::Antigravity => antigravity::Backend::quota(store, provider, credential).await,
             Self::Codex => codex::Backend::quota(store, provider, credential).await,
+            Self::Claude => claude::Backend::quota(store, provider, credential).await,
             Self::Zen => zen::Backend::quota(store, provider, credential).await,
             Self::Go => go::Backend::quota(store, provider, credential).await,
+            Self::Openrouter => openrouter::Backend::quota(store, provider, credential).await,
         }
     }
 }
@@ -257,6 +274,9 @@ pub(crate) fn dashboard_router(state: &AppState) -> Router {
             ProviderKind::Cursor => router.merge(cursor::Backend::dashboard_router(state.clone())),
             ProviderKind::Grok => router.merge(grok::Backend::dashboard_router(state.clone())),
             ProviderKind::Zen => router.merge(zen::Backend::dashboard_router(state.clone())),
+            ProviderKind::Openrouter => {
+                router.merge(openrouter::Backend::dashboard_router(state.clone()))
+            }
             ProviderKind::Go | ProviderKind::Openai | ProviderKind::GrokBuild => router,
         })
 }

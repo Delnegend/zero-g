@@ -41,14 +41,35 @@ export function ProviderForm({
 }) {
   const [initialKinds] = useState(availableKinds);
   const kinds = provider ? availableKinds : initialKinds;
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [validationError, setValidationError] = useState("");
   const queryClient = useQueryClient();
   const save = useMutation({
     gcTime: 0,
     mutationFn: (body: Record<string, string>) =>
       saveProvider(provider?.id, body),
+    onSuccess: async (updated) => {
+      await queryClient.cancelQueries({
+        queryKey: providersOptions().queryKey,
+      });
+      queryClient.setQueryData<{ providers: Provider[] }>(
+        providersOptions().queryKey,
+        (current) => ({
+          providers: [
+            ...(current?.providers ?? []).filter(
+              (item) => item.id !== updated.id,
+            ),
+            updated,
+          ],
+        }),
+      );
+      await queryClient.invalidateQueries({
+        queryKey: providersOptions().queryKey,
+      });
+      onDone();
+    },
   });
+  const busy = save.isPending;
+  const error = validationError || (save.error ? message(save.error) : "");
   const form = useForm({
     defaultValues: {
       id: provider?.id ?? "",
@@ -56,48 +77,25 @@ export function ProviderForm({
       kind: provider?.kind ?? kinds[0]?.value ?? "",
       baseUrl: provider?.base_url ?? "",
     },
-    onSubmit: async ({ value }) => {
+    onSubmit: ({ value }) => {
       if (busy) return;
-      setError("");
+      setValidationError("");
+      save.reset();
       const kind = kinds.find((item) => item.value === value.kind);
       if (!kind) {
-        setError("Provider kind is unavailable.");
+        setValidationError("Provider kind is unavailable.");
         return;
       }
       const body: Record<string, string> = {};
       if (kind.fixed_name === null) body.name = value.name;
-      if (kind.api_key && value.kind !== "zen") body.base_url = value.baseUrl;
+      if (kind.api_key && value.kind !== "zen" && value.kind !== "openrouter") {
+        body.base_url = value.baseUrl;
+      }
       if (!provider) {
         if (kind.fixed_id === null) body.id = value.id;
         body.kind = value.kind;
       }
-      setBusy(true);
-      try {
-        const updated = await save.mutateAsync(body);
-        await queryClient.cancelQueries({
-          queryKey: providersOptions().queryKey,
-        });
-        queryClient.setQueryData<{ providers: Provider[] }>(
-          providersOptions().queryKey,
-          (current) => ({
-            providers: [
-              ...(current?.providers ?? []).filter(
-                (item) => item.id !== updated.id,
-              ),
-              updated,
-            ],
-          }),
-        );
-        await queryClient.invalidateQueries({
-          queryKey: providersOptions().queryKey,
-        });
-        onDone();
-      } catch (err) {
-        setError(message(err));
-      } finally {
-        save.reset();
-        setBusy(false);
-      }
+      save.mutate(body);
     },
   });
 
@@ -220,9 +218,11 @@ export function ProviderForm({
           </div>
           <form.Subscribe selector={(state) => state.values.kind}>
             {(kind) =>
-              kind === "zen" ? (
+              kind === "zen" || kind === "openrouter" ? (
                 <p className="text-sm text-muted-foreground">
-                  Zen uses the official OpenCode API for all models.
+                  {kind === "zen"
+                    ? "Zen uses the official OpenCode API for all models."
+                    : "OpenRouter uses the official OpenRouter API for all models."}
                 </p>
               ) : (
                 kinds.find((item) => item.value === kind)?.api_key && (

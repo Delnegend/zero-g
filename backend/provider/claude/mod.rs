@@ -9,6 +9,8 @@ pub(crate) mod dashboard_login;
 mod models;
 /// `OpenAI` to Anthropic request translation.
 mod payload;
+/// Subscription quota discovery.
+mod quota;
 /// Public gateway routes.
 mod routes;
 /// Anthropic stream decoding.
@@ -47,5 +49,15 @@ impl super::common::Provider for Backend {
 impl super::common::DashboardProvider for Backend {
     fn dashboard_router(state: crate::server::AppState) -> axum::Router {
         dashboard_login::router(state)
+    }
+}
+
+impl super::common::QuotaProvider for Backend {
+    async fn quota(
+        store: &crate::server::settings::SettingsStore,
+        provider: &str,
+        credential: &str,
+    ) -> Result<super::quota::QuotaSnapshot, String> {
+        quota::fetch(store, provider, credential).await
     }
 }
