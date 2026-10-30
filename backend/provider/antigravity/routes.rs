@@ -85,6 +85,23 @@ fn validate_tool_choice(
     })
 }
 
+/// Rejects media that cannot be forwarded without loss.
+fn validate_request_media(messages: &[crate::openai::ChatMessage]) -> Option<Response> {
+    super::payload::validate_media(messages)
+        .err()
+        .map(|message| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(crate::server::error_body(
+                    &message,
+                    "invalid_request_error",
+                    Some("invalid_media"),
+                )),
+            )
+                .into_response()
+        })
+}
+
 /// Failure while selecting credentials or contacting the upstream service.
 #[derive(Debug)]
 enum PoolError {
@@ -408,6 +425,9 @@ async fn chat_handler(
     if let Some(error) = validate_tool_choice(req.tool_choice.as_ref(), req.tools.as_deref()) {
         return error;
     }
+    if let Some(error) = validate_request_media(&req.messages) {
+        return error;
+    }
     let effort = req.reasoning_effort.as_deref().or_else(|| {
         req.reasoning
             .as_ref()
@@ -483,27 +503,31 @@ async fn responses_handler(
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
     Extension(session): Extension<RequestSession>,
-    Json(mut req): Json<ResponseCreateRequest>,
+    Json(req): Json<ResponseCreateRequest>,
 ) -> Response {
     if let Some(error) = validate_tool_choice(req.tool_choice.as_ref(), req.tools.as_deref()) {
         return error;
     }
-    let effort = req.reasoning_effort.as_deref().or_else(|| {
-        req.reasoning
+    let mut chat_req = req.into_chat_request();
+    if let Some(error) = validate_request_media(&chat_req.messages) {
+        return error;
+    }
+    let effort = chat_req.reasoning_effort.as_deref().or_else(|| {
+        chat_req
+            .reasoning
             .as_ref()
             .and_then(|r| r.get("effort"))
             .and_then(Value::as_str)
     });
-    req.model =
-        match resolve_request_model(&state, &provider, &permissions, &req.model, effort).await {
+    chat_req.model =
+        match resolve_request_model(&state, &provider, &permissions, &chat_req.model, effort).await
+        {
             Ok(model) => model,
             Err(error) => return error.into_response(),
         };
 
-    let is_streaming = req.stream.unwrap_or(false);
-
-    let original_model = req.model.clone();
-    let chat_req = req.into_chat_request();
+    let is_streaming = chat_req.stream.unwrap_or(false);
+    let original_model = chat_req.model.clone();
 
     if is_streaming {
         handle_responses_streaming(&state, &provider, chat_req, original_model, &session.id).await
@@ -620,6 +644,16 @@ async fn handle_responses_streaming(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsupported_media_returns_bad_request() {
+        let message: crate::openai::ChatMessage = serde_json::from_value(serde_json::json!({
+            "role": "user",
+            "content": [{"type": "video_url", "video_url": {"url": "https://example.com/video.mp4"}}]
+        })).expect("valid chat message");
+        let response = validate_request_media(&[message]).expect("external URL must be rejected");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
 
     #[tokio::test]
     async fn pool_retries_only_upstream_auth_and_rate_limit_statuses() {

@@ -1,4 +1,4 @@
-use super::{InferenceRequest, error, permissions};
+use super::{INFERENCE_BODY_LIMIT, InferenceRequest, error, permissions};
 use crate::provider::registry;
 use crate::server::AppState;
 use axum::{
@@ -54,7 +54,7 @@ pub(super) async fn dispatch(
         Err(e) => return e.into_response(),
     };
     let (mut parts, body) = request.into_parts();
-    let Ok(body) = to_bytes(body, 2 * 1024 * 1024).await else {
+    let Ok(body) = to_bytes(body, INFERENCE_BODY_LIMIT).await else {
         return error(
             StatusCode::PAYLOAD_TOO_LARGE,
             "Request body too large",

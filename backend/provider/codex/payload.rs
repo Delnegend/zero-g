@@ -392,6 +392,16 @@ fn convert_content_to_input_parts(content: Option<&MessageContent>, role: &str) 
                             }));
                         }
                     }
+                    ContentPart::InputAudio { .. }
+                    | ContentPart::File { .. }
+                    | ContentPart::InputFile { .. }
+                    | ContentPart::VideoUrl { .. }
+                    | ContentPart::InputVideo { .. } => {
+                        // Preserve unfamiliar media for the upstream provider to accept or reject.
+                        if let Ok(value) = serde_json::to_value(part) {
+                            parts.push(value);
+                        }
+                    }
                 }
             }
         }

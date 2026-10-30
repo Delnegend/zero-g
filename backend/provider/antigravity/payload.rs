@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use base64::engine::general_purpose::STANDARD;
+use base64::read::DecoderReader;
 use serde_json::{Value, json};
 
 use crate::openai::{ChatCompletionRequest, ChatMessage, ContentPart, MessageContent, Tool};
@@ -163,7 +165,7 @@ impl AntigravityClient {
         }
     }
 
-    /// Converts user text and inline images into upstream content parts.
+    /// Converts user text and inline media into upstream content parts.
     fn user_content_parts(content: Option<&MessageContent>) -> Vec<Value> {
         let mut parts = Vec::new();
         if let Some(content) = content {
@@ -183,12 +185,11 @@ impl AntigravityClient {
                                     parts.push(json!({ "text": text }));
                                 }
                             }
-                            ContentPart::ImageUrl { image_url } => {
-                                push_inline_image(&mut parts, &image_url.url);
-                            }
-                            ContentPart::InputImage { image_url } => {
-                                if let Some(url) = image_url {
-                                    push_inline_image(&mut parts, url);
+                            _ => {
+                                if let Ok(Some((mime, data))) = inline_media(part) {
+                                    parts.push(
+                                        json!({ "inlineData": { "mimeType": mime, "data": data } }),
+                                    );
                                 }
                             }
                         }
@@ -433,16 +434,123 @@ impl AntigravityClient {
     }
 }
 
-/// Appends an inline image part for a supported base64 data URL.
-fn push_inline_image(parts: &mut Vec<Value>, url: &str) {
-    if let Some((mime, data)) = parse_data_url(url) {
-        parts.push(json!({
-            "inlineData": {
-                "mimeType": mime,
-                "data": data
+/// Validates media before model resolution or upstream calls.
+pub(super) fn validate_media(messages: &[ChatMessage]) -> Result<(), String> {
+    for message in messages {
+        if let Some(MessageContent::Parts(parts)) = &message.content {
+            for part in parts {
+                if let Some((_, data)) = inline_media(part)? {
+                    if message.role != "user" {
+                        return Err(format!(
+                            "Media is not supported in {} messages",
+                            message.role
+                        ));
+                    }
+                    if data.is_empty()
+                        || std::io::copy(
+                            &mut DecoderReader::new(data.as_bytes(), &STANDARD),
+                            &mut std::io::sink(),
+                        )
+                        .is_err()
+                    {
+                        return Err("Media data must be nonempty valid base64".into());
+                    }
+                }
             }
-        }));
+        }
     }
+    Ok(())
+}
+
+/// Identifies supported inline media without fetching URLs or copying encoded bytes.
+fn inline_media(part: &ContentPart) -> Result<Option<(&str, &str)>, String> {
+    let (mime, data) = match part {
+        ContentPart::ImageUrl { image_url } => data_url(&image_url.url, "image/")?,
+        ContentPart::InputImage { image_url } => data_url(
+            image_url
+                .as_deref()
+                .ok_or("input_image requires an inline image_url")?,
+            "image/",
+        )?,
+        ContentPart::InputAudio { fields } => {
+            let audio = fields
+                .get("input_audio")
+                .and_then(Value::as_object)
+                .ok_or("input_audio requires an input_audio object")?;
+            let data = audio
+                .get("data")
+                .and_then(Value::as_str)
+                .ok_or("input_audio requires base64 data")?;
+            let mime = match audio.get("format").and_then(Value::as_str) {
+                Some("wav") => "audio/wav",
+                Some("mp3") => "audio/mpeg",
+                _ => return Err("input_audio format must be wav or mp3".into()),
+            };
+            (mime, data)
+        }
+        ContentPart::File { fields } => {
+            let file = fields
+                .get("file")
+                .and_then(Value::as_object)
+                .ok_or("file requires a file object")?;
+            if file.contains_key("file_id") {
+                return Err("file IDs are not supported; provide inline PDF file_data".into());
+            }
+            data_url(
+                file.get("file_data")
+                    .and_then(Value::as_str)
+                    .ok_or("file requires inline PDF file_data")?,
+                "application/pdf",
+            )?
+        }
+        ContentPart::InputFile { fields } => {
+            if fields.contains_key("file_id") || fields.contains_key("file_url") {
+                return Err(
+                    "file IDs and URLs are not supported; provide inline PDF file_data".into(),
+                );
+            }
+            data_url(
+                fields
+                    .get("file_data")
+                    .and_then(Value::as_str)
+                    .ok_or("input_file requires inline PDF file_data")?,
+                "application/pdf",
+            )?
+        }
+        ContentPart::VideoUrl { fields } | ContentPart::InputVideo { fields } => {
+            let value = fields
+                .get("video_url")
+                .or_else(|| fields.get("url"))
+                .ok_or("video requires an inline video_url")?;
+            let url = value
+                .as_str()
+                .or_else(|| value.get("url").and_then(Value::as_str))
+                .ok_or("video_url must be a data URL or an object containing url")?;
+            data_url(url, "video/")?
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some((mime, data)))
+}
+
+/// Accepts only explicit base64 data URLs with a matching MIME type.
+fn data_url<'a>(url: &'a str, expected: &str) -> Result<(&'a str, &'a str), String> {
+    let (mime, data) = parse_data_url(url)
+        .ok_or("Media must be an inline base64 data URL; external URLs are not supported")?;
+    let matches = if expected.ends_with('/') {
+        mime.strip_prefix(expected).is_some_and(|subtype| {
+            !subtype.is_empty()
+                && subtype
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b".+-".contains(&b))
+        })
+    } else {
+        mime == expected
+    };
+    if !matches {
+        return Err(format!("Expected {expected} media MIME type"));
+    }
+    Ok((mime, data))
 }
 
 /// Splits a base64 data URL into its MIME type and encoded data.
@@ -520,6 +628,82 @@ mod tests {
         let temp = inner["generationConfig"]["temperature"].as_f64().unwrap();
         assert!((0.6999..0.7001).contains(&temp));
         assert_eq!(inner["generationConfig"]["maxOutputTokens"], 4096);
+    }
+
+    #[test]
+    fn forwards_ordered_chat_media_as_inline_data() {
+        let req: ChatCompletionRequest = serde_json::from_value(json!({
+            "model": "gemini",
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "first"},
+                {"type": "input_audio", "input_audio": {"format": "wav", "data": "AQID"}},
+                {"type": "input_audio", "input_audio": {"format": "mp3", "data": "BAUG"}},
+                {"type": "file", "file": {"filename": "a.pdf", "file_data": "data:application/pdf;base64,BwgJ"}},
+                {"type": "video_url", "video_url": {"url": "data:video/mp4;base64,CgsM"}},
+                {"type": "text", "text": "last"}
+            ]}]
+        })).unwrap();
+        validate_media(&req.messages).unwrap();
+        let payload = AntigravityClient::build_request_payload(&req, "p", "gemini", "s", None);
+        assert_eq!(
+            payload["request"]["contents"][0]["parts"],
+            json!([
+                {"text": "first"},
+                {"inlineData": {"mimeType": "audio/wav", "data": "AQID"}},
+                {"inlineData": {"mimeType": "audio/mpeg", "data": "BAUG"}},
+                {"inlineData": {"mimeType": "application/pdf", "data": "BwgJ"}},
+                {"inlineData": {"mimeType": "video/mp4", "data": "CgsM"}},
+                {"text": "last"}
+            ])
+        );
+    }
+
+    #[test]
+    fn responses_file_and_video_reach_payload() {
+        let req: crate::responses::ResponseCreateRequest = serde_json::from_value(json!({
+            "model": "gemini",
+            "input": [{"role": "user", "content": [
+                {"type": "input_file", "filename": "a.pdf", "file_data": "data:application/pdf;base64,AQID"},
+                {"type": "input_video", "video_url": "data:video/webm;base64,BAUG"}
+            ]}]
+        })).unwrap();
+        let req = req.into_chat_request();
+        validate_media(&req.messages).unwrap();
+        let payload = AntigravityClient::build_request_payload(&req, "p", "gemini", "s", None);
+        assert_eq!(
+            payload["request"]["contents"][0]["parts"],
+            json!([
+                {"inlineData": {"mimeType": "application/pdf", "data": "AQID"}},
+                {"inlineData": {"mimeType": "video/webm", "data": "BAUG"}}
+            ])
+        );
+    }
+
+    #[test]
+    fn rejects_unforwardable_media_and_non_user_roles() {
+        let bad_parts = [
+            json!({"type":"image_url","image_url":{"url":"https://example.com/a.png"}}),
+            json!({"type":"input_image","file_id":"file-1"}),
+            json!({"type":"input_audio","input_audio":{"format":"ogg","data":"AQID"}}),
+            json!({"type":"input_audio","input_audio":{"format":"wav","data":"%%%"}}),
+            json!({"type":"file","file":{"file_id":"file-1"}}),
+            json!({"type":"input_file","file_url":"https://example.com/a.pdf"}),
+            json!({"type":"input_file","file_data":"data:text/plain;base64,AQID"}),
+            json!({"type":"video_url","video_url":{"url":"https://example.com/a.mp4"}}),
+            json!({"type":"input_video","video_url":"data:video/mp4;base64,"}),
+        ];
+        for part in bad_parts {
+            let msg: ChatMessage =
+                serde_json::from_value(json!({"role":"user","content":[part]})).unwrap();
+            assert!(validate_media(&[msg]).is_err());
+        }
+        for role in ["system", "developer", "assistant", "tool", "other"] {
+            let msg: ChatMessage = serde_json::from_value(json!({"role":role,"content":[
+                {"type":"input_audio","input_audio":{"format":"wav","data":"AQID"}}
+            ]}))
+            .unwrap();
+            assert!(validate_media(&[msg]).is_err());
+        }
     }
 
     #[test]

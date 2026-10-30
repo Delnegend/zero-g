@@ -74,7 +74,7 @@ impl MessageContent {
                         ContentPart::Text { text }
                         | ContentPart::InputText { text }
                         | ContentPart::OutputText { text } => out.push_str(text),
-                        ContentPart::ImageUrl { .. } | ContentPart::InputImage { .. } => {}
+                        _ => {}
                     }
                 }
                 out
@@ -83,7 +83,7 @@ impl MessageContent {
     }
 }
 
-/// Typed text or image content carried by a message.
+/// Typed text and multimodal content carried by a message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub(crate) enum ContentPart {
@@ -117,6 +117,41 @@ pub(crate) enum ContentPart {
         /// Optional image location.
         #[serde(default)]
         image_url: Option<String>,
+    },
+    /// Chat audio input.
+    #[serde(rename = "input_audio")]
+    InputAudio {
+        /// Original fields, retained for provider-specific forwarding.
+        #[serde(flatten)]
+        fields: serde_json::Map<String, Value>,
+    },
+    /// Chat inline file.
+    #[serde(rename = "file")]
+    File {
+        /// Original fields, retained for provider-specific forwarding.
+        #[serde(flatten)]
+        fields: serde_json::Map<String, Value>,
+    },
+    /// Responses inline file.
+    #[serde(rename = "input_file")]
+    InputFile {
+        /// Original fields, retained for provider-specific forwarding.
+        #[serde(flatten)]
+        fields: serde_json::Map<String, Value>,
+    },
+    /// OpenRouter-style video URL.
+    #[serde(rename = "video_url")]
+    VideoUrl {
+        /// Original fields, retained for provider-specific forwarding.
+        #[serde(flatten)]
+        fields: serde_json::Map<String, Value>,
+    },
+    /// Responses-style video input.
+    #[serde(rename = "input_video")]
+    InputVideo {
+        /// Original fields, retained for provider-specific forwarding.
+        #[serde(flatten)]
+        fields: serde_json::Map<String, Value>,
     },
 }
 

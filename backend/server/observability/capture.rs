@@ -22,7 +22,7 @@ pub(in crate::server) async fn capture(
     let start = Instant::now();
     let path = req.uri().path().to_owned();
     let (parts, body) = req.into_parts();
-    let Ok(body) = to_bytes(body, 2 * 1024 * 1024).await else {
+    let Ok(body) = to_bytes(body, crate::server::inference::INFERENCE_BODY_LIMIT).await else {
         return StatusCode::PAYLOAD_TOO_LARGE.into_response();
     };
     let request_body = String::from_utf8_lossy(&body).into_owned();

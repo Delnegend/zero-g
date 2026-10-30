@@ -22,6 +22,9 @@ use chat_completions::{__path_inference, inference};
 use models::{__path_models, models};
 use responses::{__path_inference_responses, inference_responses};
 
+/// Maximum size in bytes of a unified inference JSON request.
+pub(super) const INFERENCE_BODY_LIMIT: usize = 20_000_000;
+
 /// Inference request with provider-qualified model and provider-specific fields.
 #[derive(serde::Deserialize, serde::Serialize, utoipa::ToSchema)]
 struct InferenceRequest {
@@ -103,7 +106,9 @@ async fn permissions(
 
 /// The sole public inference API.
 pub(super) fn router(state: &AppState) -> Router<AppState> {
-    let internal: Router = provider::router(&state.settings).with_state(state.clone());
+    let internal: Router = provider::router(&state.settings)
+        .layer(axum::extract::DefaultBodyLimit::max(INFERENCE_BODY_LIMIT))
+        .with_state(state.clone());
     Router::new()
         .route("/v1/models", get(models))
         .route("/v1/chat/completions", post(inference))
@@ -152,6 +157,7 @@ mod tests {
                 }
             }))
             .route("/v1/responses", post(|Json(body): Json<Value>| async move { Json(body) }))
+            .layer(axum::extract::DefaultBodyLimit::max(INFERENCE_BODY_LIMIT))
             .layer(axum::middleware::from_fn(move |request: Request<Body>, next: axum::middleware::Next| {
                 let requests = requests.clone();
                 async move {
@@ -394,6 +400,91 @@ mod tests {
             .status(),
             StatusCode::OK
         );
+    }
+
+    /// Large inline media reaches both handlers, while the byte limit is enforced.
+    #[tokio::test]
+    async fn unified_inference_body_limit() {
+        let (app, key, _, first_task, second_task, requests) = fixture().await;
+        for path in ["/v1/chat/completions", "/v1/responses"] {
+            let media = "A".repeat(2 * 1024 * 1024 + 1024);
+            let body = if path.ends_with("completions") {
+                json!({"model":"first/same","messages":[{"role":"user","content":[
+                    {"type":"video_url","video_url":{"url":format!("data:video/mp4;base64,{media}")}}
+                ]}]}).to_string()
+            } else {
+                json!({"model":"first/same","input":[{"role":"user","content":[
+                    {"type":"input_file","filename":"document.pdf","file_data":format!("data:application/pdf;base64,{media}")}
+                ]}]}).to_string()
+            };
+            assert!(body.len() > 2 * 1024 * 1024);
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(path)
+                        .header(header::AUTHORIZATION, format!("Bearer {key}"))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            let received = json_body(response).await;
+            assert_eq!(received["model"], "same");
+            assert!(received.to_string().contains(&media));
+        }
+
+        let prefix = r#"{"model":"first/same","input":""#;
+        let suffix = r#""}"#;
+        let at_limit = format!(
+            "{prefix}{}{suffix}",
+            "A".repeat(INFERENCE_BODY_LIMIT - prefix.len() - suffix.len())
+        );
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/responses")
+                    .header(header::AUTHORIZATION, format!("Bearer {key}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(at_limit))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        drop(response);
+
+        let before = requests.load(Ordering::SeqCst);
+        for path in ["/v1/chat/completions", "/v1/responses"] {
+            let prefix = r#"{"model":"first/same","input":""#;
+            let suffix = r#""}"#;
+            let body = format!(
+                "{prefix}{}{suffix}",
+                "A".repeat(INFERENCE_BODY_LIMIT + 1 - prefix.len() - suffix.len())
+            );
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(path)
+                        .header(header::AUTHORIZATION, format!("Bearer {key}"))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE, "{path}");
+        }
+        assert_eq!(requests.load(Ordering::SeqCst), before);
+        first_task.abort();
+        second_task.abort();
     }
 
     /// Exercise routing, filtering, streaming, and removed paths.
