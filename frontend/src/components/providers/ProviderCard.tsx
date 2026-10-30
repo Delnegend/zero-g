@@ -1,7 +1,12 @@
+import { useQuery } from "@tanstack/react-query";
 import { Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { type Provider, type ProviderKind } from "@/server/api/providers";
+import {
+  credentialsOptions,
+  type Provider,
+  type ProviderKind,
+} from "@/server/api/providers";
 import { Credentials } from "./Credentials";
 import { ProviderSignIn } from "./ProviderSignIn";
 
@@ -18,6 +23,13 @@ export function ProviderCard({
   onDelete: () => void;
   deleting: boolean;
 }) {
+  const credentials = useQuery(credentialsOptions(provider.id));
+  const hasCredentials = (credentials.data?.credentials.length ?? 0) > 0;
+  const cannotDelete =
+    credentials.isPending ||
+    credentials.isFetching ||
+    credentials.isError ||
+    hasCredentials;
   return (
     <Card className="mt-6 p-5">
       <ProviderSignIn provider={provider}>
@@ -56,13 +68,18 @@ export function ProviderCard({
                       ? `Deleting ${provider.name}`
                       : `Delete ${provider.name}`
                   }
-                  disabled={busy || deleting}
+                  disabled={busy || deleting || cannotDelete}
                   onClick={onDelete}
                 >
                   <Trash2 />
                 </Button>
               </div>
             </div>
+            {hasCredentials && (
+              <p className="mt-3 text-sm text-muted-foreground">
+                Remove all credentials before deleting this provider.
+              </p>
+            )}
             <Credentials
               provider={provider}
               kind={kind}

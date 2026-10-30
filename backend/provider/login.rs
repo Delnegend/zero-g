@@ -283,7 +283,7 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         assert_eq!(
-            credentials.oneshot(request).await.unwrap().status(),
+            credentials.clone().oneshot(request).await.unwrap().status(),
             StatusCode::NO_CONTENT
         );
         assert!(second.get_credentials().await.is_err());
@@ -298,6 +298,25 @@ mod tests {
                 .await
                 .unwrap()
                 .is_none()
+        );
+
+        let request = Request::builder()
+            .method("DELETE")
+            .uri("/api/providers/agy")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            providers.clone().oneshot(request).await.unwrap().status(),
+            StatusCode::CONFLICT
+        );
+        let request = Request::builder()
+            .method("DELETE")
+            .uri(format!("/api/providers/agy/credentials/{}", ids[0]))
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            credentials.oneshot(request).await.unwrap().status(),
+            StatusCode::NO_CONTENT
         );
 
         let request = Request::builder()

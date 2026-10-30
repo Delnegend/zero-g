@@ -13,7 +13,7 @@ use crate::{
     database::{Database, transaction_with_retry},
     provider::{PROVIDER_KINDS, common::ProviderDescriptor, credentials},
     server::settings::SettingsStore,
-    storage::{ProviderCredential, ProviderRecord, Secret, Setting, VirtualKey},
+    storage::{ProviderCredential, ProviderRecord, Setting, VirtualKey},
 };
 
 /// Active configured provider instance exposed by the registry.
@@ -369,28 +369,11 @@ async fn update_provider(
     }
 }
 
-/// Deletes a provider and its associated credentials and state.
-#[utoipa::path(delete, path = "/api/providers/{id}", operation_id = "deleteProvider", params(("id" = String, Path)), responses((status = 204)))]
+/// Deletes a provider only when it has no credentials.
+#[utoipa::path(delete, path = "/api/providers/{id}", operation_id = "deleteProvider", params(("id" = String, Path)), responses((status = 204), (status = 404, description = "Provider not found"), (status = 409, description = "Remove all credentials before deleting the provider")))]
 async fn delete_provider(State(store): State<SettingsStore>, Path(id): Path<String>) -> Response {
     let provider_lock = crate::provider::login::credential_lock(&format!("provider:{id}")).await;
     let _provider_guard = provider_lock.lock().await;
-    // Holding every existing credential lock prevents refresh from racing deletion.
-    let rows = match credentials::all(&store, &id).await {
-        Ok(Some(rows)) => rows,
-        Ok(None) => return (StatusCode::NOT_FOUND, "Provider not found").into_response(),
-        Err(e) => return internal_error(&e),
-    };
-    let mut ids: Vec<_> = rows.into_iter().map(|row| row.id).collect();
-    ids.sort();
-    let mut guards = Vec::with_capacity(ids.len());
-    for credential_id in &ids {
-        guards.push(
-            crate::provider::login::credential_lock(credential_id)
-                .await
-                .lock_owned()
-                .await,
-        );
-    }
     let result = transaction_with_retry!(store.database, |mut tx| {
         let Some(row) = ProviderRecord::filter_by_id(id.as_str())
             .first()
@@ -398,27 +381,15 @@ async fn delete_provider(State(store): State<SettingsStore>, Path(id): Path<Stri
             .await?
             .filter(|row| !row.deleted)
         else {
-            return Ok(false);
+            return Ok(StatusCode::NOT_FOUND);
         };
-        let credentials =
+        let credential =
             ProviderCredential::filter(ProviderCredential::fields().provider_id().eq(id.as_str()))
+                .first()
                 .exec(&mut tx)
                 .await?;
-        for credential in credentials {
-            for suffix in [
-                "api_key",
-                "credential",
-                "console_session",
-                "console_workspace",
-                "openrouter_management_key",
-            ] {
-                Secret::delete_by_name(
-                    &mut tx,
-                    format!("credential.{}.{suffix}", credential.id).as_str(),
-                )
-                .await?;
-            }
-            ProviderCredential::delete_by_id(&mut tx, credential.id.as_str()).await?;
+        if credential.is_some() {
+            return Ok(StatusCode::CONFLICT);
         }
         ProviderRecord::upsert_by_id(id.as_str())
             .name(String::new())
@@ -428,12 +399,16 @@ async fn delete_provider(State(store): State<SettingsStore>, Path(id): Path<Stri
             .exec(&mut tx)
             .await?;
         tx.commit().await?;
-        Ok(true)
+        Ok(StatusCode::NO_CONTENT)
     });
-    drop(guards);
     match result {
-        Ok(true) => StatusCode::NO_CONTENT.into_response(),
-        Ok(false) => (StatusCode::NOT_FOUND, "Provider not found").into_response(),
+        Ok(StatusCode::NO_CONTENT) => StatusCode::NO_CONTENT.into_response(),
+        Ok(StatusCode::CONFLICT) => (
+            StatusCode::CONFLICT,
+            "Remove all credentials before deleting this provider",
+        )
+            .into_response(),
+        Ok(_) => (StatusCode::NOT_FOUND, "Provider not found").into_response(),
         Err(e) => internal_error(&e.to_string()),
     }
 }
@@ -522,6 +497,7 @@ pub(crate) fn router(store: SettingsStore) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::Secret;
     use axum::{
         body::{Body, to_bytes},
         http::Request,
@@ -555,9 +531,9 @@ mod tests {
         )
     }
 
-    /// Credentials remain isolated and are deleted with their provider.
+    /// Credential secrets and updates remain isolated between providers.
     #[tokio::test]
-    async fn credentials_are_isolated_encrypted_and_deleted_with_provider() {
+    async fn credentials_are_isolated_and_encrypted() {
         let database = Database::open(":memory:").await.unwrap();
         let store = SettingsStore::new(database, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
             .await
@@ -649,13 +625,122 @@ mod tests {
             Some("")
         );
         assert_eq!(credentials::list(&store, "first").await.unwrap().len(), 1);
+    }
+
+    /// Both disabled and enabled credentials block deletion without losing secrets.
+    #[tokio::test]
+    async fn credentials_block_provider_deletion_until_removed() {
+        let store = SettingsStore::new(
+            Database::open(":memory:").await.unwrap(),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )
+        .await
+        .unwrap();
+        let router = router(store.clone());
         assert_eq!(
-            request(&router, "DELETE", "/api/providers/first", "")
+            request(&router, "POST", "/api/providers", r#"{"id":"sample","name":"Sample","kind":"openai","base_url":"https://example.test"}"#).await.0,
+            StatusCode::CREATED
+        );
+        let (status, credential) = request(
+            &router,
+            "POST",
+            "/api/providers/sample/credentials",
+            r#"{"name":"account","weight":1,"enabled":false,"api_key":"example"}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let id = credential["id"].as_str().unwrap();
+        let credential_path = format!("/api/providers/sample/credentials/{id}");
+        for enabled in [false, true] {
+            if enabled {
+                assert_eq!(
+                    request(
+                        &router,
+                        "PUT",
+                        &credential_path,
+                        r#"{"name":"account","weight":1,"enabled":true}"#
+                    )
+                    .await
+                    .0,
+                    StatusCode::OK
+                );
+            }
+            assert_eq!(
+                request(&router, "DELETE", "/api/providers/sample", "")
+                    .await
+                    .0,
+                StatusCode::CONFLICT
+            );
+            assert_eq!(
+                store
+                    .secret_get(&format!("credential.{id}.api_key"))
+                    .await
+                    .unwrap()
+                    .as_deref(),
+                Some("example")
+            );
+        }
+        assert_eq!(
+            request(&router, "DELETE", &credential_path, "").await.0,
+            StatusCode::NO_CONTENT
+        );
+        assert!(
+            store
+                .secret_get(&format!("credential.{id}.api_key"))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            request(&router, "DELETE", "/api/providers/sample", "")
                 .await
                 .0,
             StatusCode::NO_CONTENT
         );
-        assert!(store.secret_get(&secret_name).await.unwrap().is_none());
+    }
+
+    /// Concurrent creation cannot leave a credential attached to a deleted provider.
+    #[tokio::test]
+    async fn credential_creation_and_provider_deletion_are_serialized() {
+        let store = SettingsStore::new(
+            Database::open(":memory:").await.unwrap(),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )
+        .await
+        .unwrap();
+        let router = router(store.clone());
+        assert_eq!(
+            request(&router, "POST", "/api/providers", r#"{"kind":"agy"}"#)
+                .await
+                .0,
+            StatusCode::CREATED
+        );
+        let (create, delete) = tokio::join!(
+            request(
+                &router,
+                "POST",
+                "/api/providers/agy/credentials",
+                r#"{"name":"A","weight":1,"enabled":false}"#
+            ),
+            request(&router, "DELETE", "/api/providers/agy", "")
+        );
+        match (create.0, delete.0) {
+            (StatusCode::CREATED, StatusCode::CONFLICT) => {
+                assert!(get(&store.database, "agy").await.unwrap().is_some());
+                assert_eq!(
+                    credentials::all(&store, "agy")
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .len(),
+                    1
+                );
+            }
+            (StatusCode::NOT_FOUND, StatusCode::NO_CONTENT) => {
+                assert!(get(&store.database, "agy").await.unwrap().is_none());
+            }
+            result => panic!("Unexpected create/delete result: {result:?}"),
+        }
     }
 
     /// Provider uniqueness and credential input validation are enforced.

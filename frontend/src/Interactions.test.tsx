@@ -108,6 +108,7 @@ const { ObservabilityPage } = await import("./App");
 const { Credentials } = await import("./components/providers/Credentials");
 const { CredentialUsage } = await import("./components/CredentialUsage");
 const { ProviderCard } = await import("./components/providers/ProviderCard");
+const { ProvidersPage } = await import("./ProvidersPage");
 const { ProviderForm } = await import("./components/providers/ProviderForm");
 const { ModelCatalogPage, ModelSettingsPage } = await import("./Models");
 const { TooltipProvider } = await import("./components/ui/tooltip");
@@ -349,6 +350,173 @@ test("credential editing retains a blank API key unless keyless is selected", as
   await user.click(screen.getByRole("button", { name: "Delete Renamed" }));
   assert.ok(await screen.findByRole("dialog", { name: "Delete credential?" }));
   await user.click(screen.getByRole("button", { name: "Cancel" }));
+});
+
+test("provider deletion stays unavailable until all credentials are removed", async () => {
+  let present = true;
+  let release!: (response: Response) => void;
+  let loads = 0;
+  globalThis.fetch = (async (_url, options) => {
+    if (options?.method === "DELETE") {
+      present = false;
+      return new Response(null, { status: 204 });
+    }
+    loads++;
+    const value = {
+      credentials: present
+        ? [
+            {
+              id: "one",
+              name: "Disabled",
+              weight: 1,
+              enabled: false,
+              connected: false,
+            },
+          ]
+        : [],
+    };
+    if (loads === 1)
+      return new Promise<Response>((resolve) => {
+        release = resolve;
+      });
+    return Response.json(value);
+  }) as typeof fetch;
+  let deleted = false;
+  const user = userEvent.setup();
+  mount(
+    <ProviderCard
+      provider={{
+        id: "alpha",
+        name: "Alpha",
+        kind: "openai",
+        base_url: "https://example.test",
+      }}
+      kind={{
+        value: "openai",
+        label: "OpenAI",
+        api_key: true,
+        oauth: false,
+        fixed_id: null,
+        fixed_name: null,
+      }}
+      onEdit={() => {}}
+      onDelete={() => {
+        deleted = true;
+      }}
+      deleting={false}
+    />,
+  );
+  const deleteProvider = screen.getByRole("button", {
+    name: "Delete Alpha",
+  }) as HTMLButtonElement;
+  assert.equal(deleteProvider.disabled, true);
+  await waitFor(() => assert.equal(loads, 1));
+  release(
+    Response.json({
+      credentials: [
+        {
+          id: "one",
+          name: "Disabled",
+          weight: 1,
+          enabled: false,
+          connected: false,
+        },
+      ],
+    }),
+  );
+  await screen.findByText(
+    "Remove all credentials before deleting this provider.",
+  );
+  assert.equal(deleteProvider.disabled, true);
+  await user.click(screen.getByRole("button", { name: "Delete Disabled" }));
+  await user.click(
+    within(await screen.findByRole("dialog")).getByRole("button", {
+      name: "Delete credential",
+    }),
+  );
+  await waitFor(() => assert.equal(deleteProvider.disabled, false));
+  await user.click(deleteProvider);
+  assert.equal(deleted, true);
+});
+
+test("provider deletion remains disabled when credentials cannot be loaded", async () => {
+  globalThis.fetch = (async () =>
+    new Response("Credentials unavailable", { status: 503 })) as typeof fetch;
+  mount(
+    <ProviderCard
+      provider={{
+        id: "alpha",
+        name: "Alpha",
+        kind: "openai",
+        base_url: "https://example.test",
+      }}
+      onEdit={() => {}}
+      onDelete={() => {}}
+      deleting={false}
+    />,
+  );
+  assert.ok(await screen.findByText("Credentials unavailable"));
+  assert.equal(
+    (screen.getByRole("button", { name: "Delete Alpha" }) as HTMLButtonElement)
+      .disabled,
+    true,
+  );
+});
+
+test("provider deletion reports a conflict if credentials were added elsewhere", async () => {
+  globalThis.fetch = (async (url, options) => {
+    const path = String(url);
+    if (path === "/api/providers" && options?.method === "GET")
+      return Response.json({
+        providers: [
+          {
+            id: "alpha",
+            name: "Alpha",
+            kind: "openai",
+            base_url: "https://example.test",
+          },
+        ],
+      });
+    if (path === "/api/provider-kinds")
+      return Response.json({
+        kinds: [
+          {
+            value: "openai",
+            label: "OpenAI",
+            api_key: true,
+            oauth: false,
+            fixed_id: null,
+            fixed_name: null,
+          },
+        ],
+      });
+    if (path.endsWith("/credentials"))
+      return Response.json({ credentials: [] });
+    if (path === "/api/providers/alpha" && options?.method === "DELETE")
+      return new Response(
+        "Remove all credentials before deleting this provider",
+        { status: 409 },
+      );
+    throw new Error(`Unexpected request: ${path}`);
+  }) as typeof fetch;
+  const user = userEvent.setup();
+  mount(<ProvidersPage />);
+  const button = await screen.findByRole("button", { name: "Delete Alpha" });
+  await waitFor(() =>
+    assert.equal((button as HTMLButtonElement).disabled, false),
+  );
+  await user.click(button);
+  await user.click(
+    within(await screen.findByRole("dialog")).getByRole("button", {
+      name: "Delete provider",
+    }),
+  );
+  assert.ok(
+    await screen.findByText(
+      "Remove all credentials before deleting this provider",
+    ),
+  );
+  assert.ok(screen.getByRole("dialog"));
 });
 
 test("credential names show available account emails without placeholders", async () => {

@@ -140,9 +140,8 @@ export function ProvidersPage() {
             <DialogHeader>
               <DialogTitle>Delete provider?</DialogTitle>
               <DialogDescription>
-                Delete provider “{deleteTarget.name}” ({deleteTarget.id}) and
-                its credentials? This cannot be undone, and the ID cannot be
-                reused.
+                Delete provider “{deleteTarget.name}” ({deleteTarget.id})? This
+                cannot be undone, and the ID cannot be reused.
               </DialogDescription>
             </DialogHeader>
             {error && (

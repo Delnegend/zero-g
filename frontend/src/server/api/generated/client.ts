@@ -414,7 +414,7 @@ export const getDeleteProviderUrl = (id: string) => {
 };
 
 /**
- * @summary Deletes a provider and its associated credentials and state.
+ * @summary Deletes a provider only when it has no credentials.
  */
 export const deleteProvider = async (
   id: string,

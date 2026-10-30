@@ -446,7 +446,7 @@
       },
       "delete": {
         "tags": [],
-        "summary": "Deletes a provider and its associated credentials and state.",
+        "summary": "Deletes a provider only when it has no credentials.",
         "operationId": "deleteProvider",
         "parameters": [
           {
@@ -461,6 +461,12 @@
         "responses": {
           "204": {
             "description": ""
+          },
+          "404": {
+            "description": "Provider not found"
+          },
+          "409": {
+            "description": "Remove all credentials before deleting the provider"
           }
         }
       }
