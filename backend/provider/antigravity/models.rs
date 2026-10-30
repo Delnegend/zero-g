@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::provider::antigravity::AntigravityClient;
 use crate::provider::antigravity::auth::{ANTIGRAVITY_USER_AGENT, Credentials};
@@ -41,6 +41,46 @@ pub(crate) struct AntigravityModelInfo {
     /// Additional upstream model metadata.
     #[serde(flatten)]
     pub(crate) extra: HashMap<String, serde_json::Value>,
+}
+
+/// Derive advertised input types from Antigravity's model metadata.
+pub(crate) fn input_modalities(extra: &serde_json::Map<String, Value>) -> Vec<String> {
+    let (mut image_mime, mut audio, mut video_mime, mut pdf) = (false, false, false, false);
+    if let Some(mimes) = extra.get("supportedMimeTypes").and_then(Value::as_object) {
+        for (mime, enabled) in mimes {
+            if enabled.as_bool() != Some(true) {
+                continue;
+            }
+            image_mime |= mime.starts_with("image/");
+            audio |= mime.starts_with("audio/");
+            video_mime |= mime.starts_with("video/")
+                && !mime.starts_with("video/videoframe/")
+                && !mime.starts_with("video/audio/")
+                && !mime.starts_with("video/text/")
+                && mime != "video/jpeg2000";
+            pdf |= mime == "application/pdf";
+        }
+    }
+    let image = extra
+        .get("supportsImages")
+        .and_then(Value::as_bool)
+        .unwrap_or(image_mime);
+    let video = extra
+        .get("supportsVideo")
+        .and_then(Value::as_bool)
+        .unwrap_or(video_mime);
+    let mut result = vec!["text".to_owned()];
+    for (enabled, modality) in [
+        (image, "image"),
+        (audio, "audio"),
+        (video, "video"),
+        (pdf, "pdf"),
+    ] {
+        if enabled {
+            result.push(modality.to_owned());
+        }
+    }
+    result
 }
 
 /// A family is recognized only when discovery supplies multiple sibling tiers.

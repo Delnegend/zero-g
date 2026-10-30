@@ -420,10 +420,14 @@ fn normalize_model(
         .unwrap_or_default();
     let reasoning = metadata.reasoning;
     let tool_call = metadata.tool_call;
-    let input_modalities = metadata
-        .modalities
-        .map(|modalities| modalities.input)
-        .unwrap_or_default();
+    let input_modalities = if provider.kind == "agy" {
+        crate::provider::antigravity::models::input_modalities(&model.extra)
+    } else {
+        metadata
+            .modalities
+            .map(|modalities| modalities.input)
+            .unwrap_or_default()
+    };
     let reasoning_efforts = model
         .supported_reasoning_efforts
         .clone()
@@ -724,6 +728,60 @@ mod tests {
         );
         assert_eq!(response.providers[0].models[0].model.id, "m");
         assert!(response.providers[0].models[0].pricing.is_none());
+    }
+
+    /// Antigravity's cached capability flags and enabled MIME types are shown in the catalog.
+    #[tokio::test]
+    async fn catalog_reports_antigravity_input_modalities() {
+        let store = store().await;
+        assert_eq!(
+            registry_request(&store, "POST", "/api/providers", json!({"kind":"agy"})).await,
+            StatusCode::CREATED
+        );
+        let mut catalog = load(&store).await.unwrap();
+        catalog.providers[0].models = [
+            json!({"id":"vision","supportsImages":true,"supportedMimeTypes":{"image/png":true,"video/jpeg2000":true,"video/videoframe/jpeg2000":true,"audio/wav":false,"application/pdf":false}}),
+            json!({"id":"multimodal","supportsImages":true,"supportsVideo":true,"supportedMimeTypes":{"audio/mpeg":true,"application/pdf":true,"video/mp4":true}}),
+            json!({"id":"disabled","supportsImages":false,"supportsVideo":false,"supportedMimeTypes":{"image/png":true,"video/mp4":true,"audio/mpeg":false,"application/pdf":false}}),
+            json!({"id":"mime-only","supportedMimeTypes":{"image/webp":true,"video/webm":true}}),
+            json!({"id":"plain"}),
+        ].into_iter().map(|model| serde_json::from_value(model).unwrap()).collect();
+        save(&store, &catalog).await.unwrap();
+        let state = AppState {
+            providers: crate::provider::Providers::new(),
+            logs: crate::server::observability::LogStore::new(store.database.clone()),
+            dashboard_auth: crate::server::dashboard_auth::DashboardAuth::test().unwrap(),
+            settings: store,
+        };
+        let response = router(state)
+            .oneshot(
+                Request::builder()
+                    .uri("/api/model-catalog")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let document: Value = serde_json::from_slice(&bytes).unwrap();
+        let models = document["providers"][0]["models"].as_array().unwrap();
+        let inputs = |id: &str| {
+            &models
+                .iter()
+                .find(|model| model["model"]["id"] == id)
+                .unwrap()["input_modalities"]
+        };
+        assert_eq!(inputs("vision"), &json!(["text", "image"]));
+        assert_eq!(
+            inputs("multimodal"),
+            &json!(["text", "image", "audio", "video", "pdf"])
+        );
+        assert_eq!(inputs("disabled"), &json!(["text"]));
+        assert_eq!(inputs("mime-only"), &json!(["text", "image", "video"]));
+        assert_eq!(inputs("plain"), &json!(["text"]));
     }
 
     /// Create an in-memory settings store.

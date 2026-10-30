@@ -58,6 +58,10 @@ Deleting a provider removes its credentials. Custom provider IDs cannot be reuse
 
 **Models → Catalog** shows discovered models as cards grouped by provider, with available context, output limits and pricing. Antigravity models with matching low, medium or high reasoning variants share one model ID and display their available efforts as badges; the unified `/v1/models` endpoint exposes the same normalized model with its provider prefix. Search by model or provider, filter by provider, and expand a card's details for syntax-highlighted metadata and datasheets. Descriptions are limited to three lines; hover or focus to see the full text. Each provider's models appear in a swipeable row with navigation controls; a faded edge indicates more cards in that direction. A dash means the information is unavailable. Refresh the catalog to fetch models immediately; failed providers retain their last successful list and show an error. Zen uses OpenCode's model endpoint.
 
+Input types use icons for text, images, audio, video and PDFs; hover over an icon to see its label. Unrecognized input types remain visible as text.
+
+Antigravity input icons reflect the model's advertised capabilities, including enabled MIME types. Actual media support depends on the selected model and upstream service.
+
 Zen's model IDs come from OpenCode; matching prices and capabilities come from the community-maintained [Models.dev](https://models.dev) catalog, which OpenCode also uses. Metadata is cached in memory for one hour. If it is unavailable or a model ID has no exact match, the model remains listed and its missing details show as unknown. Prices are informational; tiers and actual billing may differ.
 
 For Antigravity, matching Gemini and Claude API prices from the configured datasheet are shown as a reference, not as Antigravity charges. Matching includes Gemini preview entries and Claude thinking variants when their base model is available. Prices can differ from the actual plan or credit overage costs; models without a matching price show a dash.

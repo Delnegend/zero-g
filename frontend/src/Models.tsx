@@ -1,7 +1,15 @@
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useMemo, useRef, useState } from "react";
-import { Info } from "lucide-react";
+import {
+  AudioLines,
+  FileText,
+  FileType,
+  Image,
+  Info,
+  Video,
+  type LucideIcon,
+} from "lucide-react";
 import { message } from "./server/api/client";
 import {
   modelCatalogQueryOptions,
@@ -52,6 +60,14 @@ const pageClass =
   "mx-auto w-full min-w-0 max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-12";
 const inputClass = "mt-1 w-full";
 
+const modalityIcons: Record<string, LucideIcon> = {
+  text: FileText,
+  image: Image,
+  audio: AudioLines,
+  video: Video,
+  pdf: FileType,
+};
+
 function JsonDetails({ title, value }: { title: string; value: unknown }) {
   const [open, setOpen] = useState(false);
   if (value === undefined || value === null) return null;
@@ -96,9 +112,6 @@ function ModelCard({
       : []),
     ...(typeof model.tool_call === "boolean"
       ? [["Tool calling", model.tool_call ? "Yes" : "No"]]
-      : []),
-    ...(model.input_modalities.length > 0
-      ? [["Input modalities", model.input_modalities.join(", ")]]
       : []),
   ];
   const rows = [
@@ -180,6 +193,52 @@ function ModelCard({
             <dd className="min-w-0 break-all text-right">{value}</dd>
           </div>
         ))}
+        {model.input_modalities.length > 0 && (
+          <div className="flex justify-between gap-4 py-2">
+            <dt className="flex shrink-0 items-center gap-1 text-muted-foreground">
+              Input modalities
+              {provider.kind === "agy" &&
+                model.input_modalities.some((value) =>
+                  ["audio", "video", "pdf"].includes(value),
+                ) && (
+                  <Popover>
+                    <PopoverTrigger
+                      aria-label="About Antigravity input support"
+                      className="rounded-sm hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2"
+                    >
+                      <Info className="size-3.5" />
+                    </PopoverTrigger>
+                    <PopoverContent>
+                      These types are advertised by Antigravity. Zero-G forwards
+                      inline audio, video, and PDF data to compatible models;
+                      external URLs and uploaded file IDs are not supported.
+                    </PopoverContent>
+                  </Popover>
+                )}
+            </dt>
+            <dd className="flex min-w-0 flex-wrap justify-end gap-2">
+              {model.input_modalities.map((modality, index) => {
+                const key = modality.toLowerCase();
+                const Icon = Object.hasOwn(modalityIcons, key)
+                  ? modalityIcons[key]
+                  : undefined;
+                if (!Icon)
+                  return <span key={`${modality}-${index}`}>{modality}</span>;
+                return (
+                  <Tooltip key={`${modality}-${index}`}>
+                    <TooltipTrigger
+                      aria-label={`${modality} input`}
+                      className="rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2"
+                    >
+                      <Icon aria-hidden="true" className="size-4" />
+                    </TooltipTrigger>
+                    <TooltipContent>{modality}</TooltipContent>
+                  </Tooltip>
+                );
+              })}
+            </dd>
+          </div>
+        )}
       </dl>
       <div className="mt-2">
         <JsonDetails title="Model metadata" value={rawModel} />

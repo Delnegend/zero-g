@@ -48,17 +48,25 @@ Object.defineProperty(window, "matchMedia", {
     removeListener() {},
   }),
 });
-class ResizeObserverStub {
+class ObserverStub {
   observe() {}
   unobserve() {}
   disconnect() {}
 }
 Object.defineProperty(globalThis, "ResizeObserver", {
-  value: ResizeObserverStub,
+  value: ObserverStub,
   configurable: true,
 });
 Object.defineProperty(window, "ResizeObserver", {
-  value: ResizeObserverStub,
+  value: ObserverStub,
+  configurable: true,
+});
+Object.defineProperty(globalThis, "IntersectionObserver", {
+  value: ObserverStub,
+  configurable: true,
+});
+Object.defineProperty(window, "IntersectionObserver", {
+  value: ObserverStub,
   configurable: true,
 });
 Object.defineProperty(globalThis, "PointerEvent", {
@@ -82,6 +90,14 @@ Object.defineProperty(globalThis, "cancelAnimationFrame", {
   value: clearTimeout,
   configurable: true,
 });
+Object.defineProperty(window, "requestAnimationFrame", {
+  value: globalThis.requestAnimationFrame,
+  configurable: true,
+});
+Object.defineProperty(window, "cancelAnimationFrame", {
+  value: globalThis.cancelAnimationFrame,
+  configurable: true,
+});
 
 // These modules capture the browser document at import time, so load them after JSDOM setup.
 const { render, screen, within, cleanup, waitFor } =
@@ -90,6 +106,8 @@ const userEvent = (await import("@testing-library/user-event")).default;
 const { Management } = await import("./Management");
 const { ObservabilityPage } = await import("./App");
 const { Credentials } = await import("./components/providers/Credentials");
+const { ModelCatalogPage } = await import("./Models");
+const { TooltipProvider } = await import("./components/ui/tooltip");
 const originalFetch = globalThis.fetch;
 
 afterEach(() => {
@@ -433,4 +451,60 @@ test("inspect a log, close its details, and change the dashboard range", async (
     (await screen.findAllByRole("button", { name: "View request 42" }))[0],
   );
   assert.ok(await screen.findByText("Request details"));
+});
+
+test("model cards label supported input icons and retain unknown modalities", async () => {
+  globalThis.fetch = (async () =>
+    Response.json({
+      datasheets_error: null,
+      providers: [
+        {
+          id: "example",
+          name: "Example",
+          kind: "agy",
+          base_url: "",
+          error: null,
+          models: [
+            {
+              model: { id: "model" },
+              display_name: "Model",
+              description: null,
+              reasoning_efforts: [],
+              reasoning: null,
+              tool_call: null,
+              input_modalities: [
+                "text",
+                "image",
+                "audio",
+                "video",
+                "pdf",
+                "geometry",
+                "toString",
+              ],
+              pricing: null,
+              raw_pricing: null,
+              parameters: null,
+              provider_metadata: null,
+            },
+          ],
+        },
+      ],
+    })) as typeof fetch;
+  const user = userEvent.setup();
+  mount(
+    <TooltipProvider>
+      <ModelCatalogPage />
+    </TooltipProvider>,
+  );
+  for (const modality of ["text", "image", "audio", "video", "pdf"]) {
+    assert.ok(await screen.findByRole("button", { name: `${modality} input` }));
+  }
+  assert.ok(screen.getByText("geometry"));
+  assert.ok(screen.getByText("toString"));
+  await user.click(
+    screen.getByRole("button", { name: "About Antigravity input support" }),
+  );
+  assert.ok(
+    await screen.findByText(/forwards inline audio, video, and PDF data/i),
+  );
 });
