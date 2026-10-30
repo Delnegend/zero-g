@@ -1,6 +1,6 @@
-use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use serde::Deserialize;
 use serde_json::Value;
 
 use super::auth::{ANTIGRAVITY_USER_AGENT, AuthManager, CLOUD_CODE_ASSIST_ENDPOINT};
@@ -8,7 +8,7 @@ use super::models::SANDBOX_ENDPOINT;
 use crate::provider::quota::{QuotaSnapshot, QuotaWindow};
 use crate::server::settings::SettingsStore;
 
-/// Fetch and parse quota information for an Antigravity credential.
+/// Fetch quota information for an Antigravity credential.
 pub(crate) async fn fetch(
     store: &SettingsStore,
     provider_id: &str,
@@ -38,22 +38,38 @@ pub(crate) async fn fetch(
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| "Failed to create Antigravity usage client".to_string())?;
+    fetch_usage(
+        &client,
+        &[CLOUD_CODE_ASSIST_ENDPOINT, SANDBOX_ENDPOINT],
+        &credentials.access_token,
+        &credentials.project_id,
+    )
+    .await
+}
+
+/// Fetch the native quota summary without substituting model counters.
+async fn fetch_usage(
+    client: &reqwest::Client,
+    endpoints: &[&str],
+    token: &str,
+    project: &str,
+) -> Result<QuotaSnapshot, String> {
     let mut last_error = "Antigravity usage request failed".to_string();
-    for endpoint in [CLOUD_CODE_ASSIST_ENDPOINT, SANDBOX_ENDPOINT] {
+    for endpoint in endpoints {
         let response = client
-            .post(format!("{endpoint}/v1internal:fetchAvailableModels"))
-            .bearer_auth(&credentials.access_token)
+            .post(format!("{endpoint}/v1internal:retrieveUserQuotaSummary"))
+            .bearer_auth(token)
             .header(reqwest::header::USER_AGENT, ANTIGRAVITY_USER_AGENT)
-            .json(&serde_json::json!({ "project": credentials.project_id }))
+            .json(&serde_json::json!({ "project": project }))
             .send()
             .await;
         match response {
             Ok(response) if response.status().is_success() => {
-                let data: Value = response
-                    .json()
+                let data = response
+                    .json::<Value>()
                     .await
-                    .map_err(|_| "Invalid Antigravity usage response".to_string())?;
-                return parse_response(&data);
+                    .map_err(|_| "Invalid Antigravity quota summary".to_string())?;
+                return parse_summary(data);
             }
             Ok(response) => {
                 let status = response.status();
@@ -68,65 +84,58 @@ pub(crate) async fn fetch(
     Err(last_error)
 }
 
-/// One model quota counter before grouping into shared windows.
-#[derive(Clone)]
-struct Entry {
-    /// Backend provider whose quota pool the model uses.
-    provider: String,
-    /// Quota tier, defaulting to `default` when unspecified.
-    tier: String,
-    /// Explicit or normalized window label, if supplied.
+/// Native quota summary, which can contain grouped or top-level buckets.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Summary {
+    /// Groups reported by the upstream account.
+    #[serde(default)]
+    groups: Vec<Group>,
+    /// Ungrouped buckets, when the upstream uses the flat response format.
+    #[serde(default)]
+    buckets: Vec<Bucket>,
+}
+
+/// A named group of quota buckets.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Group {
+    /// Name of the shared model group.
+    display_name: Option<String>,
+    /// Quota windows within this group.
+    #[serde(default)]
+    buckets: Vec<Bucket>,
+}
+
+/// One native quota bucket; missing fractions remain unknown.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Bucket {
+    /// Stable upstream identifier for this bucket.
+    #[serde(rename = "bucketId")]
+    id: Option<String>,
+    /// Upstream display label for the window.
+    display_name: Option<String>,
+    /// Upstream window identifier.
     window: Option<String>,
-    /// Remaining quota as a percentage, when known.
-    percent: Option<f64>,
-    /// Reset time as Unix seconds, when supplied.
-    reset: Option<i64>,
+    /// Fraction of quota remaining.
+    remaining_fraction: Option<f64>,
+    /// Reset time in RFC 3339 format.
+    reset_time: Option<String>,
+    /// Whether the upstream disabled this bucket.
+    #[serde(default)]
+    disabled: bool,
 }
 
-/// Returns a nonempty string property from a JSON value.
-fn text<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+/// Convert a timestamp without inventing a reset time.
+fn reset_time(value: Option<&str>) -> Option<i64> {
     value
-        .get(key)
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
+        .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
+        .map(|time| time.timestamp())
 }
 
-/// Identifies the quota backend from provider metadata or model family.
-fn provider(info: &Value, model: &Value, model_id: &str) -> String {
-    for name in [
-        text(info, "modelProvider"),
-        text(info, "apiProvider"),
-        text(model, "modelProvider"),
-        text(model, "apiProvider"),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        match name {
-            "MODEL_PROVIDER_GOOGLE" | "API_PROVIDER_GOOGLE_GEMINI" => return "Google".to_string(),
-            "MODEL_PROVIDER_ANTHROPIC" | "API_PROVIDER_ANTHROPIC_VERTEX" => {
-                return "Anthropic".to_string();
-            }
-            "MODEL_PROVIDER_OPENAI" | "API_PROVIDER_OPENAI_VERTEX" => return "OpenAI".to_string(),
-            _ => {}
-        }
-    }
-    // OMP also maps model families to their corresponding backend counters.
-    let id = model_id.to_lowercase();
-    if id.starts_with("gemini-") || id.starts_with("gemma-") {
-        "Google".to_string()
-    } else if id.starts_with("claude-") {
-        "Anthropic".to_string()
-    } else if id.starts_with("gpt-") || id.starts_with("openai/") {
-        "OpenAI".to_string()
-    } else {
-        // An unknown backend is not evidence that different models share a pool.
-        model_id.to_string()
-    }
-}
-
-/// Normalizes recognizable daily and weekly window labels.
-fn window_name(name: &str) -> String {
+/// Normalize recognizable window names without inferring them from reset times.
+fn window_name(name: &str) -> &str {
     let lower = name.to_lowercase();
     if lower.contains("week")
         || lower.contains("7d")
@@ -134,245 +143,209 @@ fn window_name(name: &str) -> String {
         || lower.contains("7-day")
         || lower.contains("7 day")
     {
-        "Weekly".to_string()
-    } else if lower.contains("day") || lower.contains("daily") || lower.contains("24h") {
-        "Daily".to_string()
+        "Weekly"
+    } else if lower.contains("5h")
+        || lower.contains("five hour")
+        || lower.contains("5 hour")
+        || lower.contains("5-hour")
+        || lower.contains("5_hour")
+    {
+        "5 hours"
+    } else if lower.contains("day") || lower.contains("24h") {
+        "Daily"
     } else {
-        name.to_string()
+        name
     }
 }
 
-/// Extracts quota counters from an object or array, applying inherited labels.
-fn add_entries(
-    entries: &mut Vec<Entry>,
-    value: &Value,
-    model: &Value,
-    model_id: &str,
-    tier: Option<&str>,
-    window: Option<&str>,
-) {
-    if let Some(array) = value.as_array() {
-        for item in array {
-            add_entries(entries, item, model, model_id, tier, window);
-        }
-        return;
-    }
-    if !value.is_object() {
-        return;
-    }
-    let provider = provider(value, model, model_id);
-    let reset = text(value, "resetTime")
-        .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
-        .map(|time| time.timestamp());
-    let percent = value
-        .get("remainingFraction")
-        .and_then(Value::as_f64)
+/// Return the upstream window label, normalized when its duration is recognizable.
+fn bucket_window(bucket: &Bucket) -> &str {
+    bucket
+        .window
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .or_else(|| bucket.display_name.as_deref().filter(|s| !s.is_empty()))
+        .or_else(|| bucket.id.as_deref().filter(|s| !s.is_empty()))
+        .map_or("Quota", window_name)
+}
+
+/// Put the five-hour window first without changing the order of other windows.
+fn window_order(bucket: &Bucket) -> u8 {
+    u8::from(bucket_window(bucket) != "5 hours")
+}
+
+/// Convert a fraction into a percentage while preserving unknown values.
+fn percent(value: Option<f64>) -> Option<f64> {
+    value
         .filter(|fraction| fraction.is_finite())
         .map(|fraction| fraction.clamp(0.0, 1.0) * 100.0)
-        // OMP observed reset-only exhausted counters for Google/Gemini.
-        .or_else(|| {
-            (provider == "Google" && value.get("remainingFraction").is_none() && reset.is_some())
-                .then_some(0.0)
-        });
-    entries.push(Entry {
-        provider,
-        tier: tier
-            .or_else(|| text(value, "tier"))
-            .unwrap_or("default")
-            .to_string(),
-        window: text(value, "windowLabel")
-            .or_else(|| text(value, "windowId"))
-            .or(window)
-            .map(window_name),
-        percent,
-        reset,
-    });
 }
 
-/// Collects all supported quota counter representations for a model.
-fn model_entries(model_id: &str, model: &Value) -> Vec<Entry> {
-    let mut entries = Vec::new();
-    for (field, window) in [
-        ("quotaInfo", None),
-        ("quotaInfos", None),
-        ("dailyQuotaInfo", Some("Daily")),
-        ("dailyQuotaInfos", Some("Daily")),
-        ("weeklyQuotaInfo", Some("Weekly")),
-        ("weeklyQuotaInfos", Some("Weekly")),
-    ] {
-        if let Some(value) = model.get(field) {
-            add_entries(&mut entries, value, model, model_id, None, window);
-        }
+/// Read each upstream bucket separately, keeping shared groups shared.
+fn parse_summary(data: Value) -> Result<QuotaSnapshot, String> {
+    let mut summary: Summary = serde_json::from_value(data)
+        .map_err(|_| "Invalid Antigravity quota summary".to_string())?;
+    for group in &mut summary.groups {
+        group.buckets.sort_by_key(window_order);
     }
-    for (field, is_tier) in [
-        ("quotaInfoByTier", true),
-        ("quotaInfoByWindow", false),
-        ("quotaInfosByWindow", false),
-    ] {
-        if let Some(map) = model.get(field).and_then(Value::as_object) {
-            for (key, value) in map {
-                add_entries(
-                    &mut entries,
-                    value,
-                    model,
-                    model_id,
-                    is_tier.then_some(key),
-                    (!is_tier).then_some(key),
-                );
-            }
+    summary.buckets.sort_by_key(window_order);
+    let mut windows = Vec::new();
+    let grouped = summary.groups.iter().any(|group| !group.buckets.is_empty());
+    let buckets: Vec<(Option<&str>, &Bucket)> = if grouped {
+        summary
+            .groups
+            .iter()
+            .flat_map(|group| {
+                group
+                    .buckets
+                    .iter()
+                    .map(move |bucket| (group.display_name.as_deref(), bucket))
+            })
+            .collect()
+    } else {
+        summary
+            .buckets
+            .iter()
+            .map(|bucket| (None, bucket))
+            .collect()
+    };
+    for (group, bucket) in buckets {
+        if bucket.disabled {
+            continue;
         }
-    }
-    entries
-}
-
-/// Groups model counters into a quota snapshot by provider, tier, and window.
-fn parse_response(data: &Value) -> Result<QuotaSnapshot, String> {
-    let models = data
-        .get("models")
-        .and_then(Value::as_object)
-        .ok_or_else(|| "Invalid Antigravity usage response".to_string())?;
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|duration| i64::try_from(duration.as_secs()).ok())
-        .unwrap_or(0);
-    let mut grouped: BTreeMap<(String, String, String), QuotaWindow> = BTreeMap::new();
-    for (model_id, model) in models {
-        let entries = model_entries(model_id, model);
-        for entry in &entries {
-            let latest = entries
-                .iter()
-                .filter(|other| {
-                    other.window.is_none()
-                        && other.provider == entry.provider
-                        && other.tier.eq_ignore_ascii_case(&entry.tier)
-                })
-                .filter_map(|other| other.reset)
-                .max();
-            let earliest = entries
-                .iter()
-                .filter(|other| {
-                    other.window.is_none()
-                        && other.provider == entry.provider
-                        && other.tier.eq_ignore_ascii_case(&entry.tier)
-                })
-                .filter_map(|other| other.reset)
-                .min();
-            let window = entry.window.clone().unwrap_or_else(|| {
-                if entry.reset.is_some_and(|reset| {
-                    (latest != earliest && Some(reset) == latest)
-                        || reset.saturating_sub(now) > 86_400
-                }) {
-                    "Weekly".to_string()
-                } else {
-                    "Daily".to_string()
-                }
-            });
-            let key = (
-                entry.provider.clone(),
-                entry.tier.to_lowercase(),
-                window.to_lowercase(),
-            );
-            let label = if entry.tier.eq_ignore_ascii_case("default") {
-                format!("{} · {window}", entry.provider)
+        let bucket_id = bucket.id.as_deref().filter(|s| !s.is_empty());
+        let group =
+            if bucket_id.is_some_and(|id| id.to_ascii_lowercase().starts_with("gemini-argon-")) {
+                "Gemini (Argon)"
             } else {
-                format!("{} · {} · {window}", entry.provider, entry.tier)
+                group.filter(|s| !s.is_empty()).unwrap_or("Antigravity")
             };
-            grouped
-                .entry(key)
-                .and_modify(
-                    |existing| match (existing.remaining_percent, entry.percent) {
-                        (Some(a), Some(b)) if b < a => {
-                            existing.remaining_percent = Some(b);
-                            existing.reset_at = entry.reset.or(existing.reset_at);
-                        }
-                        (None, Some(b)) => {
-                            existing.remaining_percent = Some(b);
-                            existing.reset_at = entry.reset.or(existing.reset_at);
-                        }
-                        _ => {
-                            if existing.reset_at.is_none() {
-                                existing.reset_at = entry.reset;
-                            }
-                        }
-                    },
-                )
-                .or_insert(QuotaWindow {
-                    label,
-                    remaining_percent: entry.percent,
-                    reset_at: entry.reset,
-                });
+        let window = bucket_window(bucket);
+        let mut label = format!("{group} · {window}");
+        if windows
+            .iter()
+            .any(|existing: &QuotaWindow| existing.label == label)
+            && let Some(id) = bucket_id
+        {
+            label = format!("{label} · {id}");
         }
+        windows.push(QuotaWindow {
+            label,
+            remaining_percent: percent(bucket.remaining_fraction),
+            reset_at: reset_time(bucket.reset_time.as_deref()),
+        });
     }
-    if grouped.is_empty() {
+    if windows.is_empty() {
         return Err("Antigravity returned no quota information".to_string());
     }
-    Ok(QuotaSnapshot::Quota {
-        windows: grouped.into_values().collect(),
-    })
+    Ok(QuotaSnapshot::Quota { windows })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{Json, Router, http::StatusCode, routing::post};
     use serde_json::json;
 
+    /// Flat summaries retain their upstream labels and do not invent missing percentages.
     #[test]
-    fn groups_backend_counters_and_preserves_exhausted_google() {
-        let data = json!({"models": {
-            "gemini-a": {"modelProvider":"MODEL_PROVIDER_GOOGLE", "quotaInfo":{"resetTime":"2030-01-01T00:00:00Z"}},
-            "gemini-b": {"apiProvider":"API_PROVIDER_GOOGLE_GEMINI", "quotaInfo":{"remainingFraction":0.8, "resetTime":"2030-01-01T00:00:00Z"}},
-            "claude": {"modelProvider":"MODEL_PROVIDER_ANTHROPIC", "quotaInfo":{"remainingFraction":0.5}},
-            "gpt": {"apiProvider":"API_PROVIDER_OPENAI_VERTEX", "quotaInfo":{"remainingFraction":0.3}}
-        }});
-        let QuotaSnapshot::Quota { windows } = parse_response(&data).unwrap() else {
-            panic!("expected quota")
-        };
-        assert_eq!(windows.len(), 3);
-        assert_eq!(
-            windows
-                .iter()
-                .find(|w| w.label.starts_with("Google"))
-                .unwrap()
-                .remaining_percent,
-            Some(0.0)
-        );
-        assert_eq!(
-            windows
-                .iter()
-                .find(|w| w.label.starts_with("OpenAI"))
-                .unwrap()
-                .remaining_percent,
-            Some(30.0)
-        );
+    fn flat_summary_preserves_unknown_quota() {
+        let QuotaSnapshot::Quota { windows } = parse_summary(json!({
+            "buckets": [{"bucketId":"third-party", "displayName":"Five Hour Limit Remaining", "resetTime":"2030-01-01T00:00:00Z"}]
+        })).unwrap() else { panic!("expected quota"); };
+        assert_eq!(windows[0].label, "Antigravity · 5 hours");
+        assert_eq!(windows[0].remaining_percent, None);
+        assert_eq!(windows[0].reset_at, Some(1_893_456_000));
     }
 
-    #[test]
-    fn parses_tier_and_window_maps_and_unknown_fractions() {
-        let data = json!({"models": {
-            "claude": {"modelProvider":"MODEL_PROVIDER_ANTHROPIC",
-                "quotaInfoByTier":{"pro":[{"windowId":"WINDOW_DAILY", "remainingFraction":0.4}, {"windowId":"WINDOW_WEEKLY", "resetTime":"2030-01-01T00:00:00Z"}]},
-                "quotaInfoByWindow":{"daily":{"tier":"pro", "remainingFraction":0.2}}},
-            "mystery-a":{"quotaInfo":{"remainingFraction":0.7}},
-            "mystery-b":{"quotaInfo":{"remainingFraction":0.6}}
-        }});
-        let QuotaSnapshot::Quota { windows } = parse_response(&data).unwrap() else {
-            panic!("expected quota")
+    /// The native summary preserves the shared pool and distinct five-hour and weekly limits.
+    #[tokio::test]
+    async fn summary_reports_upstream_groups_and_windows() {
+        let app = Router::new().route(
+            "/v1internal:retrieveUserQuotaSummary",
+            post(|| async {
+                Json(json!({"groups":[
+                    {"displayName":"Gemini Models","buckets":[
+                        {"bucketId":"gemini-weekly","window":"weekly","remainingFraction":0.4},
+                        {"bucketId":"gemini-5h","window":"5h","remainingFraction":0.8,"resetTime":"2030-01-01T00:00:00Z"},
+                        {"bucketId":"gemini-argon-weekly","window":"weekly","remainingFraction":0.6}
+                    ]},
+                    {"displayName":"Claude and GPT models","buckets":[
+                        {"bucketId":"3p-weekly","window":"weekly","remainingFraction":0.2},
+                        {"bucketId":"3p-5h","window":"5h","remainingFraction":0.3},
+                        {"bucketId":"disabled","window":"weekly","disabled":true}
+                    ]}
+                ]}))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let QuotaSnapshot::Quota { windows } =
+            fetch_usage(&reqwest::Client::new(), &[&base], "token", "project")
+                .await
+                .unwrap()
+        else {
+            panic!("expected quota");
         };
-        assert_eq!(windows.len(), 4);
+        assert_eq!(windows.len(), 5);
         assert_eq!(
+            windows.iter().map(|w| w.label.as_str()).collect::<Vec<_>>(),
+            [
+                "Gemini Models · 5 hours",
+                "Gemini Models · Weekly",
+                "Gemini (Argon) · Weekly",
+                "Claude and GPT models · 5 hours",
+                "Claude and GPT models · Weekly",
+            ]
+        );
+        let window = windows
+            .iter()
+            .find(|w| w.label == "Gemini Models · 5 hours")
+            .unwrap();
+        assert_eq!(window.remaining_percent, Some(80.0));
+        assert_eq!(window.reset_at, Some(1_893_456_000));
+        assert!(
             windows
                 .iter()
-                .find(|w| w.label == "Anthropic · pro · Daily")
-                .unwrap()
-                .remaining_percent,
-            Some(20.0)
+                .any(|w| w.label == "Gemini (Argon) · Weekly" && w.remaining_percent == Some(60.0))
         );
-        let weekly = windows
-            .iter()
-            .find(|w| w.label == "Anthropic · pro · Weekly")
-            .unwrap();
-        assert_eq!(weekly.remaining_percent, None);
-        assert_eq!(weekly.reset_at, Some(1_893_456_000));
+        assert!(
+            windows
+                .iter()
+                .any(|w| w.label == "Claude and GPT models · 5 hours"
+                    && w.remaining_percent == Some(30.0))
+        );
+        assert!(
+            windows
+                .iter()
+                .any(|w| w.label == "Claude and GPT models · Weekly"
+                    && w.remaining_percent == Some(20.0))
+        );
+        server.abort();
+    }
+
+    /// An unavailable summary is an error even if model counters are available.
+    #[tokio::test]
+    async fn unavailable_summary_is_an_error() {
+        let app = Router::new()
+            .route(
+                "/v1internal:retrieveUserQuotaSummary",
+                post(|| async { StatusCode::NOT_FOUND }),
+            )
+            .route(
+                "/v1internal:fetchAvailableModels",
+                post(|| async {
+                    Json(json!({"models":{"gemini":{"quotaInfo":{"remainingFraction":0.8}}}}))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let error = fetch_usage(&reqwest::Client::new(), &[&base], "token", "project")
+            .await
+            .unwrap_err();
+        assert!(error.contains("404"));
+        server.abort();
     }
 }

@@ -273,7 +273,11 @@ export function CredentialUsage({
         !usage.isError &&
         usage.data?.kind === "quota" &&
         (usage.data.windows.length ? (
-          <div className="flex flex-wrap gap-3">
+          <div
+            className={
+              kind === "agy" ? "flex flex-col gap-3" : "flex flex-wrap gap-3"
+            }
+          >
             {usage.data.windows.map((window, index) => (
               <WindowUsage key={`${window.label}-${index}`} window={window} />
             ))}
