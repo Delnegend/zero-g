@@ -243,6 +243,7 @@ export function Credentials({
                     <Button
                       disabled={loginBusy || !credential.enabled}
                       onClick={() => onLogin(credential)}
+                      variant="secondary"
                     >
                       {credential.connected ? "Reconnect" : "Sign in"}{" "}
                       {
