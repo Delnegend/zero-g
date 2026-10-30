@@ -8,6 +8,7 @@ use axum::{
 use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use serde_with::{DefaultOnError, VecSkipError, serde_as};
 
 use crate::database::transaction_with_retry;
 use crate::openai::Model;
@@ -132,6 +133,72 @@ struct CatalogPricing {
     cache_read: Option<f64>,
     /// Pricing source: models.dev, datasheet, or antigravity-reference.
     source: String,
+}
+
+/// Zen model details, tolerating malformed individual fields.
+#[serde_as]
+#[derive(Default, Deserialize)]
+struct ZenMetadata {
+    /// Whether the model supports reasoning.
+    #[serde(default)]
+    #[serde_as(as = "DefaultOnError")]
+    reasoning: Option<bool>,
+    /// Whether the model supports tool calls.
+    #[serde(default)]
+    #[serde_as(as = "DefaultOnError")]
+    tool_call: Option<bool>,
+    /// Advertised modalities.
+    #[serde(default)]
+    #[serde_as(as = "DefaultOnError")]
+    modalities: Option<ZenModalities>,
+}
+
+/// Zen modalities relevant to the catalog.
+#[serde_as]
+#[derive(Default, Deserialize)]
+struct ZenModalities {
+    /// Input modalities, ignoring non-string entries.
+    #[serde(default)]
+    #[serde_as(as = "DefaultOnError<VecSkipError<_>>")]
+    input: Vec<String>,
+}
+
+/// Price fields from Zen or a per-token datasheet.
+#[serde_as]
+#[derive(Default, Deserialize)]
+struct PriceFields {
+    /// Zen input price per million tokens.
+    #[serde(default)]
+    #[serde_as(as = "DefaultOnError")]
+    input: Option<f64>,
+    /// Zen output price per million tokens.
+    #[serde(default)]
+    #[serde_as(as = "DefaultOnError")]
+    output: Option<f64>,
+    /// Zen cache write price per million tokens.
+    #[serde(default)]
+    #[serde_as(as = "DefaultOnError")]
+    cache_write: Option<f64>,
+    /// Zen cache read price per million tokens.
+    #[serde(default)]
+    #[serde_as(as = "DefaultOnError")]
+    cache_read: Option<f64>,
+    /// Datasheet input price per token.
+    #[serde(default)]
+    #[serde_as(as = "DefaultOnError")]
+    input_cost_per_token: Option<f64>,
+    /// Datasheet output price per token.
+    #[serde(default)]
+    #[serde_as(as = "DefaultOnError")]
+    output_cost_per_token: Option<f64>,
+    /// Datasheet cache write price per token.
+    #[serde(default)]
+    #[serde_as(as = "DefaultOnError")]
+    cache_creation_input_token_cost: Option<f64>,
+    /// Datasheet cache read price per token.
+    #[serde(default)]
+    #[serde_as(as = "DefaultOnError")]
+    cache_read_input_token_cost: Option<f64>,
 }
 
 /// Model discovery dashboard operations.
@@ -274,36 +341,33 @@ fn reference_price<'a>(sheet: &'a Value, id: &str) -> Option<&'a Value> {
 /// Convert a pricing record to USD per million tokens.
 fn normalize_pricing(kind: &str, price: &Value) -> CatalogPricing {
     let zen = kind == "zen";
-    let number = |key: &str| {
-        price
-            .get(key)
-            .and_then(Value::as_f64)
+    let fields = PriceFields::deserialize(price).unwrap_or_default();
+    let number = |value: Option<f64>| {
+        value
             .map(|n| n * if zen { 1.0 } else { 1_000_000.0 })
             .filter(|n| n.is_finite())
     };
     CatalogPricing {
-        input: number(if zen { "input" } else { "input_cost_per_token" }),
-        output: number(if zen {
-            "output"
-        } else {
-            "output_cost_per_token"
+        input: number(match zen {
+            true => fields.input,
+            false => fields.input_cost_per_token,
         }),
-        cache_write: number(if zen {
-            "cache_write"
-        } else {
-            "cache_creation_input_token_cost"
+        output: number(match zen {
+            true => fields.output,
+            false => fields.output_cost_per_token,
         }),
-        cache_read: number(if zen {
-            "cache_read"
-        } else {
-            "cache_read_input_token_cost"
+        cache_write: number(match zen {
+            true => fields.cache_write,
+            false => fields.cache_creation_input_token_cost,
         }),
-        source: if zen {
-            "models.dev"
-        } else if kind == "agy" {
-            "antigravity-reference"
-        } else {
-            "datasheet"
+        cache_read: number(match zen {
+            true => fields.cache_read,
+            false => fields.cache_read_input_token_cost,
+        }),
+        source: match zen {
+            true => "models.dev",
+            false if kind == "agy" => "antigravity-reference",
+            false => "datasheet",
         }
         .to_owned(),
     }
@@ -351,23 +415,14 @@ fn normalize_model(
         .get("description")
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let reasoning = zen
-        .and_then(|value| value.get("reasoning"))
-        .and_then(Value::as_bool);
-    let tool_call = zen
-        .and_then(|value| value.get("tool_call"))
-        .and_then(Value::as_bool);
-    let input_modalities = zen
-        .and_then(|value| value.get("modalities"))
-        .and_then(|value| value.get("input"))
-        .and_then(Value::as_array)
-        .map(|values| {
-            values
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect()
-        })
+    let metadata = zen
+        .and_then(|value| ZenMetadata::deserialize(value).ok())
+        .unwrap_or_default();
+    let reasoning = metadata.reasoning;
+    let tool_call = metadata.tool_call;
+    let input_modalities = metadata
+        .modalities
+        .map(|modalities| modalities.input)
         .unwrap_or_default();
     let reasoning_efforts = model
         .supported_reasoning_efforts
@@ -570,6 +625,40 @@ mod tests {
                 .pricing
                 .is_none()
         );
+    }
+
+    /// Invalid metadata fields do not hide other capabilities or raw details.
+    #[test]
+    fn catalog_preserves_valid_fields_when_zen_metadata_is_malformed() {
+        let mut provider = sample_provider("zen", "zen");
+        provider.models.push(
+            serde_json::from_value(json!({
+                "id":"m",
+                "zen_metadata":{
+                    "reasoning":"invalid",
+                    "tool_call":true,
+                    "modalities":{"input":["audio", 42, "pdf"]},
+                    "cost":{"input":"invalid", "output":3.0},
+                    "extra":"retained"
+                }
+            }))
+            .unwrap(),
+        );
+        let result = serde_json::to_value(enrich_catalog(
+            CachedCatalog {
+                providers: vec![provider],
+            },
+            &sample_data(json!({}), json!({})),
+        ))
+        .unwrap();
+        let model = &result["providers"][0]["models"][0];
+        assert_eq!(model["reasoning"], Value::Null);
+        assert_eq!(model["tool_call"], true);
+        assert_eq!(model["input_modalities"], json!(["audio", "pdf"]));
+        assert_eq!(model["pricing"]["input"], Value::Null);
+        assert_eq!(model["pricing"]["output"], 3.0);
+        assert_eq!(model["provider_metadata"]["extra"], "retained");
+        assert_eq!(model["raw_pricing"]["input"], "invalid");
     }
 
     #[tokio::test]
