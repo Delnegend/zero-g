@@ -124,7 +124,16 @@ async fn start(
     let state = URL_SAFE_NO_PAD.encode(rand::random::<[u8; 32]>());
     let mut url = reqwest::Url::parse("https://claude.ai/oauth/authorize")
         .map_err(|e| error(e.to_string()))?;
-    url.query_pairs_mut().append_pair("code", "true").append_pair("client_id", CLIENT_ID).append_pair("response_type", "code").append_pair("redirect_uri", REDIRECT_URI).append_pair("scope", "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload").append_pair("code_challenge", &challenge).append_pair("code_challenge_method", "S256").append_pair("state", &state);
+    url
+        .query_pairs_mut()
+        .append_pair("code", "true")
+        .append_pair("client_id", CLIENT_ID)
+        .append_pair("response_type", "code")
+        .append_pair("redirect_uri", REDIRECT_URI)
+        .append_pair("scope", "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload")
+        .append_pair("code_challenge", &challenge)
+        .append_pair("code_challenge_method", "S256")
+        .append_pair("state", &state);
     let id = Uuid::new_v4().to_string();
     let mut pending = flows.0.lock().await;
     pending.retain(|_, f| f.created.elapsed() < Duration::from_secs(600));
