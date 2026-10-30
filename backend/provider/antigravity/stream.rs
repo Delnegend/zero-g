@@ -170,21 +170,36 @@ fn parse_line(line: &str, events: &mut Vec<AntigravityEvent>) -> Result<(), Stri
     }
 
     if let Some(metadata) = response.get("usageMetadata") {
-        let mut usage = Usage::default();
-        if let Some(prompt_tokens) = metadata.get("promptTokenCount").and_then(Value::as_u64) {
-            usage.prompt_tokens = u32::try_from(prompt_tokens).unwrap_or(u32::MAX);
-        }
-        if let Some(completion_tokens) =
-            metadata.get("candidatesTokenCount").and_then(Value::as_u64)
-        {
-            usage.completion_tokens = u32::try_from(completion_tokens).unwrap_or(u32::MAX);
-        }
-        if let Some(total_tokens) = metadata.get("totalTokenCount").and_then(Value::as_u64) {
-            usage.total_tokens = u32::try_from(total_tokens).unwrap_or(u32::MAX);
-        }
-        events.push(AntigravityEvent::Usage(usage));
+        events.push(AntigravityEvent::Usage(parse_usage(metadata)));
     }
     Ok(())
+}
+
+/// Maps upstream counts to the shared completion usage.
+fn parse_usage(metadata: &Value) -> Usage {
+    let count = |name: &str| {
+        metadata
+            .get(name)
+            .and_then(Value::as_u64)
+            .map(|value| u32::try_from(value).unwrap_or(u32::MAX))
+            .unwrap_or_default()
+    };
+    let completion = count("candidatesTokenCount").saturating_add(count("thoughtsTokenCount"));
+    let reported_total = metadata
+        .get("totalTokenCount")
+        .and_then(Value::as_u64)
+        .map(|value| u32::try_from(value).unwrap_or(u32::MAX));
+    let prompt = match count("promptTokenCount") {
+        0 => reported_total
+            .unwrap_or_default()
+            .saturating_sub(completion),
+        prompt => prompt,
+    };
+    Usage {
+        prompt_tokens: prompt,
+        completion_tokens: completion,
+        total_tokens: reported_total.unwrap_or_else(|| prompt.saturating_add(completion)),
+    }
 }
 
 /// Spawns a task that decodes byte chunks into events or a stream error.

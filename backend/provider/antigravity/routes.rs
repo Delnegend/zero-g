@@ -924,6 +924,18 @@ mod tests {
                         "model-high": {"supportsThinking": true, "thinkingLevel": 3, "maxOutputTokens": 200}
                     }})).into_response()
                 } else {
+                    if let Some(text) = body.pointer("/request/contents/0/parts/0/text").and_then(Value::as_str) {
+                        let usage = match text {
+                            "missing-total" => Some(json!({"promptTokenCount":10,"candidatesTokenCount":5,"thoughtsTokenCount":3})),
+                            "missing-prompt" => Some(json!({"candidatesTokenCount":5,"thoughtsTokenCount":3,"totalTokenCount":18})),
+                            "inconsistent" => Some(json!({"promptTokenCount":10,"candidatesTokenCount":5,"thoughtsTokenCount":3,"totalTokenCount":6})),
+                            _ => None,
+                        };
+                        if let Some(usage) = usage {
+                            let event = json!({"response":{"candidates":[{"content":{"parts":[{"text":"answer"}]},"finishReason":"STOP"}],"usageMetadata":usage}});
+                            return ([(axum::http::header::CONTENT_TYPE, "text/event-stream")], format!("data: {event}\n\n")).into_response();
+                        }
+                    }
                     let truncated = body.pointer("/request/contents/0/parts/0/text").and_then(Value::as_str) == Some("truncate");
                     tx.send(body).unwrap();
                     if truncated {
@@ -936,7 +948,7 @@ mod tests {
                         "{\"text\":\"answer\",\"thoughtSignature\":\"text-sig\"},",
                         "{\"functionCall\":{\"id\":\"call_1\",\"name\":\"lookup\",\"args\":{\"q\":\"x\"}},",
                         "\"thoughtSignature\":\"opaque\"}]},\"finishReason\":\"STOP\"}],",
-                        "\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":5,\"totalTokenCount\":15}}}\n\n")).into_response()
+                        "\"usageMetadata\":{\"promptTokenCount\":10,\"cachedContentTokenCount\":4,\"candidatesTokenCount\":5,\"thoughtsTokenCount\":3,\"totalTokenCount\":18}}}\n\n")).into_response()
                 }
             }
         }));
@@ -1029,6 +1041,32 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
+        assert_eq!(response["usage"]["prompt_tokens"], 10);
+        assert_eq!(response["usage"]["completion_tokens"], 8);
+        assert_eq!(response["usage"]["total_tokens"], 18);
+        for (text, prompt, total) in [
+            ("missing-total", 10, 18),
+            ("missing-prompt", 10, 18),
+            ("inconsistent", 10, 6),
+        ] {
+            let result = app
+                .clone()
+                .oneshot(request(json!({
+                    "model":"model-high", "messages":[{"role":"user","content":text}]
+                })))
+                .await
+                .unwrap();
+            assert_eq!(result.status(), StatusCode::OK);
+            let result: Value = serde_json::from_slice(
+                &axum::body::to_bytes(result.into_body(), 1024 * 1024)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(result["usage"]["prompt_tokens"], prompt);
+            assert_eq!(result["usage"]["completion_tokens"], 8);
+            assert_eq!(result["usage"]["total_tokens"], total);
+        }
         let call = response["choices"][0]["message"]["tool_calls"][0].clone();
         let provider_parts = response["choices"][0]["message"]["provider_parts"].clone();
         assert_eq!(
@@ -1072,7 +1110,8 @@ mod tests {
         let streamed = app
             .clone()
             .oneshot(request(json!({
-                "model":"model-high", "stream":true, "messages":[{"role":"user","content":"hello"}]
+                "model":"model-high", "stream":true, "stream_options":{"include_usage":true},
+                "messages":[{"role":"user","content":"hello"}]
             })))
             .await
             .unwrap();
@@ -1081,6 +1120,20 @@ mod tests {
             .await
             .unwrap();
         let output = String::from_utf8(bytes.to_vec()).unwrap();
+        let usage = output
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .filter_map(|data| serde_json::from_str::<Value>(data).ok())
+            .find_map(|chunk| {
+                chunk
+                    .get("usage")
+                    .filter(|usage| usage.is_object())
+                    .cloned()
+            })
+            .unwrap();
+        assert_eq!(usage["prompt_tokens"], 10);
+        assert_eq!(usage["completion_tokens"], 8);
+        assert_eq!(usage["total_tokens"], 18);
         let stream_parts: Vec<Value> = output
             .lines()
             .filter_map(|line| line.strip_prefix("data: "))
@@ -1122,6 +1175,38 @@ mod tests {
         assert_eq!(
             payload["request"]["toolConfig"]["functionCallingConfig"]["mode"],
             "NONE"
+        );
+        let parallel = app
+            .clone()
+            .oneshot(request(json!({
+                "model":"model-high",
+                "messages":[
+                    {"role":"assistant","tool_calls":[
+                        {"id":"first","type":"function","function":{"name":"one","arguments":"{}"}},
+                        {"id":"second","type":"function","function":{"name":"two","arguments":"{}"}}
+                    ]},
+                    {"role":"tool","tool_call_id":"second","content":"second result"},
+                    {"role":"tool","tool_call_id":"unknown","content":"unknown result"},
+                    {"role":"tool","tool_call_id":"first","content":"first result"}
+                ]
+            })))
+            .await
+            .unwrap();
+        assert_eq!(parallel.status(), StatusCode::OK);
+        let payload = rx.recv().await.unwrap();
+        let parts = &payload["request"]["contents"][1]["parts"];
+        assert_eq!(parts[0]["functionResponse"]["id"], "first");
+        assert_eq!(parts[0]["functionResponse"]["name"], "one");
+        assert_eq!(
+            parts[0]["functionResponse"]["response"]["output"],
+            "first result"
+        );
+        assert_eq!(parts[1]["functionResponse"]["id"], "unknown");
+        assert_eq!(parts[2]["functionResponse"]["id"], "second");
+        assert_eq!(parts[2]["functionResponse"]["name"], "two");
+        assert_eq!(
+            parts[2]["functionResponse"]["response"]["output"],
+            "second result"
         );
         let response_request = |body: Value| {
             Request::builder()
@@ -1185,8 +1270,8 @@ mod tests {
         assert_eq!(completed["response"]["status"], "completed");
         assert_eq!(completed["response"]["output_text"], "answer");
         assert_eq!(completed["response"]["usage"]["input_tokens"], 10);
-        assert_eq!(completed["response"]["usage"]["output_tokens"], 5);
-        assert_eq!(completed["response"]["usage"]["total_tokens"], 15);
+        assert_eq!(completed["response"]["usage"]["output_tokens"], 8);
+        assert_eq!(completed["response"]["usage"]["total_tokens"], 18);
         let tool = completed["response"]["output"]
             .as_array()
             .unwrap()

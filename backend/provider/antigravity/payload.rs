@@ -141,6 +141,50 @@ impl AntigravityClient {
             }
         }
 
+        // Some upstream models pair parallel function responses by position, even
+        // when IDs are present. Restore call order without moving unknown parts.
+        let mut ordinals = HashMap::new();
+        let mut next = 0usize;
+        for content in &contents {
+            if content.get("role").and_then(Value::as_str) != Some("model") {
+                continue;
+            }
+            if let Some(parts) = content.get("parts").and_then(Value::as_array) {
+                for part in parts {
+                    if let Some(id) = part.pointer("/functionCall/id").and_then(Value::as_str) {
+                        ordinals.insert(id.to_owned(), next);
+                        next = next.saturating_add(1);
+                    }
+                }
+            }
+        }
+        for content in &mut contents {
+            if content.get("role").and_then(Value::as_str) != Some("user") {
+                continue;
+            }
+            let Some(parts) = content.get_mut("parts").and_then(Value::as_array_mut) else {
+                continue;
+            };
+            let mut known = Vec::new();
+            let mut positions = Vec::new();
+            for (position, part) in parts.iter_mut().enumerate() {
+                if let Some(ordinal) = part
+                    .pointer("/functionResponse/id")
+                    .and_then(Value::as_str)
+                    .and_then(|id| ordinals.get(id))
+                {
+                    positions.push(position);
+                    known.push((*ordinal, std::mem::take(part)));
+                }
+            }
+            known.sort_by_key(|(ordinal, _)| *ordinal);
+            for (position, (_, part)) in positions.into_iter().zip(known) {
+                if let Some(slot) = parts.get_mut(position) {
+                    *slot = part;
+                }
+            }
+        }
+
         (system_prompts, contents)
     }
 
