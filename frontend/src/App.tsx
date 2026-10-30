@@ -1,4 +1,3 @@
-import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   HeadContent,
@@ -16,20 +15,13 @@ import {
   Settings,
   Sun,
 } from "lucide-react";
-import { Button } from "./components/ui/button";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { DateRangePicker } from "./components/DateRangePicker";
 import { ObservabilitySkeleton } from "./components/Loading";
 import { RefreshButton } from "./components/RefreshButton";
-import { Card } from "./components/ui/card";
-import { LogsTable } from "./LogsTable";
-import { ObservabilityCharts } from "./ObservabilityCharts";
-import { RequestBody, requestBodyTheme } from "./RequestBody";
-import {
-  observabilityQueryOptions,
-  type DashboardRange,
-  type Log,
-} from "./server/api/observability";
 import { Alert, AlertDescription } from "./components/ui/alert";
-import { DateRangePicker } from "./components/DateRangePicker";
+import { Button } from "./components/ui/button";
+import { Card } from "./components/ui/card";
 import {
   Drawer,
   DrawerClose,
@@ -55,6 +47,14 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "./components/ui/sidebar";
+import { LogsTable } from "./LogsTable";
+import { ObservabilityCharts } from "./ObservabilityCharts";
+import { RequestBody, requestBodyTheme } from "./RequestBody";
+import {
+  observabilityQueryOptions,
+  type DashboardRange,
+  type Log,
+} from "./server/api/observability";
 
 const number = new Intl.NumberFormat();
 
@@ -287,8 +287,8 @@ function DashboardSidebar() {
   const [observabilityOpen, setObservabilityOpen] = useState(true);
   const [modelsOpen, setModelsOpen] = useState(true);
   const items = [
-    { path: "/settings", label: "Settings", icon: Settings },
     { path: "/keys", label: "Virtual keys", icon: KeyRound },
+    { path: "/settings", label: "Settings", icon: Settings },
   ] as const;
   return (
     <Sidebar collapsible="icon">
