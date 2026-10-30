@@ -39,7 +39,7 @@ Zen uses OpenCode's official model list and API for all models, including IDs en
 
 Each enabled, connected credential has a positive weight: a weight of 3 receives roughly three times as many initial requests as a weight of 1. On upstream authentication errors (401 or 403) or rate limits (429), zero-g tries another credential before returning a response. It does not retry after streaming has begun.
 
-Antigravity, Codex and Claude credential cards show the account email when the provider supplied one during sign-in. If an older Codex credential has no stored email, reconnect it to obtain the current account information.
+Antigravity, Codex and Claude credential cards show the account email when the provider supplied one during sign-in. Codex also shows its subscription plan when present in the stored token claims; it updates when credentials are refreshed or reconnected and may be stale after a subscription change. If an older Codex credential has no stored email or plan, reconnect it to obtain the current account information.
 
 Credential cards show remaining quota as bars and reset countdowns for Codex, Antigravity, Claude Code and OpenCode Go. Hover over or focus a countdown to see the exact local date and time. Unavailable data is shown as unknown or an error rather than an estimated quota. Antigravity shows quota windows under model-pool headings, with five-hour windows before longer limits; if the summary is unavailable, the card shows an error. Claude Code uses Anthropic's undocumented subscription usage endpoint, which may change or return rate-limit errors. The Providers page fetches usage for connected credentials and treats results as fresh for five minutes; reopening it within that time can reuse the cached result.
 

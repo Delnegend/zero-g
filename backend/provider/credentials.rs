@@ -31,6 +31,9 @@ pub(crate) struct Credential {
     /// Account email returned during OAuth sign-in, when available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) email: Option<String>,
+    /// Provider-reported subscription plan, when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) plan_type: Option<String>,
 }
 
 /// Builds public credential metadata and checks for its stored secret.
@@ -57,6 +60,7 @@ async fn info(
         enabled: row.enabled,
         connected,
         email: None,
+        plan_type: None,
     })
 }
 
@@ -65,10 +69,12 @@ async fn info(
 struct AccountProfile {
     /// Account email supplied by the provider.
     email: Option<String>,
+    /// Subscription plan saved from Codex token claims.
+    plan_type: Option<String>,
 }
 
 /// Populate dashboard-only identity metadata without parsing it on inference requests.
-async fn include_emails(
+async fn include_profiles(
     store: &SettingsStore,
     provider_id: &str,
     credentials: &mut [Credential],
@@ -90,6 +96,9 @@ async fn include_emails(
             let profile: AccountProfile = serde_json::from_str(&secret)
                 .map_err(|_| "Invalid stored account profile".to_string())?;
             credential.email = profile.email.filter(|email| !email.trim().is_empty());
+            if provider.kind == "codex" {
+                credential.plan_type = profile.plan_type.filter(|plan| !plan.trim().is_empty());
+            }
         }
     }
     Ok(())
@@ -248,7 +257,7 @@ async fn list_endpoint(
 ) -> Response {
     match all(&store, &provider_id).await {
         Ok(Some(mut credentials)) => {
-            match include_emails(&store, &provider_id, &mut credentials).await {
+            match include_profiles(&store, &provider_id, &mut credentials).await {
                 Ok(()) => Json(CredentialsResponse { credentials }).into_response(),
                 Err(e) => internal(&e),
             }
@@ -399,7 +408,8 @@ async fn update(
     match result {
         Ok(StatusCode::OK) => match get(&store, &provider_id, &id).await {
             Ok(Some(mut value)) => {
-                match include_emails(&store, &provider_id, std::slice::from_mut(&mut value)).await {
+                match include_profiles(&store, &provider_id, std::slice::from_mut(&mut value)).await
+                {
                     Ok(()) => Json(value).into_response(),
                     Err(e) => internal(&e),
                 }
@@ -580,9 +590,9 @@ mod tests {
     use super::*;
     use crate::database::Database;
 
-    /// Dashboard credential lists expose account email without exposing OAuth secrets.
+    /// Dashboard credential lists expose account profiles without exposing OAuth secrets.
     #[tokio::test]
-    async fn dashboard_lists_stored_account_emails_without_tokens() {
+    async fn dashboard_lists_stored_account_profiles_without_tokens() {
         use axum::body::to_bytes;
         let store = SettingsStore::new(
             Database::open(":memory:").await.unwrap(),
@@ -614,9 +624,12 @@ mod tests {
             .await
             .unwrap();
             let name = format!("credential.{id}.credential");
-            let json =
-                serde_json::json!({"email":"person@example.test","access_token":"secret-token"})
-                    .to_string();
+            let json = serde_json::json!({
+                "email": "person@example.test",
+                "plan_type": "pro",
+                "access_token": "secret-token"
+            })
+            .to_string();
             Secret::upsert_by_name(name.as_str())
                 .value(store.encrypt(&name, &json).unwrap())
                 .exec(&mut db)
@@ -627,6 +640,11 @@ mod tests {
             let body = to_bytes(response.into_body(), 65536).await.unwrap();
             let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
             assert_eq!(value["credentials"][0]["email"], "person@example.test");
+            if kind == "codex" {
+                assert_eq!(value["credentials"][0]["plan_type"], "pro");
+            } else {
+                assert!(value["credentials"][0].get("plan_type").is_none());
+            }
             assert!(!String::from_utf8_lossy(&body).contains("secret-token"));
         }
     }

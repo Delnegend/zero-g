@@ -2281,6 +2281,10 @@
             "type": "string",
             "description": "User-facing credential name."
           },
+          "plan_type": {
+            "type": ["string", "null"],
+            "description": "Provider-reported subscription plan, when available."
+          },
           "weight": {
             "type": "integer",
             "format": "int64",

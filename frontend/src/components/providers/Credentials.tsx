@@ -175,6 +175,12 @@ export function Credentials({
                     • {credential.email}
                   </span>
                 )}
+                {credential.plan_type && (
+                  <span className="font-normal text-muted-foreground">
+                    {" "}
+                    • <span className="capitalize">{credential.plan_type}</span>
+                  </span>
+                )}
               </p>
               <p className="mt-1 text-sm text-muted-foreground">
                 Weight: {credential.weight} ·{" "}

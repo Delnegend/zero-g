@@ -519,7 +519,7 @@ test("provider deletion reports a conflict if credentials were added elsewhere",
   assert.ok(screen.getByRole("dialog"));
 });
 
-test("credential names show available account emails without placeholders", async () => {
+test("credential names show available account emails and plans without placeholders", async () => {
   globalThis.fetch = (async (url) =>
     String(url).endsWith("/usage")
       ? Response.json({ kind: "grouped_quota", groups: [] })
@@ -529,6 +529,7 @@ test("credential names show available account emails without placeholders", asyn
               id: "one",
               name: "Personal",
               email: "person@example.test",
+              plan_type: "pro",
               weight: 1,
               enabled: true,
               connected: true,
@@ -540,21 +541,29 @@ test("credential names show available account emails without placeholders", asyn
               enabled: true,
               connected: false,
             },
+            {
+              id: "three",
+              name: "Anonymous",
+              plan_type: "plus",
+              weight: 1,
+              enabled: true,
+              connected: false,
+            },
           ],
         })) as typeof fetch;
   mount(
     <Credentials
       provider={{
-        id: "agy",
-        name: "Google Antigravity",
-        kind: "agy",
+        id: "codex",
+        name: "OpenAI Codex",
+        kind: "codex",
         base_url: "",
       }}
       kind={{
-        value: "agy",
-        label: "Antigravity",
-        fixed_id: "agy",
-        fixed_name: "Google Antigravity",
+        value: "codex",
+        label: "Codex",
+        fixed_id: "codex",
+        fixed_name: "OpenAI Codex",
         oauth: true,
         api_key: false,
       }}
@@ -563,6 +572,8 @@ test("credential names show available account emails without placeholders", asyn
     />,
   );
   assert.ok(await screen.findByText("person@example.test", { exact: false }));
+  assert.ok(screen.getByText("pro", { exact: true }));
+  assert.ok(screen.getByText("plus", { exact: true }));
   assert.ok(screen.getByText("Work", { exact: true }));
   assert.equal(screen.queryByText(/Work •/), null);
 });

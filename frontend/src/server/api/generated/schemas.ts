@@ -560,6 +560,10 @@ export const Credential = zod
     enabled: zod.boolean().describe("Whether the credential is enabled."),
     id: zod.string().describe("Stable credential identifier."),
     name: zod.string().describe("User-facing credential name."),
+    plan_type: zod
+      .string()
+      .nullish()
+      .describe("Provider-reported subscription plan, when available."),
     weight: zod.int().describe("Relative selection weight."),
   })
   .describe("Credential metadata exposed without the underlying secret.");
@@ -602,6 +606,10 @@ export const CredentialsResponse = zod
               .describe("Whether the credential is enabled."),
             id: zod.string().describe("Stable credential identifier."),
             name: zod.string().describe("User-facing credential name."),
+            plan_type: zod
+              .string()
+              .nullish()
+              .describe("Provider-reported subscription plan, when available."),
             weight: zod.int().describe("Relative selection weight."),
           })
           .describe(
