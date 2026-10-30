@@ -100,7 +100,7 @@ Object.defineProperty(window, "cancelAnimationFrame", {
 });
 
 // These modules capture the browser document at import time, so load them after JSDOM setup.
-const { render, screen, within, cleanup, waitFor } =
+const { act, render, screen, within, cleanup, waitFor } =
   await import("@testing-library/react");
 const userEvent = (await import("@testing-library/user-event")).default;
 const { Management } = await import("./Management");
@@ -127,7 +127,6 @@ function mount(element: React.ReactNode) {
 }
 
 const settings = { log_retention_days: 30 };
-
 test("settings save log retention without provider OAuth settings", async () => {
   const bodies: unknown[] = [];
   globalThis.fetch = (async (_url, options) => {
@@ -264,6 +263,9 @@ test("credential editing retains a blank API key unless keyless is selected", as
     enabled: true,
     api_key: "",
   });
+  await user.click(screen.getByRole("button", { name: "Delete Renamed" }));
+  assert.ok(await screen.findByRole("dialog", { name: "Delete credential?" }));
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
 });
 
 test("credential names show available account emails without placeholders", async () => {
@@ -559,6 +561,72 @@ test("connected Claude credentials show subscription quota", async () => {
   assert.ok(within(group).getByText("60% remaining"));
 });
 
+test("Codex device code copies with temporary confirmation", async () => {
+  globalThis.fetch = (async (url) => {
+    const path = String(url);
+    if (path.endsWith("/credentials")) {
+      return Response.json({
+        credentials: [
+          {
+            id: "one",
+            name: "Account",
+            weight: 1,
+            enabled: true,
+            connected: false,
+          },
+        ],
+      });
+    }
+    if (path.endsWith("/codex/start")) {
+      return Response.json({
+        id: "flow",
+        url: "https://auth.openai.com/device",
+        user_code: "ABCD-1234",
+        interval: 60,
+      });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  }) as typeof fetch;
+  const user = userEvent.setup();
+  mount(
+    <TooltipProvider>
+      <ProviderCard
+        provider={{ id: "codex", name: "Codex", kind: "codex", base_url: "" }}
+        kind={{
+          value: "codex",
+          label: "Codex",
+          api_key: false,
+          oauth: true,
+          fixed_id: "codex",
+          fixed_name: "Codex",
+        }}
+        onEdit={() => {}}
+        onDelete={() => {}}
+        deleting={false}
+      />
+    </TooltipProvider>,
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Sign in Codex" }),
+  );
+  const button = await screen.findByRole("button", {
+    name: "Copy device code ABCD-1234",
+  });
+  await user.hover(button);
+  assert.ok(await screen.findByText("Copy", { exact: true }));
+  await user.click(button);
+  assert.equal(await navigator.clipboard.readText(), "ABCD-1234");
+  assert.ok(screen.getByText("Copied", { exact: true }));
+  assert.ok(await screen.findByText("Copied!", { exact: true }));
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  });
+  assert.equal(screen.queryByText("Copied", { exact: true }), null);
+});
+
 for (const [kind, label, host] of [
   ["claude", "Claude Code", "claude.ai"],
   ["cursor", "Cursor", "cursor.com"],
@@ -599,20 +667,22 @@ for (const [kind, label, host] of [
     }) as typeof fetch;
     const user = userEvent.setup();
     mount(
-      <ProviderCard
-        provider={{ id: "alpha", name: "Alpha", kind, base_url: "" }}
-        kind={{
-          value: kind,
-          label,
-          api_key: false,
-          oauth: true,
-          fixed_id: null,
-          fixed_name: null,
-        }}
-        onEdit={() => {}}
-        onDelete={() => {}}
-        deleting={false}
-      />,
+      <TooltipProvider>
+        <ProviderCard
+          provider={{ id: "alpha", name: "Alpha", kind, base_url: "" }}
+          kind={{
+            value: kind,
+            label,
+            api_key: false,
+            oauth: true,
+            fixed_id: null,
+            fixed_name: null,
+          }}
+          onEdit={() => {}}
+          onDelete={() => {}}
+          deleting={false}
+        />
+      </TooltipProvider>,
     );
     await user.click(
       await screen.findByRole("button", { name: `Sign in ${label}` }),
@@ -620,6 +690,16 @@ for (const [kind, label, host] of [
     const link = await screen.findByRole("link", { name: /authorization/ });
     assert.equal(new URL(link.getAttribute("href")!).hostname, host);
     assert.equal(screen.queryByText(/quota/i), null);
+    if (kind === "grok" || kind === "grok-build") {
+      const code = screen.getByRole("button", {
+        name: "Copy device code ABCD",
+      });
+      await user.hover(code);
+      assert.ok(await screen.findByText("Copy", { exact: true }));
+      await user.click(code);
+      assert.equal(await navigator.clipboard.readText(), "ABCD");
+      assert.ok(await screen.findByText("Copied!", { exact: true }));
+    }
     if (kind === "claude") {
       await user.type(
         screen.getByLabelText("Authorization code or callback URL"),
@@ -643,6 +723,183 @@ for (const [kind, label, host] of [
     }
   });
 }
+
+test("Google callback failure keeps the flow available for retry", async () => {
+  let attempts = 0;
+  globalThis.fetch = (async (url) => {
+    const path = String(url);
+    if (path.endsWith("/credentials"))
+      return Response.json({
+        credentials: [
+          {
+            id: "one",
+            name: "Account",
+            weight: 1,
+            enabled: true,
+            connected: false,
+          },
+        ],
+      });
+    if (path.endsWith("/agy/start"))
+      return Response.json({
+        id: "flow",
+        url: "https://accounts.google.com/authorize",
+        local_callback: false,
+      });
+    if (path.endsWith("/agy/finish")) {
+      attempts++;
+      return attempts === 1
+        ? new Response("Invalid callback", { status: 400 })
+        : Response.json({ status: "complete" });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  }) as typeof fetch;
+  const user = userEvent.setup();
+  mount(
+    <ProviderCard
+      provider={{ id: "agy", name: "Google", kind: "agy", base_url: "" }}
+      kind={{
+        value: "agy",
+        label: "Google",
+        api_key: false,
+        oauth: true,
+        fixed_id: "agy",
+        fixed_name: "Google",
+      }}
+      onEdit={() => {}}
+      onDelete={() => {}}
+      deleting={false}
+    />,
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Sign in Google" }),
+  );
+  await user.type(
+    await screen.findByLabelText("Redirected callback URL"),
+    "http://localhost/callback?code=example",
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Finish Google sign-in" }),
+  );
+  assert.ok(await screen.findByRole("alert"));
+  assert.ok(screen.getByLabelText("Redirected callback URL"));
+  await user.click(
+    screen.getByRole("button", { name: "Finish Google sign-in" }),
+  );
+  await screen.findByText("Sign-in complete.");
+  assert.equal(attempts, 2);
+});
+
+test("cancelling Google sign-in aborts polling and ignores a late completion", async () => {
+  let pollSignal: AbortSignal | null = null;
+  let release!: (response: Response) => void;
+  globalThis.fetch = (async (url, options) => {
+    const path = String(url);
+    if (path.endsWith("/credentials"))
+      return Response.json({
+        credentials: [
+          {
+            id: "one",
+            name: "Account",
+            weight: 1,
+            enabled: true,
+            connected: false,
+          },
+        ],
+      });
+    if (path.endsWith("/agy/start"))
+      return Response.json({
+        id: "flow",
+        url: "https://accounts.google.com/authorize",
+        local_callback: true,
+      });
+    if (path.endsWith("/agy/poll")) {
+      pollSignal = options?.signal as AbortSignal;
+      return new Promise<Response>((resolve) => {
+        release = resolve;
+      });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  }) as typeof fetch;
+  const user = userEvent.setup();
+  mount(
+    <ProviderCard
+      provider={{ id: "agy", name: "Google", kind: "agy", base_url: "" }}
+      kind={{
+        value: "agy",
+        label: "Google",
+        api_key: false,
+        oauth: true,
+        fixed_id: "agy",
+        fixed_name: "Google",
+      }}
+      onEdit={() => {}}
+      onDelete={() => {}}
+      deleting={false}
+    />,
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Sign in Google" }),
+  );
+  await waitFor(() => assert.ok(pollSignal), { timeout: 3000 });
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  assert.ok((pollSignal as unknown as AbortSignal).aborted);
+  await act(async () => {
+    release(Response.json({ status: "complete" }));
+  });
+  assert.equal(screen.queryByText("Sign-in complete."), null);
+  assert.ok(screen.getByRole("button", { name: "Sign in Google" }));
+});
+
+test("Google sign-in completes through polling", async () => {
+  globalThis.fetch = (async (url) => {
+    const path = String(url);
+    if (path.endsWith("/credentials"))
+      return Response.json({
+        credentials: [
+          {
+            id: "one",
+            name: "Account",
+            weight: 1,
+            enabled: true,
+            connected: false,
+          },
+        ],
+      });
+    if (path.endsWith("/agy/start"))
+      return Response.json({
+        id: "flow",
+        url: "https://accounts.google.com/authorize",
+        local_callback: true,
+      });
+    if (path.endsWith("/agy/poll"))
+      return Response.json({ status: "complete" });
+    throw new Error(`Unexpected request: ${path}`);
+  }) as typeof fetch;
+  const user = userEvent.setup();
+  mount(
+    <ProviderCard
+      provider={{ id: "agy", name: "Google", kind: "agy", base_url: "" }}
+      kind={{
+        value: "agy",
+        label: "Google",
+        api_key: false,
+        oauth: true,
+        fixed_id: "agy",
+        fixed_name: "Google",
+      }}
+      onEdit={() => {}}
+      onDelete={() => {}}
+      deleting={false}
+    />,
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Sign in Google" }),
+  );
+  await screen.findByText("Sign-in complete.", {}, { timeout: 3000 });
+  assert.equal(screen.queryByLabelText("Redirected callback URL"), null);
+  assert.ok(screen.getByRole("button", { name: "Sign in Google" }));
+});
 
 test("rejects an untrusted provider authorization URL", async () => {
   globalThis.fetch = (async (url) =>
