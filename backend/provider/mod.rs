@@ -2,14 +2,20 @@
 pub(crate) mod antigravity;
 /// Model catalog aggregation.
 pub(crate) mod catalog;
+/// Claude Code provider integration.
+pub(crate) mod claude;
 /// Codex provider integration.
 pub(crate) mod codex;
 /// Shared provider contracts and helpers.
 pub(crate) mod common;
 /// Provider credential management.
 pub(crate) mod credentials;
+/// Cursor provider integration.
+pub(crate) mod cursor;
 /// Go provider integration.
 pub(crate) mod go;
+/// Grok OAuth and Grok Build integrations.
+pub(crate) mod grok;
 /// Provider login coordination.
 pub(crate) mod login;
 /// OpenAI-compatible provider integration.
@@ -50,6 +56,10 @@ impl Providers {
 pub(crate) const PROVIDER_KINDS: &[ProviderDescriptor] = &[
     antigravity::Backend::DESCRIPTOR,
     codex::Backend::DESCRIPTOR,
+    claude::Backend::DESCRIPTOR,
+    cursor::Backend::DESCRIPTOR,
+    grok::Backend::DESCRIPTOR,
+    grok::BuildBackend::DESCRIPTOR,
     zen::Backend::DESCRIPTOR,
     go::Backend::DESCRIPTOR,
     openai::Backend::DESCRIPTOR,
@@ -62,6 +72,14 @@ pub(crate) enum ProviderKind {
     Antigravity,
     /// `OpenAI` Codex backend.
     Codex,
+    /// Claude Code backend.
+    Claude,
+    /// Cursor backend.
+    Cursor,
+    /// xAI OAuth backend.
+    Grok,
+    /// Grok Build backend.
+    GrokBuild,
     /// Zen backend.
     Zen,
     /// Go backend.
@@ -71,9 +89,13 @@ pub(crate) enum ProviderKind {
 }
 
 /// Provider kinds in registration order.
-const ALL: [ProviderKind; 5] = [
+const ALL: [ProviderKind; 9] = [
     ProviderKind::Antigravity,
     ProviderKind::Codex,
+    ProviderKind::Claude,
+    ProviderKind::Cursor,
+    ProviderKind::Grok,
+    ProviderKind::GrokBuild,
     ProviderKind::Zen,
     ProviderKind::Go,
     ProviderKind::Openai,
@@ -89,6 +111,10 @@ impl ProviderKind {
         match self {
             Self::Antigravity => antigravity::Backend::DESCRIPTOR,
             Self::Codex => codex::Backend::DESCRIPTOR,
+            Self::Claude => claude::Backend::DESCRIPTOR,
+            Self::Cursor => cursor::Backend::DESCRIPTOR,
+            Self::Grok => grok::Backend::DESCRIPTOR,
+            Self::GrokBuild => grok::BuildBackend::DESCRIPTOR,
             Self::Zen => zen::Backend::DESCRIPTOR,
             Self::Go => go::Backend::DESCRIPTOR,
             Self::Openai => openai::Backend::DESCRIPTOR,
@@ -124,6 +150,10 @@ impl ProviderKind {
         match self {
             Self::Antigravity => antigravity::Backend::discover(state, provider).await,
             Self::Codex => codex::Backend::discover(state, provider).await,
+            Self::Claude => claude::Backend::discover(state, provider).await,
+            Self::Cursor => cursor::Backend::discover(state, provider).await,
+            Self::Grok => grok::Backend::discover(state, provider).await,
+            Self::GrokBuild => grok::BuildBackend::discover(state, provider).await,
             Self::Zen => zen::Backend::discover(state, provider).await,
             Self::Go => go::Backend::discover(state, provider).await,
             Self::Openai => openai::Backend::discover(state, provider).await,
@@ -152,7 +182,7 @@ impl ProviderKind {
             Self::Codex => Some(QuotaCapability::Codex),
             Self::Zen => Some(QuotaCapability::Zen),
             Self::Go => Some(QuotaCapability::Go),
-            Self::Openai => None,
+            Self::Openai | Self::Claude | Self::Cursor | Self::Grok | Self::GrokBuild => None,
         }
     }
 
@@ -161,6 +191,10 @@ impl ProviderKind {
         match self {
             Self::Antigravity => antigravity::Backend::router(settings),
             Self::Codex => codex::Backend::router(settings),
+            Self::Claude => claude::Backend::router(settings),
+            Self::Cursor => cursor::Backend::router(settings),
+            Self::Grok => grok::Backend::router(settings),
+            Self::GrokBuild => grok::BuildBackend::router(settings),
             Self::Zen => zen::Backend::router(settings),
             Self::Go => go::Backend::router(settings),
             Self::Openai => openai::Backend::router(settings),
@@ -219,8 +253,11 @@ pub(crate) fn dashboard_router(state: &AppState) -> Router {
                 router.merge(antigravity::Backend::dashboard_router(state.clone()))
             }
             ProviderKind::Codex => router.merge(codex::Backend::dashboard_router(state.clone())),
+            ProviderKind::Claude => router.merge(claude::Backend::dashboard_router(state.clone())),
+            ProviderKind::Cursor => router.merge(cursor::Backend::dashboard_router(state.clone())),
+            ProviderKind::Grok => router.merge(grok::Backend::dashboard_router(state.clone())),
             ProviderKind::Zen => router.merge(zen::Backend::dashboard_router(state.clone())),
-            ProviderKind::Go | ProviderKind::Openai => router,
+            ProviderKind::Go | ProviderKind::Openai | ProviderKind::GrokBuild => router,
         })
 }
 

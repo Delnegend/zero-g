@@ -11,10 +11,14 @@ import { message } from "@/server/api/client";
 import {
   credentialsOptions,
   credentialUsageKey,
+  finishClaudeSignIn,
   finishGoogleSignIn,
   pollSignIn,
   startCodexSignIn,
   startGoogleSignIn,
+  startClaudeSignIn,
+  startCursorSignIn,
+  startGrokSignIn,
   type DeviceFlow,
   type GoogleFlow,
   type Provider,
@@ -40,6 +44,12 @@ export function ProviderCard({
   const queryClient = useQueryClient();
   const [google, setGoogle] = useState<GoogleFlow | null>(null);
   const [device, setDevice] = useState<DeviceFlow | null>(null);
+  const [browser, setBrowser] = useState<{
+    kind: "claude" | "cursor";
+    id: string;
+    url: string;
+    interval: number;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -63,8 +73,18 @@ export function ProviderCard({
       setBusy(true);
       setError("");
       try {
-        await finishGoogleSignIn(provider.id, credentialId, value.callback);
-        setGoogle(null);
+        if (browser?.kind === "claude" && credentialId) {
+          await finishClaudeSignIn(
+            provider.id,
+            credentialId,
+            browser.id,
+            value.callback,
+          );
+          setBrowser(null);
+        } else {
+          await finishGoogleSignIn(provider.id, credentialId, value.callback);
+          setGoogle(null);
+        }
         callbackForm.setFieldValue("callback", "");
         refresh();
         setNotice("Sign-in complete.");
@@ -77,11 +97,21 @@ export function ProviderCard({
   });
 
   useEffect(() => {
-    const flow = google ?? device;
-    if (!flow || busy) return;
+    const flow = google ?? device ?? browser;
+    if (!flow || busy || browser?.kind === "claude") return;
     const controller = new AbortController();
-    const kind = google ? "agy" : "codex";
-    const delay = google ? 2000 : Math.max(1, device!.interval) * 1000;
+    const kind = google
+      ? "agy"
+      : browser
+        ? "cursor"
+        : provider.kind === "codex"
+          ? "codex"
+          : provider.kind === "grok-build"
+            ? "grok-build"
+            : "grok";
+    const delay = google
+      ? 2000
+      : Math.max(1, (device ?? browser)!.interval) * 1000;
     let timer: number;
     const poll = async () => {
       try {
@@ -96,6 +126,7 @@ export function ProviderCard({
         if (result.status === "complete") {
           setGoogle(null);
           setDevice(null);
+          setBrowser(null);
           callbackForm.setFieldValue("callback", "");
           refresh();
           setNotice("Sign-in complete.");
@@ -104,12 +135,19 @@ export function ProviderCard({
         } else {
           setGoogle(null);
           setDevice(null);
-          setError(result.error || "Sign-in failed.");
+          setBrowser(null);
+          setError(
+            ("error" in result &&
+              typeof result.error === "string" &&
+              result.error) ||
+              "Sign-in failed.",
+          );
         }
       } catch (err) {
         if (!controller.signal.aborted) {
           setGoogle(null);
           setDevice(null);
+          setBrowser(null);
           setError(message(err));
         }
       }
@@ -119,7 +157,17 @@ export function ProviderCard({
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [google, device, busy, provider.id, credentialId, refresh, callbackForm]);
+  }, [
+    google,
+    device,
+    browser,
+    busy,
+    provider.id,
+    provider.kind,
+    credentialId,
+    refresh,
+    callbackForm,
+  ]);
 
   async function start(credential: ProviderCredential) {
     setLoginCredential(credential);
@@ -128,6 +176,7 @@ export function ProviderCard({
     setNotice("");
     setGoogle(null);
     setDevice(null);
+    setBrowser(null);
     callbackForm.setFieldValue("callback", "");
     try {
       if (provider.kind === "agy") {
@@ -141,6 +190,46 @@ export function ProviderCard({
         const url = new URL(result.url);
         if (url.protocol !== "https:" || url.hostname !== "auth.openai.com")
           throw new Error("Invalid Codex authorization URL.");
+        setDevice({ ...result, url: url.href });
+      } else if (provider.kind === "claude") {
+        const result = await startClaudeSignIn(provider.id, credential.id);
+        const url = new URL(result.url);
+        if (
+          url.protocol !== "https:" ||
+          url.hostname !== "claude.ai" ||
+          url.username ||
+          url.password ||
+          url.port
+        )
+          throw new Error("Invalid Claude authorization URL.");
+        setBrowser({ ...result, url: url.href, kind: "claude", interval: 2 });
+      } else if (provider.kind === "cursor") {
+        const result = await startCursorSignIn(provider.id, credential.id);
+        const url = new URL(result.url);
+        if (
+          url.protocol !== "https:" ||
+          url.hostname !== "cursor.com" ||
+          url.username ||
+          url.password ||
+          url.port
+        )
+          throw new Error("Invalid Cursor authorization URL.");
+        setBrowser({ ...result, url: url.href, kind: "cursor" });
+      } else if (provider.kind === "grok" || provider.kind === "grok-build") {
+        const result = await startGrokSignIn(
+          provider.id,
+          credential.id,
+          provider.kind === "grok-build",
+        );
+        const url = new URL(result.url);
+        if (
+          url.protocol !== "https:" ||
+          !(url.hostname === "x.ai" || url.hostname.endsWith(".x.ai")) ||
+          url.username ||
+          url.password ||
+          url.port
+        )
+          throw new Error("Invalid Grok authorization URL.");
         setDevice({ ...result, url: url.href });
       }
     } catch (err) {
@@ -190,16 +279,11 @@ export function ProviderCard({
         provider={provider}
         kind={kind}
         onLogin={(credential) => void start(credential)}
-        loginBusy={busy || !!google || !!device}
+        loginBusy={busy || !!google || !!device || !!browser}
       />
       {kind?.api_key && provider.kind !== "zen" && (
         <p className="mt-2 break-all text-sm text-muted-foreground">
           Upstream: {provider.base_url}
-        </p>
-      )}
-      {provider.kind === "agy" && (
-        <p className="mt-3 text-sm text-muted-foreground">
-          Configure your Google OAuth client in Settings before signing in.
         </p>
       )}
       {error && (
@@ -212,10 +296,10 @@ export function ProviderCard({
           {notice}
         </p>
       )}
-      {(google || device) && (
+      {(google || device || browser) && (
         <p className="mt-4 text-sm">Signing in: {loginCredential?.name}</p>
       )}
-      {google && (
+      {(google || browser?.kind === "claude") && (
         <form
           onSubmit={(event) => {
             event.preventDefault();
@@ -227,25 +311,29 @@ export function ProviderCard({
             Open{" "}
             <a
               className="underline"
-              href={google.url}
+              href={google?.url ?? browser?.url}
               target="_blank"
               rel="noopener noreferrer"
             >
-              Google authorization
+              {google ? "Google" : "Claude"} authorization
             </a>{" "}
             and sign in.{" "}
-            {google.local_callback
-              ? "Waiting for the local callback. If the callback is on another machine, copy its URL below instead."
-              : "Copy the entire redirected URL from the browser address bar; the loopback page may not load."}
+            {google
+              ? google.local_callback
+                ? "Waiting for the local callback. If the callback is on another machine, copy its URL below instead."
+                : "Copy the entire redirected URL from the browser address bar; the loopback page may not load."
+              : "Paste the authorization code or redirected callback URL below."}
           </p>
           <callbackForm.Field name="callback">
             {(field) => (
               <Label className="block text-sm font-medium">
-                Redirected callback URL
+                {google
+                  ? "Redirected callback URL"
+                  : "Authorization code or callback URL"}
                 <Input
                   className={inputClass}
                   required
-                  type="url"
+                  type={google ? "url" : "text"}
                   autoComplete="off"
                   value={field.state.value}
                   onBlur={field.handleBlur}
@@ -255,12 +343,12 @@ export function ProviderCard({
             )}
           </callbackForm.Field>
           <p className="text-xs text-muted-foreground">
-            The callback URL contains a temporary authorization code. Do not
-            share it.
+            The authorization code or callback URL is temporary and sensitive.
+            Do not share it.
           </p>
           <div className="flex gap-2">
             <Button type="submit" disabled={busy}>
-              Finish Google sign-in
+              Finish {google ? "Google" : "Claude"} sign-in
             </Button>
             <Button
               type="button"
@@ -268,6 +356,7 @@ export function ProviderCard({
               disabled={busy}
               onClick={() => {
                 setGoogle(null);
+                setBrowser(null);
                 callbackForm.setFieldValue("callback", "");
               }}
             >
@@ -275,6 +364,30 @@ export function ProviderCard({
             </Button>
           </div>
         </form>
+      )}
+      {browser?.kind === "cursor" && (
+        <div className="mt-4 grid gap-3 text-sm">
+          <p>
+            Open{" "}
+            <a
+              className="underline"
+              href={browser.url}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Cursor authorization
+            </a>{" "}
+            and sign in.
+          </p>
+          <p role="status" className="text-muted-foreground">
+            Waiting for authorization…
+          </p>
+          <div>
+            <Button variant="outline" onClick={() => setBrowser(null)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
       )}
       {device && (
         <div className="mt-4 grid gap-3 text-sm">
@@ -286,7 +399,8 @@ export function ProviderCard({
               target="_blank"
               rel="noopener noreferrer"
             >
-              OpenAI device authorization
+              {provider.kind === "codex" ? "OpenAI" : "Grok"} device
+              authorization
             </a>{" "}
             and enter this code:
           </p>

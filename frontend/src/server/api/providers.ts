@@ -58,17 +58,65 @@ export async function finishGoogleSignIn(
   });
 }
 
+export function finishClaudeSignIn(
+  providerId: string,
+  credentialId: string,
+  id: string,
+  code: string,
+) {
+  return api.finishClaudeLogin(providerId, credentialId, { id, code });
+}
+
+export function startClaudeSignIn(providerId: string, credentialId: string) {
+  return api.startClaudeLogin(providerId, credentialId);
+}
+
+export function startCursorSignIn(providerId: string, credentialId: string) {
+  return api.startCursorLogin(providerId, credentialId);
+}
+
+export function startGrokSignIn(
+  providerId: string,
+  credentialId: string,
+  build: boolean,
+) {
+  return build
+    ? api.startGrokBuildLogin(providerId, credentialId)
+    : api.startGrokLogin(providerId, credentialId);
+}
+
 export async function pollSignIn(
   providerId: string,
   credentialId: string | undefined,
-  kind: "agy" | "codex",
+  kind: "agy" | "codex" | "claude" | "cursor" | "grok" | "grok-build",
   id: string,
   signal: AbortSignal,
 ) {
   if (!credentialId) throw new Error("Credential is required");
-  return kind === "agy"
-    ? api.pollAntigravityLogin(providerId, credentialId, { id }, { signal })
-    : api.pollCodexLogin(providerId, credentialId, { id }, { signal });
+  switch (kind) {
+    case "agy":
+      return api.pollAntigravityLogin(
+        providerId,
+        credentialId,
+        { id },
+        { signal },
+      );
+    case "codex":
+      return api.pollCodexLogin(providerId, credentialId, { id }, { signal });
+    case "claude":
+      return api.pollClaudeLogin(providerId, credentialId, { id }, { signal });
+    case "cursor":
+      return api.pollCursorLogin(providerId, credentialId, { id }, { signal });
+    case "grok":
+      return api.pollGrokLogin(providerId, credentialId, { id }, { signal });
+    case "grok-build":
+      return api.pollGrokBuildLogin(
+        providerId,
+        credentialId,
+        { id },
+        { signal },
+      );
+  }
 }
 
 export function startGoogleSignIn(providerId: string, credentialId: string) {

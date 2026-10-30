@@ -391,6 +391,49 @@ export const CatalogProvider = zod
 export type CatalogProvider = zod.input<typeof CatalogProvider>;
 export type CatalogProviderOutput = zod.output<typeof CatalogProvider>;
 
+export const ClaudeFinishInput = zod
+  .object({
+    code: zod.string().describe("Pasted code or callback URL."),
+    id: zod.string().describe("Flow identifier."),
+  })
+  .describe("Manual callback submission.");
+
+export type ClaudeFinishInput = zod.input<typeof ClaudeFinishInput>;
+export type ClaudeFinishInputOutput = zod.output<typeof ClaudeFinishInput>;
+
+export const ClaudePollInput = zod
+  .object({
+    id: zod.string().describe("Flow identifier."),
+  })
+  .describe("Flow identifier for polling.");
+
+export type ClaudePollInput = zod.input<typeof ClaudePollInput>;
+export type ClaudePollInputOutput = zod.output<typeof ClaudePollInput>;
+
+export const ClaudePollResponse = zod
+  .union([
+    zod.object({
+      status: zod.enum(["pending"]),
+    }),
+    zod.object({
+      status: zod.enum(["complete"]),
+    }),
+  ])
+  .describe("Login completion state.");
+
+export type ClaudePollResponse = zod.input<typeof ClaudePollResponse>;
+export type ClaudePollResponseOutput = zod.output<typeof ClaudePollResponse>;
+
+export const ClaudeStartResponse = zod
+  .object({
+    id: zod.string().describe("Flow identifier."),
+    url: zod.string().describe("Browser authorization URL."),
+  })
+  .describe("Login start response.");
+
+export type ClaudeStartResponse = zod.input<typeof ClaudeStartResponse>;
+export type ClaudeStartResponseOutput = zod.output<typeof ClaudeStartResponse>;
+
 export const CodexPollInput = zod
   .object({
     id: zod.string().describe("Dashboard-facing flow identifier."),
@@ -561,6 +604,85 @@ export const CredentialsResponse = zod
 
 export type CredentialsResponse = zod.input<typeof CredentialsResponse>;
 export type CredentialsResponseOutput = zod.output<typeof CredentialsResponse>;
+
+export const CursorPollInput = zod
+  .object({
+    id: zod.string().describe("Opaque flow identifier."),
+  })
+  .describe("Identifies a pending flow.");
+
+export type CursorPollInput = zod.input<typeof CursorPollInput>;
+export type CursorPollInputOutput = zod.output<typeof CursorPollInput>;
+
+export const CursorPollResponse = zod
+  .union([
+    zod.object({
+      status: zod.enum(["pending"]),
+    }),
+    zod.object({
+      status: zod.enum(["complete"]),
+    }),
+  ])
+  .describe("Cursor login poll status.");
+
+export type CursorPollResponse = zod.input<typeof CursorPollResponse>;
+export type CursorPollResponseOutput = zod.output<typeof CursorPollResponse>;
+
+export const cursorStartResponseIntervalMin = 0;
+
+export const CursorStartResponse = zod
+  .object({
+    id: zod.string().describe("Opaque flow identifier."),
+    interval: zod
+      .int()
+      .min(cursorStartResponseIntervalMin)
+      .describe("Suggested polling interval in seconds."),
+    url: zod.string().describe("Cursor authorization URL."),
+  })
+  .describe("Cursor login start response.");
+
+export type CursorStartResponse = zod.input<typeof CursorStartResponse>;
+export type CursorStartResponseOutput = zod.output<typeof CursorStartResponse>;
+
+export const GrokPollInput = zod
+  .object({
+    id: zod.string().describe("Opaque flow identifier."),
+  })
+  .describe("Identifies an existing pending device flow.");
+
+export type GrokPollInput = zod.input<typeof GrokPollInput>;
+export type GrokPollInputOutput = zod.output<typeof GrokPollInput>;
+
+export const GrokPollResponse = zod
+  .union([
+    zod.object({
+      status: zod.enum(["pending"]),
+    }),
+    zod.object({
+      status: zod.enum(["complete"]),
+    }),
+  ])
+  .describe("State of a device authorization.");
+
+export type GrokPollResponse = zod.input<typeof GrokPollResponse>;
+export type GrokPollResponseOutput = zod.output<typeof GrokPollResponse>;
+
+export const grokStartResponseIntervalMin = 0;
+
+export const GrokStartResponse = zod
+  .object({
+    id: zod.string().describe("Opaque flow identifier."),
+    interval: zod
+      .int()
+      .min(grokStartResponseIntervalMin)
+      .describe("Minimum poll interval in seconds."),
+    url: zod.string().describe("xAI verification URL."),
+    user_code: zod.string().describe("Code entered at the verification URL."),
+  })
+  .describe("Device-flow information displayed to the user.");
+
+export type GrokStartResponse = zod.input<typeof GrokStartResponse>;
+export type GrokStartResponseOutput = zod.output<typeof GrokStartResponse>;
 
 export const InferenceDiscoveryError = zod
   .object({
@@ -1460,6 +1582,27 @@ export type PollAntigravityLoginBodyOutput = zod.output<
   typeof PollAntigravityLoginBody
 >;
 
+export const FinishClaudeLoginBody = zod
+  .object({
+    code: zod.string().describe("Pasted code or callback URL."),
+    id: zod.string().describe("Flow identifier."),
+  })
+  .describe("Manual callback submission.");
+
+export type FinishClaudeLoginBody = zod.input<typeof FinishClaudeLoginBody>;
+export type FinishClaudeLoginBodyOutput = zod.output<
+  typeof FinishClaudeLoginBody
+>;
+
+export const PollClaudeLoginBody = zod
+  .object({
+    id: zod.string().describe("Flow identifier."),
+  })
+  .describe("Flow identifier for polling.");
+
+export type PollClaudeLoginBody = zod.input<typeof PollClaudeLoginBody>;
+export type PollClaudeLoginBodyOutput = zod.output<typeof PollClaudeLoginBody>;
+
 export const PollCodexLoginBody = zod
   .object({
     id: zod.string().describe("Dashboard-facing flow identifier."),
@@ -1484,6 +1627,35 @@ export const SaveZenConsoleBody = zod
 
 export type SaveZenConsoleBody = zod.input<typeof SaveZenConsoleBody>;
 export type SaveZenConsoleBodyOutput = zod.output<typeof SaveZenConsoleBody>;
+
+export const PollCursorLoginBody = zod
+  .object({
+    id: zod.string().describe("Opaque flow identifier."),
+  })
+  .describe("Identifies a pending flow.");
+
+export type PollCursorLoginBody = zod.input<typeof PollCursorLoginBody>;
+export type PollCursorLoginBodyOutput = zod.output<typeof PollCursorLoginBody>;
+
+export const PollGrokBuildLoginBody = zod
+  .object({
+    id: zod.string().describe("Opaque flow identifier."),
+  })
+  .describe("Identifies an existing pending device flow.");
+
+export type PollGrokBuildLoginBody = zod.input<typeof PollGrokBuildLoginBody>;
+export type PollGrokBuildLoginBodyOutput = zod.output<
+  typeof PollGrokBuildLoginBody
+>;
+
+export const PollGrokLoginBody = zod
+  .object({
+    id: zod.string().describe("Opaque flow identifier."),
+  })
+  .describe("Identifies an existing pending device flow.");
+
+export type PollGrokLoginBody = zod.input<typeof PollGrokLoginBody>;
+export type PollGrokLoginBodyOutput = zod.output<typeof PollGrokLoginBody>;
 
 export const updateSettingsBodyLogRetentionDaysMin = 0;
 export const updateSettingsBodyLogRetentionDaysMax = 4294967295;

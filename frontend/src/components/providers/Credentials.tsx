@@ -191,13 +191,31 @@ export function Credentials({
                   Delete
                 </Button>
                 {kind?.oauth &&
-                  (provider.kind === "agy" || provider.kind === "codex") && (
+                  [
+                    "agy",
+                    "codex",
+                    "claude",
+                    "cursor",
+                    "grok",
+                    "grok-build",
+                  ].includes(provider.kind) && (
                     <Button
                       disabled={loginBusy || !credential.enabled}
                       onClick={() => onLogin(credential)}
                     >
                       {credential.connected ? "Reconnect" : "Sign in"}{" "}
-                      {provider.kind === "agy" ? "Google" : "Codex"}
+                      {
+                        (
+                          {
+                            agy: "Google",
+                            codex: "Codex",
+                            claude: "Claude Code",
+                            cursor: "Cursor",
+                            grok: "Grok",
+                            "grok-build": "Grok Build",
+                          } as Record<string, string>
+                        )[provider.kind]
+                      }
                     </Button>
                   )}
               </div>

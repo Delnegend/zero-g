@@ -737,6 +737,137 @@
         }
       }
     },
+    "/api/providers/{id}/credentials/{credential_id}/claude/finish": {
+      "post": {
+        "tags": [],
+        "summary": "Exchange a manually supplied callback and save credentials.",
+        "operationId": "finishClaudeLogin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaudeFinishInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaudePollResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/providers/{id}/credentials/{credential_id}/claude/poll": {
+      "post": {
+        "tags": [],
+        "summary": "Poll the completion state of a flow.",
+        "operationId": "pollClaudeLogin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaudePollInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaudePollResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/providers/{id}/credentials/{credential_id}/claude/start": {
+      "post": {
+        "tags": [],
+        "summary": "Start an OAuth authorization flow.",
+        "operationId": "startClaudeLogin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaudeStartResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/providers/{id}/credentials/{credential_id}/codex/poll": {
       "post": {
         "tags": [],
@@ -885,6 +1016,258 @@
         "responses": {
           "204": {
             "description": ""
+          }
+        }
+      }
+    },
+    "/api/providers/{id}/credentials/{credential_id}/cursor/poll": {
+      "post": {
+        "tags": [],
+        "summary": "Polls a bound flow and stores its resulting tokens.",
+        "operationId": "pollCursorLogin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CursorPollInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPollResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/providers/{id}/credentials/{credential_id}/cursor/start": {
+      "post": {
+        "tags": [],
+        "summary": "Starts a provider-bound Cursor PKCE flow.",
+        "operationId": "startCursorLogin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorStartResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/providers/{id}/credentials/{credential_id}/grok-build/poll": {
+      "post": {
+        "tags": [],
+        "summary": "Polls a Grok Build device login.",
+        "operationId": "pollGrokBuildLogin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrokPollInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrokPollResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/providers/{id}/credentials/{credential_id}/grok-build/start": {
+      "post": {
+        "tags": [],
+        "summary": "Starts a Grok Build device login.",
+        "operationId": "startGrokBuildLogin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrokStartResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/providers/{id}/credentials/{credential_id}/grok/poll": {
+      "post": {
+        "tags": [],
+        "summary": "Polls an xAI API device login.",
+        "operationId": "pollGrokLogin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrokPollInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrokPollResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/providers/{id}/credentials/{credential_id}/grok/start": {
+      "post": {
+        "tags": [],
+        "summary": "Starts an xAI API device login.",
+        "operationId": "startGrokLogin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrokStartResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -1569,6 +1952,72 @@
           }
         }
       },
+      "ClaudeFinishInput": {
+        "type": "object",
+        "description": "Manual callback submission.",
+        "required": ["id", "code"],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Pasted code or callback URL."
+          },
+          "id": {
+            "type": "string",
+            "description": "Flow identifier."
+          }
+        }
+      },
+      "ClaudePollInput": {
+        "type": "object",
+        "description": "Flow identifier for polling.",
+        "required": ["id"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Flow identifier."
+          }
+        }
+      },
+      "ClaudePollResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["status"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["pending"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["status"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["complete"]
+              }
+            }
+          }
+        ],
+        "description": "Login completion state."
+      },
+      "ClaudeStartResponse": {
+        "type": "object",
+        "description": "Login start response.",
+        "required": ["id", "url"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Flow identifier."
+          },
+          "url": {
+            "type": "string",
+            "description": "Browser authorization URL."
+          }
+        }
+      },
       "CodexPollInput": {
         "type": "object",
         "description": "Dashboard request identifying a pending device flow.",
@@ -1797,6 +2246,124 @@
               "$ref": "#/components/schemas/Credential"
             },
             "description": "Credential metadata without secrets."
+          }
+        }
+      },
+      "CursorPollInput": {
+        "type": "object",
+        "description": "Identifies a pending flow.",
+        "required": ["id"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Opaque flow identifier."
+          }
+        }
+      },
+      "CursorPollResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["status"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["pending"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["status"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["complete"]
+              }
+            }
+          }
+        ],
+        "description": "Cursor login poll status."
+      },
+      "CursorStartResponse": {
+        "type": "object",
+        "description": "Cursor login start response.",
+        "required": ["id", "url", "interval"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Opaque flow identifier."
+          },
+          "interval": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Suggested polling interval in seconds.",
+            "minimum": 0
+          },
+          "url": {
+            "type": "string",
+            "description": "Cursor authorization URL."
+          }
+        }
+      },
+      "GrokPollInput": {
+        "type": "object",
+        "description": "Identifies an existing pending device flow.",
+        "required": ["id"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Opaque flow identifier."
+          }
+        }
+      },
+      "GrokPollResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["status"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["pending"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["status"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["complete"]
+              }
+            }
+          }
+        ],
+        "description": "State of a device authorization."
+      },
+      "GrokStartResponse": {
+        "type": "object",
+        "description": "Device-flow information displayed to the user.",
+        "required": ["id", "url", "user_code", "interval"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Opaque flow identifier."
+          },
+          "interval": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Minimum poll interval in seconds.",
+            "minimum": 0
+          },
+          "url": {
+            "type": "string",
+            "description": "xAI verification URL."
+          },
+          "user_code": {
+            "type": "string",
+            "description": "Code entered at the verification URL."
           }
         }
       },

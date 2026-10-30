@@ -9,11 +9,17 @@ import {
   AntigravityFinishResponse,
   AntigravityPollResponse,
   AntigravityStartResponse,
+  ClaudePollResponse,
+  ClaudeStartResponse,
   CodexPollResponse,
   CodexStartResponse,
   CreatedKey,
   Credential,
   CredentialsResponse,
+  CursorPollResponse,
+  CursorStartResponse,
+  GrokPollResponse,
+  GrokStartResponse,
   KeyList,
   ModelCatalog,
   ModelSettings,
@@ -28,12 +34,16 @@ import {
 import type {
   AntigravityFinishInput,
   AntigravityPollInput,
+  ClaudeFinishInput,
+  ClaudePollInput,
   CodexPollInput,
   ConsoleConnection,
   CreateKey,
   CreateProvider,
   CredentialInput,
+  CursorPollInput,
   GetObservabilityParams,
+  GrokPollInput,
   UpdateProvider,
   UpdateSettings,
 } from "./schemas";
@@ -671,6 +681,123 @@ export const startAntigravityLogin = async (
   );
 };
 
+export const getFinishClaudeLoginUrl = (id: string, credentialId: string) => {
+  return `/api/providers/${encodeURIComponent(String(id))}/credentials/${encodeURIComponent(String(credentialId))}/claude/finish`;
+};
+
+/**
+ * @summary Exchange a manually supplied callback and save credentials.
+ */
+export const finishClaudeLogin = async (
+  id: string,
+  credentialId: string,
+  claudeFinishInput: ClaudeFinishInput,
+  options?: Parameters<typeof request>[1],
+): Promise<ClaudePollResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<
+      string | readonly string[] | undefined
+    >(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return request<ClaudePollResponse>(
+    getFinishClaudeLoginUrl(id, credentialId),
+    {
+      ...options,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...getHeaders(options?.headers),
+      },
+      body: JSON.stringify(claudeFinishInput),
+      schema: ClaudePollResponse,
+    },
+  );
+};
+
+export const getPollClaudeLoginUrl = (id: string, credentialId: string) => {
+  return `/api/providers/${encodeURIComponent(String(id))}/credentials/${encodeURIComponent(String(credentialId))}/claude/poll`;
+};
+
+/**
+ * @summary Poll the completion state of a flow.
+ */
+export const pollClaudeLogin = async (
+  id: string,
+  credentialId: string,
+  claudePollInput: ClaudePollInput,
+  options?: Parameters<typeof request>[1],
+): Promise<ClaudePollResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<
+      string | readonly string[] | undefined
+    >(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return request<ClaudePollResponse>(getPollClaudeLoginUrl(id, credentialId), {
+    ...options,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getHeaders(options?.headers),
+    },
+    body: JSON.stringify(claudePollInput),
+    schema: ClaudePollResponse,
+  });
+};
+
+export const getStartClaudeLoginUrl = (id: string, credentialId: string) => {
+  return `/api/providers/${encodeURIComponent(String(id))}/credentials/${encodeURIComponent(String(credentialId))}/claude/start`;
+};
+
+/**
+ * @summary Start an OAuth authorization flow.
+ */
+export const startClaudeLogin = async (
+  id: string,
+  credentialId: string,
+  options?: Parameters<typeof request>[1],
+): Promise<ClaudeStartResponse> => {
+  return request<ClaudeStartResponse>(
+    getStartClaudeLoginUrl(id, credentialId),
+    {
+      ...options,
+      method: "POST",
+      schema: ClaudeStartResponse,
+    },
+  );
+};
+
 export const getPollCodexLoginUrl = (id: string, credentialId: string) => {
   return `/api/providers/${encodeURIComponent(String(id))}/credentials/${encodeURIComponent(String(credentialId))}/codex/poll`;
 };
@@ -796,6 +923,207 @@ export const deleteZenConsole = async (
   return request<void>(getDeleteZenConsoleUrl(id, credentialId), {
     ...options,
     method: "DELETE",
+  });
+};
+
+export const getPollCursorLoginUrl = (id: string, credentialId: string) => {
+  return `/api/providers/${encodeURIComponent(String(id))}/credentials/${encodeURIComponent(String(credentialId))}/cursor/poll`;
+};
+
+/**
+ * @summary Polls a bound flow and stores its resulting tokens.
+ */
+export const pollCursorLogin = async (
+  id: string,
+  credentialId: string,
+  cursorPollInput: CursorPollInput,
+  options?: Parameters<typeof request>[1],
+): Promise<CursorPollResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<
+      string | readonly string[] | undefined
+    >(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return request<CursorPollResponse>(getPollCursorLoginUrl(id, credentialId), {
+    ...options,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getHeaders(options?.headers),
+    },
+    body: JSON.stringify(cursorPollInput),
+    schema: CursorPollResponse,
+  });
+};
+
+export const getStartCursorLoginUrl = (id: string, credentialId: string) => {
+  return `/api/providers/${encodeURIComponent(String(id))}/credentials/${encodeURIComponent(String(credentialId))}/cursor/start`;
+};
+
+/**
+ * @summary Starts a provider-bound Cursor PKCE flow.
+ */
+export const startCursorLogin = async (
+  id: string,
+  credentialId: string,
+  options?: Parameters<typeof request>[1],
+): Promise<CursorStartResponse> => {
+  return request<CursorStartResponse>(
+    getStartCursorLoginUrl(id, credentialId),
+    {
+      ...options,
+      method: "POST",
+      schema: CursorStartResponse,
+    },
+  );
+};
+
+export const getPollGrokBuildLoginUrl = (id: string, credentialId: string) => {
+  return `/api/providers/${encodeURIComponent(String(id))}/credentials/${encodeURIComponent(String(credentialId))}/grok-build/poll`;
+};
+
+/**
+ * @summary Polls a Grok Build device login.
+ */
+export const pollGrokBuildLogin = async (
+  id: string,
+  credentialId: string,
+  grokPollInput: GrokPollInput,
+  options?: Parameters<typeof request>[1],
+): Promise<GrokPollResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<
+      string | readonly string[] | undefined
+    >(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return request<GrokPollResponse>(getPollGrokBuildLoginUrl(id, credentialId), {
+    ...options,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getHeaders(options?.headers),
+    },
+    body: JSON.stringify(grokPollInput),
+    schema: GrokPollResponse,
+  });
+};
+
+export const getStartGrokBuildLoginUrl = (id: string, credentialId: string) => {
+  return `/api/providers/${encodeURIComponent(String(id))}/credentials/${encodeURIComponent(String(credentialId))}/grok-build/start`;
+};
+
+/**
+ * @summary Starts a Grok Build device login.
+ */
+export const startGrokBuildLogin = async (
+  id: string,
+  credentialId: string,
+  options?: Parameters<typeof request>[1],
+): Promise<GrokStartResponse> => {
+  return request<GrokStartResponse>(
+    getStartGrokBuildLoginUrl(id, credentialId),
+    {
+      ...options,
+      method: "POST",
+      schema: GrokStartResponse,
+    },
+  );
+};
+
+export const getPollGrokLoginUrl = (id: string, credentialId: string) => {
+  return `/api/providers/${encodeURIComponent(String(id))}/credentials/${encodeURIComponent(String(credentialId))}/grok/poll`;
+};
+
+/**
+ * @summary Polls an xAI API device login.
+ */
+export const pollGrokLogin = async (
+  id: string,
+  credentialId: string,
+  grokPollInput: GrokPollInput,
+  options?: Parameters<typeof request>[1],
+): Promise<GrokPollResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<
+      string | readonly string[] | undefined
+    >(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return request<GrokPollResponse>(getPollGrokLoginUrl(id, credentialId), {
+    ...options,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getHeaders(options?.headers),
+    },
+    body: JSON.stringify(grokPollInput),
+    schema: GrokPollResponse,
+  });
+};
+
+export const getStartGrokLoginUrl = (id: string, credentialId: string) => {
+  return `/api/providers/${encodeURIComponent(String(id))}/credentials/${encodeURIComponent(String(credentialId))}/grok/start`;
+};
+
+/**
+ * @summary Starts an xAI API device login.
+ */
+export const startGrokLogin = async (
+  id: string,
+  credentialId: string,
+  options?: Parameters<typeof request>[1],
+): Promise<GrokStartResponse> => {
+  return request<GrokStartResponse>(getStartGrokLoginUrl(id, credentialId), {
+    ...options,
+    method: "POST",
+    schema: GrokStartResponse,
   });
 };
 

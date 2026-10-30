@@ -106,6 +106,7 @@ const userEvent = (await import("@testing-library/user-event")).default;
 const { Management } = await import("./Management");
 const { ObservabilityPage } = await import("./App");
 const { Credentials } = await import("./components/providers/Credentials");
+const { ProviderCard } = await import("./components/providers/ProviderCard");
 const { ModelCatalogPage } = await import("./Models");
 const { TooltipProvider } = await import("./components/ui/tooltip");
 const originalFetch = globalThis.fetch;
@@ -262,6 +263,134 @@ test("credential editing retains a blank API key unless keyless is selected", as
     enabled: true,
     api_key: "",
   });
+});
+
+for (const [kind, label, host] of [
+  ["claude", "Claude Code", "claude.ai"],
+  ["cursor", "Cursor", "cursor.com"],
+  ["grok", "Grok", "auth.x.ai"],
+  ["grok-build", "Grok Build", "auth.x.ai"],
+] as const) {
+  test(`${label} sign-in uses its credential-scoped flow`, async () => {
+    const requests: Array<{ path: string; body: unknown }> = [];
+    const prefix = `/api/providers/alpha/credentials/credential-1/${kind}`;
+    globalThis.fetch = (async (url, options) => {
+      const path = String(url);
+      if (path === "/api/providers/alpha/credentials")
+        return Response.json({
+          credentials: [
+            {
+              id: "credential-1",
+              name: "Account",
+              weight: 1,
+              enabled: true,
+              connected: false,
+            },
+          ],
+        });
+      requests.push({
+        path,
+        body: options?.body ? JSON.parse(String(options.body)) : null,
+      });
+      if (path === `${prefix}/start`)
+        return Response.json({
+          id: "flow-1",
+          url: `https://${host}/authorize`,
+          interval: 1,
+          user_code: "ABCD",
+        });
+      if (path === `${prefix}/poll` || path === `${prefix}/finish`)
+        return Response.json({ status: "complete" });
+      throw new Error(`Unexpected request: ${path}`);
+    }) as typeof fetch;
+    const user = userEvent.setup();
+    mount(
+      <ProviderCard
+        provider={{ id: "alpha", name: "Alpha", kind, base_url: "" }}
+        kind={{
+          value: kind,
+          label,
+          api_key: false,
+          oauth: true,
+          fixed_id: null,
+          fixed_name: null,
+        }}
+        onEdit={() => {}}
+        onDelete={() => {}}
+        deleting={false}
+      />,
+    );
+    await user.click(
+      await screen.findByRole("button", { name: `Sign in ${label}` }),
+    );
+    const link = await screen.findByRole("link", { name: /authorization/ });
+    assert.equal(new URL(link.getAttribute("href")!).hostname, host);
+    assert.equal(screen.queryByText(/quota/i), null);
+    if (kind === "claude") {
+      await user.type(
+        screen.getByLabelText("Authorization code or callback URL"),
+        "secret-code",
+      );
+      await user.click(
+        screen.getByRole("button", { name: "Finish Claude sign-in" }),
+      );
+      await screen.findByText("Sign-in complete.");
+      assert.deepEqual(requests[1], {
+        path: `${prefix}/finish`,
+        body: { id: "flow-1", code: "secret-code" },
+      });
+    } else {
+      if (kind !== "cursor") assert.ok(screen.getByText("ABCD"));
+      await screen.findByText("Sign-in complete.", {}, { timeout: 3000 });
+      assert.deepEqual(requests[1], {
+        path: `${prefix}/poll`,
+        body: { id: "flow-1" },
+      });
+    }
+  });
+}
+
+test("rejects an untrusted provider authorization URL", async () => {
+  globalThis.fetch = (async (url) =>
+    String(url).endsWith("/credentials")
+      ? Response.json({
+          credentials: [
+            {
+              id: "credential-1",
+              name: "Account",
+              weight: 1,
+              enabled: true,
+              connected: false,
+            },
+          ],
+        })
+      : Response.json({
+          id: "flow-1",
+          url: "https://evil.example/authorize",
+          interval: 1,
+        })) as typeof fetch;
+  const user = userEvent.setup();
+  mount(
+    <ProviderCard
+      provider={{ id: "alpha", name: "Alpha", kind: "cursor", base_url: "" }}
+      kind={{
+        value: "cursor",
+        label: "Cursor",
+        api_key: false,
+        oauth: true,
+        fixed_id: null,
+        fixed_name: null,
+      }}
+      onEdit={() => {}}
+      onDelete={() => {}}
+      deleting={false}
+    />,
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Sign in Cursor" }),
+  );
+  await screen.findByText("Invalid Cursor authorization URL.");
+  assert.equal(screen.queryByRole("link", { name: /authorization/ }), null);
 });
 
 test("create a restricted key, dismiss its one-time token, and revoke it", async () => {

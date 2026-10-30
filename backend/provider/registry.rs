@@ -105,6 +105,9 @@ fn validate(id: &str, name: &str, kind: &str, base_url: &str) -> Result<(), &'st
     if kind.as_str() == "zen" && !base_url.is_empty() {
         return Err("Zen uses a fixed upstream URL");
     }
+    if matches!(kind.as_str(), "grok" | "grok-build") && !base_url.is_empty() {
+        return Err("Grok uses a fixed upstream URL");
+    }
     if base_url.is_empty() {
         if kind.api_key() && kind.default_base_url().is_none() {
             return Err("Provider base URL is required for this kind");
@@ -246,6 +249,8 @@ async fn create_provider(
     if let Err(e) = validate(&id, &name, &input.kind, &input.base_url) {
         return (StatusCode::BAD_REQUEST, e).into_response();
     }
+    let provider_lock = crate::provider::login::credential_lock(&format!("provider:{id}")).await;
+    let _provider_guard = provider_lock.lock().await;
     let result = transaction_with_retry!(store.database, |mut tx| {
         let rows = ProviderRecord::all().exec(&mut tx).await?;
         if duplicate(&rows, &id, &input.kind, &input.base_url) {
