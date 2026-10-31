@@ -66,41 +66,6 @@ jobs:
           semver-next: ${{ steps.semver.outputs.next }}
           semver-next-strict: ${{ steps.semver.outputs.nextStrict }}
 
-  build-binaries:
-    name: Build Release Binaries
-    needs: prepare
-    if: needs.prepare.outputs.skip != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ needs.prepare.outputs.ref }}
-          fetch-depth: 0
-
-      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: "1.4.4"
-
-      - name: Build frontend
-        run: (cd frontend && bun install --frozen-lockfile) && just frontend-build
-
-      - name: Build Linux x64 binary
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo build --release --bin zero-g
-
-      - name: Package artifact
-        uses: Delnegend/actions/package-artifact@61325e8e0af53ec1f8731b2bde68cfc622148611 # v1
-        with:
-          name: zero-g
-          version: ${{ needs.prepare.outputs.version }}
-          target: x86_64-unknown-linux-gnu
-          source: target/release/zero-g
-
   build-container:
     name: Build Container Image
     needs: prepare
@@ -122,7 +87,7 @@ jobs:
 
   publish:
     name: Publish Consolidated Release
-    needs: [prepare, build-binaries, build-container]
+    needs: [prepare, build-container]
     if: needs.prepare.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
@@ -132,5 +97,4 @@ jobs:
           ref: ${{ needs.prepare.outputs.ref }}
           publish: ${{ needs.prepare.outputs.publish }}
           container: true
-          download: true
           version: ${{ needs.prepare.outputs.version }}
