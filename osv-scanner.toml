@@ -26,15 +26,6 @@ vulnerability.ignore = true
 effectiveUntil = 2026-11-28
 reason = "RUSTSEC-2026-0387 concerns secret integers; OIDC uses public verification keys."
 
-# GitHub's source advisory specifies >=0.11.0, but its OSV record starts at 0.
-[[PackageOverrides]]
-name = "block-buffer"
-version = "0.10.4"
-ecosystem = "crates.io"
-vulnerability.ignore = true
-effectiveUntil = 2026-11-28
-reason = "GHSA-qwgh-2vcv-g2f7 describes inline cursor introduced after 0.10.4; OSV range differs from source advisory."
-
 # The shadcn tool uses deepmerge; it is absent from the built dashboard.
 [[PackageOverrides]]
 name = "deepmerge"
