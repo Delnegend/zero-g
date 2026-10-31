@@ -458,6 +458,38 @@ mod tests {
     use super::*;
     use crate::openai::ChatMessage;
 
+    #[test]
+    fn default_chat_options_leave_codex_wire_request_unchanged() {
+        let baseline = json!({
+            "model": "gpt-5.5",
+            "messages": [{"role": "user", "content": "hello"}]
+        });
+        let mut explicit = baseline.clone();
+        explicit["n"] = json!(1);
+        explicit["response_format"] = json!({"type":"text"});
+        explicit["parallel_tool_calls"] = json!(true);
+        let baseline: ChatCompletionRequest = serde_json::from_value(baseline).unwrap();
+        let explicit: ChatCompletionRequest = serde_json::from_value(explicit).unwrap();
+        let payload = build_codex_payload_from_chat(&explicit);
+        assert_eq!(payload, build_codex_payload_from_chat(&baseline));
+        assert_eq!(payload["input"][0]["content"][0]["text"], "hello");
+    }
+
+    #[test]
+    fn default_responses_options_leave_codex_wire_request_unchanged() {
+        let baseline = json!({"model":"gpt-5.5", "input":"hello"});
+        let mut explicit = baseline.clone();
+        explicit["n"] = json!(1);
+        explicit["response_format"] = json!({"type":"text"});
+        explicit["parallel_tool_calls"] = json!(true);
+        explicit["text"] = json!({"format":{"type":"text"}});
+        let baseline: ResponseCreateRequest = serde_json::from_value(baseline).unwrap();
+        let explicit: ResponseCreateRequest = serde_json::from_value(explicit).unwrap();
+        let payload = build_codex_payload_from_responses(&explicit);
+        assert_eq!(payload, build_codex_payload_from_responses(&baseline));
+        assert_eq!(payload["input"][0]["content"][0]["text"], "hello");
+    }
+
     /// Interrupted Chat history retains context and maps a named tool selection.
     #[test]
     fn chat_repairs_interrupted_history_and_maps_named_tool_choice() {

@@ -357,22 +357,28 @@ async fn responses_handler(
 
 /// Reject chat options that cannot be represented by the shared request type.
 fn unsupported_chat_option(value: &Value) -> bool {
-    ["response_format", "stop"]
+    ["stop", "previous_response_id"]
         .iter()
         .any(|key| value.get(*key).is_some_and(|v| !v.is_null()))
+        || value
+            .get("parallel_tool_calls")
+            .is_some_and(|v| !v.is_null() && v.as_bool() != Some(true))
         || value
             .get("n")
             .is_some_and(|v| !v.is_null() && v.as_u64() != Some(1))
         || value
-            .get("parallel_tool_calls")
-            .is_some_and(|v| !v.is_null() && v.as_bool() != Some(true))
+            .get("response_format")
+            .is_some_and(|v| !v.is_null() && !crate::openai::is_default_text_format(v))
         || value
             .get("tools")
             .and_then(Value::as_array)
             .is_some_and(|tools| {
                 tools.iter().any(|tool| {
-                    tool.pointer("/function/strict")
-                        .is_some_and(|v| !v.is_null())
+                    tool.get("strict")
+                        .is_some_and(|v| !v.is_null() && v.as_bool() != Some(false))
+                        || tool
+                            .pointer("/function/strict")
+                            .is_some_and(|v| !v.is_null() && v.as_bool() != Some(false))
                 })
             })
         || value
@@ -538,11 +544,23 @@ mod tests {
         assert!(unsupported_chat_option(
             &json!({"tools": [{"function": {"strict": true}}]})
         ));
+        assert!(unsupported_chat_option(
+            &json!({"tools": [{"strict": true, "function": {"name": "f"}}]})
+        ));
+        assert!(unsupported_chat_option(
+            &json!({"tools": [{"function": {"strict": "false"}}]})
+        ));
+        assert!(!unsupported_chat_option(
+            &json!({"tools": [{"strict": false, "function": {"name": "f", "strict": false}}]})
+        ));
         assert!(!unsupported_chat_option(
             &json!({"response_format": null, "tools": [{"function": {"name": "f"}}]})
         ));
         assert!(!unsupported_chat_option(
-            &json!({"n": 1, "parallel_tool_calls": true})
+            &json!({"n": 1, "parallel_tool_calls": true, "response_format": {"type": "text"}})
+        ));
+        assert!(unsupported_chat_option(
+            &json!({"response_format": {"type": "text", "extra": true}})
         ));
         assert!(!unsupported_chat_option(
             &json!({"n": null, "parallel_tool_calls": null})
@@ -576,6 +594,7 @@ mod tests {
             json!({"tools": [{"type": "function", "function": {"name": "f", "strict": true}}]}),
             json!({"parallel_tool_calls": false}),
             json!({"n": 2}),
+            json!({"previous_response_id": "resp_1"}),
             json!({"messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "https://example.com/image", "detail": "high"}}]}]}),
             json!({"messages": [{"role": "tool", "tool_call_id": "call", "content": [{"type": "image_url", "image_url": {"url": "https://example.com/image"}}]}]}),
         ] {

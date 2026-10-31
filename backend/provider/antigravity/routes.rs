@@ -35,6 +35,10 @@ pub(crate) fn router(settings: &SettingsStore) -> Router<AppState> {
         .route("/v1/responses", post(responses_handler))
         .route("/v1/responses/", post(responses_handler))
         .layer(axum::middleware::from_fn_with_state(
+            false,
+            crate::openai::validate_translated_request,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
             (settings.clone(), "agy"),
             settings::virtual_key_auth,
         ))
