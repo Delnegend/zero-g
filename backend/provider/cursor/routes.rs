@@ -174,6 +174,10 @@ async fn complete(
                     req.model,
                     req.stream.unwrap_or(false),
                     responses,
+                    req.stream_options
+                        .as_ref()
+                        .and_then(|options| options.include_usage)
+                        .unwrap_or(false),
                 )
                 .await;
                 if response.status().is_success()

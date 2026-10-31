@@ -261,10 +261,10 @@ async fn dispatch(
             let event = match update.message {
                 Some(Update::TextDelta(delta)) => Some(Event::Text(delta.text)),
                 Some(Update::ThinkingDelta(delta)) => Some(Event::Thinking(delta.text)),
-                Some(Update::TurnEnded(end)) => Some(Event::Usage {
-                    input: end.input_tokens.unwrap_or(0),
-                    output: end.output_tokens.unwrap_or(0),
-                }),
+                Some(Update::TurnEnded(end)) => end
+                    .input_tokens
+                    .zip(end.output_tokens)
+                    .map(|(input, output)| Event::Usage { input, output }),
                 _ => None,
             };
             if let Some(event) = event {
@@ -596,6 +596,79 @@ mod tests {
         StatusCode::OK
     }
 
+    /// Missing token fields never become fabricated counts in the client stream.
+    #[tokio::test]
+    async fn turn_ended_usage_requires_both_reported_counts() {
+        for (input, output, expected) in [
+            (None, None, None),
+            (Some(7), None, None),
+            (None, Some(2), None),
+            (Some(7), Some(2), Some((7, 2))),
+            (Some(0), Some(0), Some((0, 0))),
+        ] {
+            let message = proto::AgentServerMessage {
+                message: Some(proto::agent_server_message::Message::InteractionUpdate(
+                    proto::InteractionUpdate {
+                        message: Some(proto::interaction_update::Message::TurnEnded(
+                            proto::TurnEndedUpdate {
+                                input_tokens: input,
+                                output_tokens: output,
+                                ..Default::default()
+                            },
+                        )),
+                    },
+                )),
+            };
+            let message =
+                proto::AgentServerMessage::decode(message.encode_to_vec().as_slice()).unwrap();
+            let (tx, rx) = mpsc::channel(4);
+            let mut wire = Wire {
+                client: reqwest::Client::new(),
+                base: String::new(),
+                token: String::new(),
+                id: String::new(),
+                seq: 0,
+            };
+            dispatch(
+                message,
+                &mut wire,
+                &mut std::collections::HashMap::default(),
+                &[],
+                &[],
+                &tx,
+            )
+            .await
+            .unwrap();
+            tx.send(Ok(Event::Done)).await.unwrap();
+            let response =
+                super::super::translation::respond(rx, "model".into(), true, false, true).await;
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let body = String::from_utf8(bytes.to_vec()).unwrap();
+            let chunks: Vec<serde_json::Value> = body
+                .lines()
+                .filter_map(|line| line.strip_prefix("data: "))
+                .filter_map(|data| serde_json::from_str(data).ok())
+                .collect();
+            let usage = chunks
+                .iter()
+                .find(|chunk| chunk["choices"] == serde_json::json!([]));
+            if let Some((input, output)) = expected {
+                assert_eq!(
+                    usage.unwrap()["usage"],
+                    serde_json::json!({
+                        "prompt_tokens": input,
+                        "completion_tokens": output,
+                        "total_tokens": input + output
+                    })
+                );
+            } else {
+                assert!(usage.is_none());
+            }
+        }
+    }
+
     /// A split stream preserves messages and replies to blob requests.
     #[tokio::test]
     async fn run_sse_streams_frames_and_answers_kv() {
@@ -705,7 +778,7 @@ mod tests {
             .await
             .unwrap();
         let response =
-            super::super::translation::respond(events, "test".into(), false, false).await;
+            super::super::translation::respond(events, "test".into(), false, false, false).await;
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap();

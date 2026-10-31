@@ -45,6 +45,8 @@ struct Translator {
     created: u64,
     /// Whether to emit Responses API objects rather than chat completions.
     responses: bool,
+    /// Whether chat streams should include a final usage chunk.
+    include_usage: bool,
     /// Accumulated assistant text.
     text: String,
     /// Accumulated assistant reasoning.
@@ -65,7 +67,7 @@ struct Translator {
 
 impl Translator {
     /// Create a fresh response with a unique identifier.
-    fn new(model: String, responses: bool) -> Self {
+    fn new(model: String, responses: bool, include_usage: bool) -> Self {
         Self {
             id: format!(
                 "{}{}",
@@ -78,6 +80,7 @@ impl Translator {
                 .unwrap_or_default()
                 .as_secs(),
             responses,
+            include_usage,
             text: String::new(),
             thinking: String::new(),
             tools: Vec::new(),
@@ -117,7 +120,13 @@ impl Translator {
             }
             self.role_sent = true;
         }
-        SseEvent::default().data(json!({"id": self.id, "object": "chat.completion.chunk", "created": self.created, "model": self.model, "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}).to_string())
+        let mut chunk = json!({"id": self.id, "object": "chat.completion.chunk", "created": self.created, "model": self.model, "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]});
+        if self.include_usage
+            && let Some(object) = chunk.as_object_mut()
+        {
+            object.insert("usage".to_string(), Value::Null);
+        }
+        SseEvent::default().data(chunk.to_string())
     }
 
     /// Finish an open assistant message and append it to the output.
@@ -279,6 +288,11 @@ impl Translator {
                 "tool_calls"
             };
             events.push(self.chunk(json!({}), Some(reason)));
+            if self.include_usage && self.usage.is_some() {
+                events.push(SseEvent::default().data(
+                    json!({"id": self.id, "object": "chat.completion.chunk", "created": self.created, "model": self.model, "choices": [], "usage": self.usage()}).to_string(),
+                ));
+            }
         }
         events.push(SseEvent::default().data("[DONE]"));
         events
@@ -310,8 +324,9 @@ pub(super) async fn respond(
     model: String,
     streaming: bool,
     responses: bool,
+    include_usage: bool,
 ) -> Response {
-    let mut translator = Translator::new(model, responses);
+    let mut translator = Translator::new(model, responses, include_usage);
     if streaming {
         let (tx, output) = mpsc::channel::<Result<SseEvent, Infallible>>(32);
         tokio::spawn(async move {
@@ -385,7 +400,7 @@ mod tests {
         ] {
             assert!(tx.send(Ok(event)).await.is_ok());
         }
-        let response = respond(rx, "model".into(), false, false).await;
+        let response = respond(rx, "model".into(), false, false, false).await;
         assert_eq!(response.status(), StatusCode::OK);
         let Ok(bytes) = to_bytes(response.into_body(), usize::MAX).await else {
             panic!("body")
@@ -419,7 +434,7 @@ mod tests {
         ] {
             assert!(tx.send(Ok(event)).await.is_ok());
         }
-        let response = respond(rx, "model".into(), false, true).await;
+        let response = respond(rx, "model".into(), false, true, false).await;
         let Ok(bytes) = to_bytes(response.into_body(), usize::MAX).await else {
             panic!("body")
         };
@@ -446,7 +461,7 @@ mod tests {
             .is_ok()
         );
         assert!(tx.send(Ok(Event::Done)).await.is_ok());
-        let response = respond(rx, "model".into(), true, false).await;
+        let response = respond(rx, "model".into(), true, false, false).await;
         let Ok(bytes) = to_bytes(response.into_body(), usize::MAX).await else {
             panic!("body")
         };
@@ -456,13 +471,136 @@ mod tests {
         assert!(body.contains("[DONE]"));
     }
 
+    /// Requested usage follows the finish chunk and precedes the stream terminator.
+    #[tokio::test]
+    async fn chat_stream_includes_requested_usage() {
+        let (tx, rx) = mpsc::channel(8);
+        for event in [
+            Event::Text("hello".into()),
+            Event::Tool {
+                id: "call_1".into(),
+                name: "lookup".into(),
+                arguments: "{}".into(),
+            },
+            Event::Usage {
+                input: 3,
+                output: 4,
+            },
+            Event::Usage {
+                input: 12,
+                output: 5,
+            },
+            Event::Done,
+        ] {
+            assert!(tx.send(Ok(event)).await.is_ok());
+        }
+        let response = respond(rx, "model".into(), true, false, true).await;
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = String::from_utf8(bytes.to_vec()).unwrap();
+        let frames: Vec<_> = body
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .collect();
+        assert_eq!(frames.len(), 5);
+        let text: Value = serde_json::from_str(frames[0]).unwrap();
+        let tool: Value = serde_json::from_str(frames[1]).unwrap();
+        let finish: Value = serde_json::from_str(frames[2]).unwrap();
+        let usage: Value = serde_json::from_str(frames[3]).unwrap();
+        assert_eq!(text["choices"][0]["delta"]["content"], "hello");
+        assert_eq!(tool["choices"][0]["delta"]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(finish["choices"][0]["finish_reason"], "tool_calls");
+        for chunk in [&text, &tool, &finish] {
+            assert_eq!(chunk.get("usage"), Some(&Value::Null));
+        }
+        assert_eq!(usage["choices"], json!([]));
+        assert_eq!(
+            usage["usage"],
+            json!({"prompt_tokens": 12, "completion_tokens": 5, "total_tokens": 17})
+        );
+        assert_eq!(usage["id"], text["id"]);
+        assert_eq!(usage["model"], text["model"]);
+        assert_eq!(usage["created"], text["created"]);
+        assert_eq!(usage["object"], "chat.completion.chunk");
+        assert_eq!(frames[4], "[DONE]");
+    }
+
+    /// Ordinary streams and streams without upstream counts have no usage chunk.
+    #[tokio::test]
+    async fn chat_stream_omits_unrequested_or_unavailable_usage() {
+        for (include_usage, has_usage) in [(false, true), (true, false)] {
+            let (tx, rx) = mpsc::channel(4);
+            assert!(tx.send(Ok(Event::Text("hello".into()))).await.is_ok());
+            if has_usage {
+                assert!(
+                    tx.send(Ok(Event::Usage {
+                        input: 3,
+                        output: 4
+                    }))
+                    .await
+                    .is_ok()
+                );
+            }
+            assert!(tx.send(Ok(Event::Done)).await.is_ok());
+            let response = respond(rx, "model".into(), true, false, include_usage).await;
+            let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            let body = String::from_utf8(bytes.to_vec()).unwrap();
+            let frames: Vec<_> = body
+                .lines()
+                .filter_map(|line| line.strip_prefix("data: "))
+                .collect();
+            assert_eq!(frames.len(), 3);
+            let text: Value = serde_json::from_str(frames[0]).unwrap();
+            let finish: Value = serde_json::from_str(frames[1]).unwrap();
+            assert_eq!(text["choices"][0]["delta"]["content"], "hello");
+            assert_eq!(finish["choices"][0]["finish_reason"], "stop");
+            let expected = include_usage.then_some(&Value::Null);
+            assert_eq!(text.get("usage"), expected);
+            assert_eq!(finish.get("usage"), expected);
+            assert_eq!(frames[2], "[DONE]");
+        }
+    }
+
+    /// Responses streaming keeps its own usage format, regardless of chat options.
+    #[tokio::test]
+    async fn responses_stream_usage_is_unchanged() {
+        let (tx, rx) = mpsc::channel(4);
+        assert!(tx.send(Ok(Event::Text("hello".into()))).await.is_ok());
+        assert!(
+            tx.send(Ok(Event::Usage {
+                input: 3,
+                output: 4
+            }))
+            .await
+            .is_ok()
+        );
+        assert!(tx.send(Ok(Event::Done)).await.is_ok());
+        let response = respond(rx, "model".into(), true, true, true).await;
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = String::from_utf8(bytes.to_vec()).unwrap();
+        let frames: Vec<_> = body
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .collect();
+        let completed: Value = frames
+            .iter()
+            .filter_map(|frame| serde_json::from_str::<Value>(frame).ok())
+            .find(|value| value["type"] == "response.completed")
+            .unwrap();
+        assert_eq!(
+            completed["response"]["usage"],
+            json!({"input_tokens": 3, "output_tokens": 4, "total_tokens": 7})
+        );
+        assert!(!body.contains("chat.completion.chunk"));
+        assert_eq!(frames.last(), Some(&"[DONE]"));
+    }
+
     /// Streaming Responses report an error after partial output.
     #[tokio::test]
     async fn response_stream_reports_partial_failure() {
         let (tx, rx) = mpsc::channel(4);
         assert!(tx.send(Ok(Event::Text("partial".into()))).await.is_ok());
         assert!(tx.send(Err("broken".into())).await.is_ok());
-        let response = respond(rx, "model".into(), true, true).await;
+        let response = respond(rx, "model".into(), true, true, false).await;
         let Ok(bytes) = to_bytes(response.into_body(), usize::MAX).await else {
             panic!("body")
         };
@@ -478,7 +616,7 @@ mod tests {
     async fn incomplete_nonstream_is_an_error() {
         let (tx, rx) = mpsc::channel(1);
         drop(tx);
-        let response = respond(rx, "model".into(), false, false).await;
+        let response = respond(rx, "model".into(), false, false, false).await;
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
     }
 }
