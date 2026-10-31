@@ -643,19 +643,19 @@ test("OpenRouter credentials configure and remove a management key and show bala
     screen.getByLabelText("Management key"),
     "test-management-key",
   );
-  await user.click(screen.getByRole("button", { name: "Save management key" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
   assert.ok(
     await screen.findByText("Could not save the management key. Try again."),
   );
   assert.equal(
     (
       screen.getByRole("button", {
-        name: "Save management key",
+        name: "Save",
       }) as HTMLButtonElement
     ).disabled,
     false,
   );
-  await user.click(screen.getByRole("button", { name: "Save management key" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() => assert.equal(requests.length, 2));
   assert.deepEqual(requests[1], {
     url: "/api/providers/openrouter/credentials/account/openrouter/management-key",
@@ -666,9 +666,7 @@ test("OpenRouter credentials configure and remove a management key and show bala
   await user.click(
     screen.getByRole("button", { name: "Configure management key" }),
   );
-  await user.click(
-    screen.getByRole("button", { name: "Remove management key" }),
-  );
+  await user.click(screen.getByRole("button", { name: "Remove" }));
   await waitFor(() => assert.equal(requests.length, 3));
   assert.deepEqual(requests[2], {
     url: "/api/providers/openrouter/credentials/account/openrouter/management-key",

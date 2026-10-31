@@ -218,11 +218,7 @@ function ConsoleDialog({
           )}
           <div className="flex flex-wrap gap-2">
             <Button type="submit" disabled={busy}>
-              {busy
-                ? "Working…"
-                : isZen
-                  ? "Save session"
-                  : "Save management key"}
+              {busy ? "Working…" : isZen ? "Save session" : "Save"}
             </Button>
             <Button
               type="button"
@@ -230,7 +226,7 @@ function ConsoleDialog({
               disabled={busy}
               onClick={() => void remove()}
             >
-              {isZen ? "Remove session" : "Remove management key"}
+              {isZen ? "Remove session" : "Remove"}
             </Button>
             <Button
               type="button"
