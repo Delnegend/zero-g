@@ -9,6 +9,7 @@ use axum::{Extension, Router};
 use serde_json::Value;
 
 use crate::provider::common::proxy::{ProxyError, check_model, model_response, retry_api_keys};
+use crate::provider::common::request_identity::RequestIdentity;
 use crate::provider::openai;
 use crate::provider::quota::{QuotaSnapshot, QuotaWindow};
 use crate::provider::registry::Provider;
@@ -170,6 +171,7 @@ pub(crate) fn router(settings: &SettingsStore) -> Router<AppState> {
 }
 
 /// Resolve credentials and send an `OpenCode` Go proxy request.
+#[allow(clippy::too_many_arguments)]
 async fn send(
     settings: &SettingsStore,
     provider: &Provider,
@@ -178,11 +180,13 @@ async fn send(
     method: Method,
     headers: &HeaderMap,
     body: Option<Bytes>,
+    identity: Option<&RequestIdentity>,
 ) -> Result<reqwest::Response, ProxyError> {
     retry_api_keys(
         settings,
         &provider.id,
         "No connected OpenCode Go credentials",
+        identity,
         |key| {
             let method = method.clone();
             let body = body.clone();
@@ -208,6 +212,7 @@ async fn models_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
+    identity: Option<Extension<RequestIdentity>>,
     RawQuery(query): RawQuery,
     headers: HeaderMap,
 ) -> Response {
@@ -219,6 +224,7 @@ async fn models_handler(
         Method::GET,
         &headers,
         None,
+        identity.as_ref().map(|Extension(identity)| identity),
     )
     .await
     {
@@ -229,6 +235,7 @@ async fn models_handler(
 }
 
 /// Forward an inference request after checking model permissions.
+#[allow(clippy::too_many_arguments)]
 async fn inference(
     state: AppState,
     permissions: Permissions,
@@ -237,6 +244,7 @@ async fn inference(
     headers: HeaderMap,
     body: Bytes,
     path: &str,
+    identity: Option<&RequestIdentity>,
 ) -> Response {
     if let Err(response) = check_model(&body, &permissions) {
         return response.into_response();
@@ -249,6 +257,7 @@ async fn inference(
         Method::POST,
         &headers,
         Some(body),
+        identity,
     )
     .await
     {
@@ -262,6 +271,7 @@ async fn chat_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
+    identity: Option<Extension<RequestIdentity>>,
     RawQuery(query): RawQuery,
     headers: HeaderMap,
     body: Bytes,
@@ -274,6 +284,7 @@ async fn chat_handler(
         headers,
         body,
         "chat/completions",
+        identity.as_ref().map(|Extension(identity)| identity),
     )
     .await
 }
@@ -283,6 +294,7 @@ async fn responses_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
+    identity: Option<Extension<RequestIdentity>>,
     RawQuery(query): RawQuery,
     headers: HeaderMap,
     body: Bytes,
@@ -295,6 +307,7 @@ async fn responses_handler(
         headers,
         body,
         "responses",
+        identity.as_ref().map(|Extension(identity)| identity),
     )
     .await
 }
@@ -623,6 +636,7 @@ mod tests {
                 base_url: format!("http://{}/v1", listener.local_addr().unwrap()),
             };
             let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let identity = RequestIdentity::default();
             let response = send(
                 &store,
                 &provider,
@@ -631,11 +645,18 @@ mod tests {
                 Method::POST,
                 &HeaderMap::new(),
                 None,
+                Some(&identity),
             )
             .await
             .unwrap();
             assert_eq!(response.status(), StatusCode::OK);
-            assert_ne!(rx.recv().await.unwrap(), rx.recv().await.unwrap());
+            let first = rx.recv().await.unwrap();
+            let second = rx.recv().await.unwrap();
+            assert_ne!(first, second);
+            let expected = second.to_str().unwrap().trim_start_matches("Bearer ");
+            let snapshot = identity.snapshot();
+            assert_eq!(snapshot.credential_id.as_deref(), Some(expected));
+            assert_eq!(snapshot.credential_name.as_deref(), Some(expected));
             assert_eq!(count.load(Ordering::SeqCst), 2);
             server.abort();
         }

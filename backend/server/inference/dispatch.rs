@@ -49,7 +49,8 @@ pub(super) async fn dispatch(
     axum::Extension(router): axum::Extension<Router>,
     request: Request,
 ) -> Response {
-    let permissions = match permissions(&state, request.headers()).await {
+    let permissions = match permissions(&state, request.headers(), request.extensions().get()).await
+    {
         Ok(p) => p,
         Err(e) => return e.into_response(),
     };
@@ -93,6 +94,14 @@ pub(super) async fn dispatch(
             );
         }
     };
+    if parts.uri.path() == "/v1/decisions" && !permissions.allows_model(&model) {
+        return error(
+            StatusCode::FORBIDDEN,
+            "Model is not allowed for this virtual key",
+            "permission_error",
+            "model_not_allowed",
+        );
+    }
     value.model = model;
     let path = parts
         .uri

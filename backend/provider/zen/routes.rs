@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 use crate::provider::common::proxy::{ProxyError, check_model, error, retry_api_keys};
+use crate::provider::common::request_identity::RequestIdentity;
 use crate::provider::{openai, registry::Provider};
 use crate::server::AppState;
 use crate::server::settings::{self, Permissions, SettingsStore};
@@ -243,6 +244,7 @@ async fn models_handler(Extension(permissions): Extension<Permissions>) -> Respo
 }
 
 /// Pass authorized inference requests to Zen unchanged.
+#[allow(clippy::too_many_arguments)]
 async fn inference(
     state: AppState,
     permissions: Permissions,
@@ -251,6 +253,7 @@ async fn inference(
     headers: HeaderMap,
     body: Bytes,
     path: &str,
+    identity: Option<&RequestIdentity>,
 ) -> Response {
     inference_with_base(
         &state.settings,
@@ -260,11 +263,13 @@ async fn inference(
         (query.as_deref(), &headers),
         body,
         path,
+        identity,
     )
     .await
 }
 
 /// Forward inference to a given Zen-compatible base, after checking model permissions.
+#[allow(clippy::too_many_arguments)]
 async fn inference_with_base(
     settings: &SettingsStore,
     permissions: &Permissions,
@@ -273,11 +278,16 @@ async fn inference_with_base(
     request: (Option<&str>, &HeaderMap),
     body: Bytes,
     path: &str,
+    identity: Option<&RequestIdentity>,
 ) -> Response {
     if let Err(response) = check_model(&body, permissions) {
         return response.into_response();
     }
-    match send_upstream(settings, provider, base, path, request.0, request.1, body).await {
+    match send_upstream(
+        settings, provider, base, path, request.0, request.1, body, identity,
+    )
+    .await
+    {
         Ok(response) => openai::forward(response),
         Err(error) => error.into_response(),
     }
@@ -288,6 +298,7 @@ async fn chat_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
+    identity: Option<Extension<RequestIdentity>>,
     RawQuery(query): RawQuery,
     headers: HeaderMap,
     body: Bytes,
@@ -300,6 +311,7 @@ async fn chat_handler(
         headers,
         body,
         "chat/completions",
+        identity.as_ref().map(|Extension(identity)| identity),
     )
     .await
 }
@@ -309,6 +321,7 @@ async fn responses_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
+    identity: Option<Extension<RequestIdentity>>,
     RawQuery(query): RawQuery,
     headers: HeaderMap,
     body: Bytes,
@@ -321,11 +334,13 @@ async fn responses_handler(
         headers,
         body,
         "responses",
+        identity.as_ref().map(|Extension(identity)| identity),
     )
     .await
 }
 
 /// Forward a request with weighted Zen credentials.
+#[allow(clippy::too_many_arguments)]
 async fn send_upstream(
     settings: &SettingsStore,
     provider: &Provider,
@@ -334,11 +349,13 @@ async fn send_upstream(
     query: Option<&str>,
     headers: &HeaderMap,
     body: Bytes,
+    identity: Option<&RequestIdentity>,
 ) -> Result<reqwest::Response, ProxyError> {
     retry_api_keys(
         settings,
         &provider.id,
         "No connected Zen credentials",
+        identity,
         |key| {
             let body = body.clone();
             async move {
@@ -576,6 +593,7 @@ mod tests {
                     (Some("x=1"), &headers),
                     request_body.clone(),
                     path,
+                    None,
                 )
                 .await;
                 assert_eq!(response.status(), StatusCode::OK);
@@ -599,6 +617,7 @@ mod tests {
             (Some("x=1"), &headers),
             body.clone(),
             "chat/completions",
+            None,
         )
         .await;
         assert_eq!(response.status(), StatusCode::OK);
@@ -618,6 +637,7 @@ mod tests {
             (None, &headers),
             body,
             "responses",
+            None,
         )
         .await;
         assert_eq!(response.status(), StatusCode::FORBIDDEN);

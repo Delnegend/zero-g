@@ -27,6 +27,14 @@ pub(crate) struct RequestLog {
     pub request_body: String,
     /// Stored response body.
     pub response_body: String,
+    /// Authenticated virtual key identity at request time.
+    pub virtual_key_id: Option<String>,
+    /// Authenticated virtual key name at request time.
+    pub virtual_key_name: Option<String>,
+    /// Successfully selected provider credential identity.
+    pub credential_id: Option<String>,
+    /// Successfully selected provider credential name at request time.
+    pub credential_name: Option<String>,
 }
 
 /// Named application setting.

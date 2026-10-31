@@ -8,6 +8,8 @@ use axum::response::{IntoResponse, Response};
 use serde_json::Value;
 use tracing::error;
 
+use crate::provider::common::request_identity::RequestIdentity;
+
 use super::{LogEntry, LogStore, now};
 
 /// Capture POST request and response bodies for asynchronous logging.
@@ -21,7 +23,9 @@ pub(in crate::server) async fn capture(
     }
     let start = Instant::now();
     let path = req.uri().path().to_owned();
-    let (parts, body) = req.into_parts();
+    let (mut parts, body) = req.into_parts();
+    let identity = RequestIdentity::default();
+    parts.extensions.insert(identity.clone());
     let Ok(body) = to_bytes(body, crate::server::inference::INFERENCE_BODY_LIMIT).await else {
         return StatusCode::PAYLOAD_TOO_LARGE.into_response();
     };
@@ -36,6 +40,7 @@ pub(in crate::server) async fn capture(
         (String::new(), namespaced_model)
     };
     let response = next.run(Request::from_parts(parts, Body::from(body))).await;
+    let identity = identity.snapshot();
     let status = i64::from(response.status().as_u16());
     let (parts, body) = response.into_parts();
     let stream = FinalizeStream {
@@ -53,6 +58,10 @@ pub(in crate::server) async fn capture(
                 latency_ms: i64::try_from(start.elapsed().as_millis()).unwrap_or(i64::MAX),
                 input_tokens,
                 output_tokens,
+                virtual_key_id: identity.virtual_key_id,
+                virtual_key_name: identity.virtual_key_name,
+                credential_id: identity.credential_id,
+                credential_name: identity.credential_name,
                 request_body,
                 response_body,
             };
@@ -282,6 +291,86 @@ mod tests {
             assert_eq!(log["response_body"], response);
             assert_eq!(log["input_tokens"], input);
             assert_eq!(log["output_tokens"], output);
+        }
+        drop(app);
+        drop(store);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    /// Concurrent and streamed requests retain only their own identity snapshots.
+    #[allow(clippy::literal_string_with_formatting_args)]
+    #[tokio::test]
+    async fn capture_keeps_concurrent_identities_isolated() {
+        let path =
+            std::env::temp_dir().join(format!("zero-g-identity-test-{}.db", uuid::Uuid::new_v4()));
+        let store = LogStore::new(Database::open(path.to_str().unwrap()).await.unwrap());
+        let app = Router::new()
+            .route("/{id}", post(|axum::extract::Path(id): axum::extract::Path<String>,
+                axum::Extension(identity): axum::Extension<RequestIdentity>| async move {
+                if id != "anonymous" {
+                    identity.set_virtual_key(&id, &format!("name-{id}"));
+                    if id != "failed" {
+                        identity.set_credential(&id, &format!("credential-{id}"));
+                    }
+                }
+                tokio::task::yield_now().await;
+                Body::from_stream(futures_util::stream::once(async { Ok::<_, std::convert::Infallible>(Bytes::from_static(b"response")) }))
+            }))
+            .route_layer(middleware::from_fn_with_state(store.clone(), capture))
+            .with_state(store.clone());
+        let request = |id| {
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/{id}"))
+                .body(Body::from("{}"))
+                .unwrap()
+        };
+        let responses = tokio::join!(
+            app.clone().oneshot(request("a")),
+            app.clone().oneshot(request("b")),
+            app.clone().oneshot(request("failed")),
+            app.clone().oneshot(request("anonymous"))
+        );
+        for response in <[_; 4]>::from(responses) {
+            to_bytes(response.unwrap().into_body(), usize::MAX)
+                .await
+                .unwrap();
+        }
+        let logs = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let result = store
+                    .dashboard(&super::super::DashboardQuery::default())
+                    .await
+                    .unwrap();
+                if result.logs.len() == 4 {
+                    break result.logs;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        for log in logs {
+            let id = log.path.trim_start_matches('/');
+            if id == "anonymous" {
+                assert!(log.virtual_key_id.is_none());
+                assert!(log.credential_id.is_none());
+            } else {
+                assert_eq!(log.virtual_key_id.as_deref(), Some(id));
+                assert_eq!(
+                    log.virtual_key_name.as_deref(),
+                    Some(format!("name-{id}").as_str())
+                );
+                if id == "failed" {
+                    assert!(log.credential_id.is_none());
+                } else {
+                    assert_eq!(log.credential_id.as_deref(), Some(id));
+                    assert_eq!(
+                        log.credential_name.as_deref(),
+                        Some(format!("credential-{id}").as_str())
+                    );
+                }
+            }
         }
         drop(app);
         drop(store);

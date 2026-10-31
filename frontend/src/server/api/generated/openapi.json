@@ -299,6 +299,60 @@
               "type": "integer",
               "format": "int64"
             }
+          },
+          {
+            "name": "providers",
+            "in": "query",
+            "description": "JSON array of exact providers; empty means all",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "models",
+            "in": "query",
+            "description": "JSON array of exact models; empty means all",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "paths",
+            "in": "query",
+            "description": "JSON array of exact request paths; empty means all",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "statuses",
+            "in": "query",
+            "description": "JSON array of success (200–399) and/or error (400 and above); empty means all",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "virtual_key_ids",
+            "in": "query",
+            "description": "JSON array of exact virtual key IDs; empty means all",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_ids",
+            "in": "query",
+            "description": "JSON array of exact provider credential IDs; empty means all",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -1631,6 +1685,95 @@
         }
       }
     },
+    "/v1/decisions": {
+      "post": {
+        "tags": [],
+        "summary": "Dispatch an `OpenRouter` Decisions API request.",
+        "operationId": "createDecision",
+        "parameters": [
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "Bearer virtual key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InferenceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Provider decision response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid virtual key",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Key does not permit provider or model",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Provider not found or does not support Decisions"
+          },
+          "413": {
+            "description": "Request body too large",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "500": {
+            "description": "Gateway error",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "502": {
+            "description": "Provider error",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/models": {
       "get": {
         "tags": [],
@@ -1882,6 +2025,43 @@
           "url": {
             "type": "string",
             "description": "Authorization URL."
+          }
+        }
+      },
+      "Breakdown": {
+        "type": "object",
+        "description": "Request counts grouped by provider and model.",
+        "required": ["providers", "models"],
+        "properties": {
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BreakdownEntry"
+            },
+            "description": "Counts by model."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BreakdownEntry"
+            },
+            "description": "Counts by provider."
+          }
+        }
+      },
+      "BreakdownEntry": {
+        "type": "object",
+        "description": "One dimension value and its request count.",
+        "required": ["name", "requests"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Dimension value."
+          },
+          "requests": {
+            "type": "integer",
+            "description": "Number of requests for the value.",
+            "minimum": 0
           }
         }
       },
@@ -2388,6 +2568,54 @@
           }
         }
       },
+      "FilterOptions": {
+        "type": "object",
+        "description": "Available dimensions before applying dimension filters.",
+        "required": [
+          "providers",
+          "models",
+          "paths",
+          "virtual_keys",
+          "credentials"
+        ],
+        "properties": {
+          "credentials": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IdentityOption"
+            },
+            "description": "Provider credentials observed within the time range."
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Available models."
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Available paths."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Available providers."
+          },
+          "virtual_keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IdentityOption"
+            },
+            "description": "Virtual keys observed within the time range."
+          }
+        }
+      },
       "GrokPollInput": {
         "type": "object",
         "description": "Identifies an existing pending device flow.",
@@ -2449,6 +2677,21 @@
           }
         }
       },
+      "IdentityOption": {
+        "type": "object",
+        "description": "A stable identity and its name snapshot.",
+        "required": ["id", "name"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable identifier."
+          },
+          "name": {
+            "type": "string",
+            "description": "Name observed in a request."
+          }
+        }
+      },
       "InferenceDiscoveryError": {
         "type": "object",
         "description": "Discovery failure for an individual provider.",
@@ -2500,7 +2743,7 @@
           }
         },
         "additionalProperties": {
-          "description": "Remaining OpenAI-compatible request fields are passed through."
+          "description": "Remaining provider-specific request fields are passed through."
         }
       },
       "Interval": {
@@ -2570,13 +2813,25 @@
           "input_tokens",
           "output_tokens",
           "request_body",
-          "response_body"
+          "response_body",
+          "virtual_key_id",
+          "virtual_key_name",
+          "credential_id",
+          "credential_name"
         ],
         "properties": {
           "created_at": {
             "type": "integer",
             "format": "int64",
             "description": "Completion time in Unix seconds."
+          },
+          "credential_id": {
+            "type": ["string", "null"],
+            "description": "Successfully selected provider credential ID, if any."
+          },
+          "credential_name": {
+            "type": ["string", "null"],
+            "description": "Successfully selected provider credential name snapshot."
           },
           "id": {
             "type": "integer",
@@ -2622,6 +2877,14 @@
             "type": "integer",
             "format": "int64",
             "description": "HTTP status, or 499 for an incomplete response stream."
+          },
+          "virtual_key_id": {
+            "type": ["string", "null"],
+            "description": "Authenticated virtual key ID and name snapshot, if known."
+          },
+          "virtual_key_name": {
+            "type": ["string", "null"],
+            "description": "Authenticated virtual key name snapshot."
           }
         }
       },
@@ -2776,8 +3039,48 @@
       "ObservabilityBucket": {
         "type": "object",
         "description": "Request count for a UTC time bucket.",
-        "required": ["start", "requests"],
+        "required": [
+          "start",
+          "requests",
+          "successes",
+          "errors",
+          "input_tokens",
+          "output_tokens",
+          "avg_latency_ms",
+          "by_model"
+        ],
         "properties": {
+          "avg_latency_ms": {
+            "type": "number",
+            "format": "double",
+            "description": "Mean latency in milliseconds."
+          },
+          "by_model": {
+            "type": "object",
+            "description": "Request counts by model in this bucket.",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "errors": {
+            "type": "integer",
+            "description": "Responses with status at least 400.",
+            "minimum": 0
+          },
+          "input_tokens": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Sum of reported input tokens."
+          },
+          "output_tokens": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Sum of reported output tokens."
+          },
           "requests": {
             "type": "integer",
             "description": "Number of requests in the bucket.",
@@ -2787,20 +3090,40 @@
             "type": "integer",
             "format": "int64",
             "description": "Bucket start in Unix seconds."
+          },
+          "successes": {
+            "type": "integer",
+            "description": "Responses with status 200 through 399.",
+            "minimum": 0
           }
         }
       },
       "ObservabilityResponse": {
         "type": "object",
         "description": "Dashboard metrics and recent request logs.",
-        "required": ["summary", "logs", "interval", "buckets"],
+        "required": [
+          "summary",
+          "logs",
+          "interval",
+          "buckets",
+          "filter_options",
+          "breakdown"
+        ],
         "properties": {
+          "breakdown": {
+            "$ref": "#/components/schemas/Breakdown",
+            "description": "Counts by provider and model after filtering."
+          },
           "buckets": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ObservabilityBucket"
             },
             "description": "Request counts by time bucket."
+          },
+          "filter_options": {
+            "$ref": "#/components/schemas/FilterOptions",
+            "description": "Sorted dimension values in the selected date range."
           },
           "interval": {
             "$ref": "#/components/schemas/Interval",

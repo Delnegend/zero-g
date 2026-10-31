@@ -273,7 +273,11 @@ impl SettingsStore {
     }
 
     /// Resolves a token's stored hash to its provider and model restrictions.
-    pub(crate) async fn permissions(&self, token: &str) -> Result<Option<Permissions>, String> {
+    pub(crate) async fn permissions(
+        &self,
+        token: &str,
+        identity: Option<&crate::provider::common::request_identity::RequestIdentity>,
+    ) -> Result<Option<Permissions>, String> {
         let hash = digest::digest(&digest::SHA256, token.as_bytes());
         let Some(row) = VirtualKey::filter_by_key_hash(hash.as_ref().to_vec())
             .first()
@@ -283,6 +287,9 @@ impl SettingsStore {
         else {
             return Ok(None);
         };
+        if let Some(identity) = identity {
+            identity.set_virtual_key(&row.id, &row.name);
+        }
         let providers = row.providers;
         let models = row.models;
         Ok(Some(Permissions {
@@ -536,6 +543,26 @@ mod tests {
         let created = json_body(response).await;
         let token = created["key"].as_str().unwrap().to_owned();
         let id = created["id"].as_str().unwrap().to_owned();
+        let identity = crate::provider::common::request_identity::RequestIdentity::default();
+        assert!(
+            store
+                .permissions(&token, Some(&identity))
+                .await
+                .unwrap()
+                .is_some()
+        );
+        let snapshot = identity.snapshot();
+        assert_eq!(snapshot.virtual_key_id.as_deref(), Some(id.as_str()));
+        assert_eq!(snapshot.virtual_key_name.as_deref(), Some("limited"));
+        let invalid = crate::provider::common::request_identity::RequestIdentity::default();
+        assert!(
+            store
+                .permissions("invalid", Some(&invalid))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(invalid.snapshot().virtual_key_id.is_none());
         let row = VirtualKey::filter_by_id(id.clone())
             .first()
             .exec(&mut (*store.database.db).clone())

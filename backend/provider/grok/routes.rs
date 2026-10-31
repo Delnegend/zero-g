@@ -12,6 +12,7 @@ use serde_json::Value;
 
 use crate::openai::{ChatCompletionRequest, Model};
 use crate::provider::common::proxy::{check_model, error, filter_models};
+use crate::provider::common::request_identity::RequestIdentity;
 use crate::provider::common::session::RequestSession;
 use crate::provider::{openai, registry::Provider};
 use crate::server::{
@@ -161,7 +162,7 @@ async fn send(
     query: Option<&str>,
     session: &str,
     body: Option<&Value>,
-) -> Result<reqwest::Response, String> {
+) -> Result<(reqwest::Response, crate::provider::credentials::Credential), String> {
     if provider.kind != kind {
         return Err("Invalid Grok provider".into());
     }
@@ -217,9 +218,9 @@ async fn send(
             .await
             .map_err(|_| "Failed to contact Grok upstream")?;
         if !matches!(response.status().as_u16(), 401 | 403 | 429) {
-            return Ok(response);
+            return Ok((response, credential));
         }
-        last = Some(response);
+        last = Some((response, credential));
     }
     last.ok_or_else(|| last_error.unwrap_or_else(|| "No connected Grok credentials".into()))
 }
@@ -243,21 +244,26 @@ async fn model_list(
     provider: &Provider,
     kind: &str,
     session: &str,
+    identity: Option<&RequestIdentity>,
 ) -> Result<Value, String> {
-    let response = send(state, provider, kind, None, session, None).await?;
+    let (response, credential) = send(state, provider, kind, None, session, None).await?;
     if !response.status().is_success() {
         return Err(format!(
             "Grok model discovery returned HTTP {}",
             response.status()
         ));
     }
-    openai::parse_model_list(
+    let value = openai::parse_model_list(
         response.bytes_stream(),
         "Failed to read Grok model list",
         "Grok model list is too large",
         "Invalid Grok model list",
     )
-    .await
+    .await?;
+    if let Some(identity) = identity {
+        identity.set_credential(&credential.id, &credential.name);
+    }
+    Ok(value)
 }
 
 /// Discover model metadata from the selected billing pool.
@@ -267,7 +273,7 @@ pub(super) async fn discover(
     kind: &str,
 ) -> Result<Vec<Model>, String> {
     let session = uuid::Uuid::new_v4().to_string();
-    let value = model_list(state, provider, kind, &session).await?;
+    let value = model_list(state, provider, kind, &session, None).await?;
     Ok(openai::models_from_list(&value))
 }
 
@@ -278,8 +284,17 @@ async fn models_handler(
     Extension(provider): Extension<Provider>,
     Extension(kind): Extension<&'static str>,
     Extension(session): Extension<RequestSession>,
+    identity: Option<Extension<RequestIdentity>>,
 ) -> Response {
-    match model_list(&state, &provider, kind, &session.id).await {
+    match model_list(
+        &state,
+        &provider,
+        kind,
+        &session.id,
+        identity.as_ref().map(|Extension(identity)| identity),
+    )
+    .await
+    {
         Ok(mut value) => {
             if filter_models(&mut value, &permissions) {
                 Json(value).into_response()
@@ -292,12 +307,14 @@ async fn models_handler(
 }
 
 /// Forward a model-authorized Responses request without altering its fields.
+#[allow(clippy::too_many_arguments)]
 async fn responses_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
     Extension(kind): Extension<&'static str>,
     Extension(session): Extension<RequestSession>,
+    identity: Option<Extension<RequestIdentity>>,
     RawQuery(query): RawQuery,
     body: Bytes,
 ) -> Response {
@@ -326,7 +343,14 @@ async fn responses_handler(
     )
     .await
     {
-        Ok(response) => openai::forward(response),
+        Ok((response, credential)) => {
+            if response.status().is_success()
+                && let Some(Extension(identity)) = &identity
+            {
+                identity.set_credential(&credential.id, &credential.name);
+            }
+            openai::forward(response)
+        }
         Err(message) => upstream_error(&message),
     }
 }
@@ -382,12 +406,14 @@ fn unsupported_chat_option(value: &Value) -> bool {
 }
 
 /// Translate a model-authorized Chat request to and from Responses.
+#[allow(clippy::too_many_arguments)]
 async fn chat_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
     Extension(kind): Extension<&'static str>,
     Extension(session): Extension<RequestSession>,
+    identity: Option<Extension<RequestIdentity>>,
     RawQuery(query): RawQuery,
     body: Bytes,
 ) -> Response {
@@ -420,7 +446,7 @@ async fn chat_handler(
         }
     };
     let value = translate::chat_to_responses(&req);
-    let response = match send(
+    let (response, credential) = match send(
         &state,
         &provider,
         kind,
@@ -437,6 +463,9 @@ async fn chat_handler(
         return openai::forward(response);
     }
     if req.stream.unwrap_or(false) {
+        if let Some(Extension(identity)) = &identity {
+            identity.set_credential(&credential.id, &credential.name);
+        }
         let include_usage = req
             .stream_options
             .as_ref()
@@ -446,7 +475,12 @@ async fn chat_handler(
     }
     match response.json::<Value>().await {
         Ok(value) => match translate::responses_to_chat(&value, &req.model) {
-            Ok(value) => Json(value).into_response(),
+            Ok(value) => {
+                if let Some(Extension(identity)) = &identity {
+                    identity.set_credential(&credential.id, &credential.name);
+                }
+                Json(value).into_response()
+            }
             Err(message) => upstream_error(&message),
         },
         Err(_) => upstream_error("Invalid Grok response"),
@@ -565,6 +599,7 @@ mod tests {
                 Extension(RequestSession {
                     id: "scoped-session".into(),
                 }),
+                None,
                 RawQuery(None),
                 Bytes::from(body.to_string()),
             )

@@ -225,7 +225,7 @@ export function ModelSettingsPage() {
       <p className="mt-2 text-sm text-muted-foreground">
         Configure datasheets and automatic model discovery.
       </p>
-      {settings.isLoading && <FormSkeleton label="Loading model settings" />}
+      {settings.isLoading && <FormSkeleton modelSettings />}
       {settings.error && (
         <Alert variant="destructive" className="mt-5">
           <AlertDescription>{message(settings.error)}</AlertDescription>

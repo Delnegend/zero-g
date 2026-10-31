@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::database::{Database, transaction_with_retry};
@@ -12,8 +12,8 @@ mod capture;
 mod dashboard;
 
 pub(super) use capture::capture;
-use dashboard::__path_dashboard;
 pub(super) use dashboard::dashboard;
+use dashboard::{__path_dashboard, DashboardQuery};
 
 /// Persistent request logs and their retention policy.
 #[derive(Clone)]
@@ -67,6 +67,10 @@ impl LogStore {
                 output_tokens: log.output_tokens,
                 request_body: log.request_body.clone(),
                 response_body: log.response_body.clone(),
+                virtual_key_id: log.virtual_key_id.clone(),
+                virtual_key_name: log.virtual_key_name.clone(),
+                credential_id: log.credential_id.clone(),
+                credential_name: log.credential_name.clone(),
             })
             .exec(&mut tx)
             .await?;
@@ -81,23 +85,84 @@ impl LogStore {
     }
 
     /// Aggregate request statistics and recent logs for the requested range.
-    async fn dashboard(
-        &self,
-        since: Option<i64>,
-        until: Option<i64>,
-    ) -> Result<ObservabilityResponse, String> {
+    #[allow(clippy::too_many_lines)]
+    async fn dashboard(&self, query: &DashboardQuery) -> Result<ObservabilityResponse, String> {
+        let since = query.since;
+        let until = query.until;
         let upper = until.or_else(|| since.map(|_| now()));
         let interval = interval(since, upper)?;
-        let (rows, logs) = transaction_with_retry!(self.database, |mut tx| {
+        let (options, rows, logs) = transaction_with_retry!(self.database, |mut tx| {
             let mut rows_query = RequestLog::all();
+            let mut options_query = RequestLog::all();
             let mut logs_query = RequestLog::all();
             if let Some(since) = since {
                 rows_query = rows_query.filter(RequestLog::fields().created_at().ge(since));
+                options_query = options_query.filter(RequestLog::fields().created_at().ge(since));
                 logs_query = logs_query.filter(RequestLog::fields().created_at().ge(since));
             }
             if let Some(upper) = upper {
                 rows_query = rows_query.filter(RequestLog::fields().created_at().le(upper));
+                options_query = options_query.filter(RequestLog::fields().created_at().le(upper));
                 logs_query = logs_query.filter(RequestLog::fields().created_at().le(upper));
+            }
+            let options = options_query
+                .select((
+                    RequestLog::fields().provider(),
+                    RequestLog::fields().model(),
+                    RequestLog::fields().path(),
+                    RequestLog::fields().virtual_key_id(),
+                    RequestLog::fields().virtual_key_name(),
+                    RequestLog::fields().credential_id(),
+                    RequestLog::fields().credential_name(),
+                ))
+                .exec(&mut tx)
+                .await?;
+            if !query.providers.is_empty() {
+                rows_query = rows_query.filter(
+                    RequestLog::fields()
+                        .provider()
+                        .in_list(query.providers.clone()),
+                );
+                logs_query = logs_query.filter(
+                    RequestLog::fields()
+                        .provider()
+                        .in_list(query.providers.clone()),
+                );
+            }
+            if !query.models.is_empty() {
+                rows_query =
+                    rows_query.filter(RequestLog::fields().model().in_list(query.models.clone()));
+                logs_query =
+                    logs_query.filter(RequestLog::fields().model().in_list(query.models.clone()));
+            }
+            if !query.paths.is_empty() {
+                rows_query =
+                    rows_query.filter(RequestLog::fields().path().in_list(query.paths.clone()));
+                logs_query =
+                    logs_query.filter(RequestLog::fields().path().in_list(query.paths.clone()));
+            }
+            if !query.virtual_key_ids.is_empty() {
+                let ids: Vec<_> = query.virtual_key_ids.iter().cloned().map(Some).collect();
+                rows_query =
+                    rows_query.filter(RequestLog::fields().virtual_key_id().in_list(ids.clone()));
+                logs_query = logs_query.filter(RequestLog::fields().virtual_key_id().in_list(ids));
+            }
+            if !query.credential_ids.is_empty() {
+                let ids: Vec<_> = query.credential_ids.iter().cloned().map(Some).collect();
+                rows_query =
+                    rows_query.filter(RequestLog::fields().credential_id().in_list(ids.clone()));
+                logs_query = logs_query.filter(RequestLog::fields().credential_id().in_list(ids));
+            }
+            let success = query.statuses.iter().any(|s| s == "success");
+            let error = query.statuses.iter().any(|s| s == "error");
+            if success || error {
+                let lower = if success { 200 } else { 400 };
+                rows_query = rows_query.filter(RequestLog::fields().status().ge(lower));
+                logs_query = logs_query.filter(RequestLog::fields().status().ge(lower));
+                if !error {
+                    rows_query = rows_query.filter(RequestLog::fields().status().lt(400));
+                    logs_query = logs_query.filter(RequestLog::fields().status().lt(400));
+                }
             }
             let rows = rows_query
                 .select((
@@ -106,6 +171,8 @@ impl LogStore {
                     RequestLog::fields().input_tokens(),
                     RequestLog::fields().output_tokens(),
                     RequestLog::fields().created_at(),
+                    RequestLog::fields().provider(),
+                    RequestLog::fields().model(),
                 ))
                 .exec(&mut tx)
                 .await?;
@@ -119,61 +186,203 @@ impl LogStore {
             };
             let logs = logs_query.limit(200).exec(&mut tx).await?;
             tx.commit().await?;
-            Ok((rows, logs))
+            Ok((options, rows, logs))
         })
         .map_err(|e| e.to_string())?;
-        let count = rows.len();
-        let successes = rows.iter().filter(|r| (200..400).contains(&r.0)).count();
-        let errors = rows.iter().filter(|r| r.0 >= 400).count();
-        let input_tokens = rows.iter().filter_map(|r| r.2).reduce(i64::saturating_add);
-        let output_tokens = rows.iter().filter_map(|r| r.3).reduce(i64::saturating_add);
-        // A floating-point average necessarily approximates large integer values.
-        #[allow(clippy::cast_precision_loss, clippy::as_conversions)]
-        let avg_latency_ms = if count == 0 {
-            0.0
-        } else {
-            rows.iter().map(|r| r.1 as f64).sum::<f64>() / count as f64
-        };
-        let summary = ObservabilitySummary {
-            requests: count,
-            successes,
-            errors,
-            input_tokens,
-            output_tokens,
-            avg_latency_ms,
-        };
-        let mut counts = BTreeMap::<i64, usize>::new();
-        for row in &rows {
-            let start = bucket_start(row.4, interval)?;
-            let requests = counts.entry(start).or_default();
-            *requests = requests.saturating_add(1);
-        }
-        let buckets: Vec<ObservabilityBucket> = counts
-            .into_iter()
-            .map(|(start, requests)| ObservabilityBucket { start, requests })
-            .collect();
-        let logs: Vec<LogEntry> = logs
-            .into_iter()
-            .map(|r| LogEntry {
-                id: r.id,
-                created_at: r.created_at,
-                provider: r.provider,
-                model: r.model,
-                path: r.path,
-                status: r.status,
-                latency_ms: r.latency_ms,
-                input_tokens: r.input_tokens,
-                output_tokens: r.output_tokens,
-                request_body: r.request_body,
-                response_body: r.response_body,
-            })
-            .collect();
+        let (summary, buckets, breakdown) = aggregate_rows(&rows, interval)?;
+        let filter_options = collect_filter_options(options);
+        let logs = logs.into_iter().map(LogEntry::from).collect();
         Ok(ObservabilityResponse {
             summary,
             logs,
             interval,
             buckets,
+            filter_options,
+            breakdown,
         })
+    }
+}
+
+impl From<RequestLog> for LogEntry {
+    fn from(r: RequestLog) -> Self {
+        Self {
+            id: r.id,
+            created_at: r.created_at,
+            provider: r.provider,
+            model: r.model,
+            path: r.path,
+            status: r.status,
+            latency_ms: r.latency_ms,
+            input_tokens: r.input_tokens,
+            output_tokens: r.output_tokens,
+            request_body: r.request_body,
+            response_body: r.response_body,
+            virtual_key_id: r.virtual_key_id,
+            virtual_key_name: r.virtual_key_name,
+            credential_id: r.credential_id,
+            credential_name: r.credential_name,
+        }
+    }
+}
+
+/// Selected columns used for aggregation, excluding captured bodies.
+type MetricsRow = (i64, i64, Option<i64>, Option<i64>, i64, String, String);
+
+/// Increment a named count without allocating for names already present.
+fn increment_count(counts: &mut BTreeMap<String, usize>, name: &str) {
+    if let Some(count) = counts.get_mut(name) {
+        *count = count.saturating_add(1);
+    } else {
+        counts.insert(name.to_owned(), 1);
+    }
+}
+
+/// Summarize all matching rows into time buckets and dimension counts.
+fn aggregate_rows(
+    rows: &[MetricsRow],
+    interval: Interval,
+) -> Result<(ObservabilitySummary, Vec<ObservabilityBucket>, Breakdown), String> {
+    let count = rows.len();
+    let successes = rows.iter().filter(|r| (200..400).contains(&r.0)).count();
+    let errors = rows.iter().filter(|r| r.0 >= 400).count();
+    let input_tokens = rows.iter().filter_map(|r| r.2).reduce(i64::saturating_add);
+    let output_tokens = rows.iter().filter_map(|r| r.3).reduce(i64::saturating_add);
+    // A floating-point average necessarily approximates large integer values.
+    #[allow(clippy::cast_precision_loss, clippy::as_conversions)]
+    let avg_latency_ms = if count == 0 {
+        0.0
+    } else {
+        rows.iter().map(|r| r.1 as f64).sum::<f64>() / count as f64
+    };
+    let summary = ObservabilitySummary {
+        requests: count,
+        successes,
+        errors,
+        input_tokens,
+        output_tokens,
+        avg_latency_ms,
+    };
+    let mut counts = BTreeMap::<i64, ObservabilityBucket>::new();
+    let mut providers = BTreeMap::<String, usize>::new();
+    let mut models = BTreeMap::<String, usize>::new();
+    for row in rows {
+        let start = bucket_start(row.4, interval)?;
+        let bucket = counts.entry(start).or_insert_with(|| ObservabilityBucket {
+            start,
+            requests: 0,
+            successes: 0,
+            errors: 0,
+            input_tokens: None,
+            output_tokens: None,
+            avg_latency_ms: 0.0,
+            by_model: BTreeMap::new(),
+        });
+        bucket.requests = bucket.requests.saturating_add(1);
+        bucket.successes = bucket
+            .successes
+            .saturating_add(usize::from((200..400).contains(&row.0)));
+        bucket.errors = bucket.errors.saturating_add(usize::from(row.0 >= 400));
+        increment_count(&mut bucket.by_model, &row.6);
+        if let Some(tokens) = row.2 {
+            bucket.input_tokens = Some(bucket.input_tokens.unwrap_or(0).saturating_add(tokens));
+        }
+        if let Some(tokens) = row.3 {
+            bucket.output_tokens = Some(bucket.output_tokens.unwrap_or(0).saturating_add(tokens));
+        }
+        #[allow(clippy::cast_precision_loss, clippy::as_conversions)]
+        {
+            bucket.avg_latency_ms += row.1 as f64;
+        }
+        increment_count(&mut providers, &row.5);
+        increment_count(&mut models, &row.6);
+    }
+    let buckets = counts
+        .into_values()
+        .map(|mut bucket| {
+            #[allow(clippy::cast_precision_loss, clippy::as_conversions)]
+            {
+                bucket.avg_latency_ms /= bucket.requests as f64;
+            }
+            bucket
+        })
+        .collect();
+    let breakdown = Breakdown {
+        providers: providers
+            .into_iter()
+            .map(|(name, requests)| BreakdownEntry { name, requests })
+            .collect(),
+        models: models
+            .into_iter()
+            .map(|(name, requests)| BreakdownEntry { name, requests })
+            .collect(),
+    };
+    Ok((summary, buckets, breakdown))
+}
+
+/// Selected time-range dimensions and identity snapshots.
+type FilterOptionRow = (
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
+/// Collect sorted nonempty dimension options from the date range.
+fn collect_filter_options(options: Vec<FilterOptionRow>) -> FilterOptions {
+    let mut option_providers = BTreeSet::new();
+    let mut option_models = BTreeSet::new();
+    let mut option_paths = BTreeSet::new();
+    let mut virtual_keys = BTreeMap::new();
+    let mut credentials = BTreeMap::new();
+    for (provider, model, path, virtual_key_id, virtual_key_name, credential_id, credential_name) in
+        options
+    {
+        // A stable lexical choice makes snapshots deterministic even after renames.
+        if let (Some(id), Some(name)) = (virtual_key_id, virtual_key_name) {
+            virtual_keys
+                .entry(id)
+                .and_modify(|old: &mut String| {
+                    if name < *old {
+                        old.clone_from(&name);
+                    }
+                })
+                .or_insert(name);
+        }
+        if let (Some(id), Some(name)) = (credential_id, credential_name) {
+            credentials
+                .entry(id)
+                .and_modify(|old: &mut String| {
+                    if name < *old {
+                        old.clone_from(&name);
+                    }
+                })
+                .or_insert(name);
+        }
+        if !provider.is_empty() {
+            option_providers.insert(provider);
+        }
+        if !model.is_empty() {
+            option_models.insert(model);
+        }
+        if !path.is_empty() {
+            option_paths.insert(path);
+        }
+    }
+    FilterOptions {
+        providers: option_providers.into_iter().collect(),
+        models: option_models.into_iter().collect(),
+        paths: option_paths.into_iter().collect(),
+        virtual_keys: virtual_keys
+            .into_iter()
+            .map(|(id, name)| IdentityOption { id, name })
+            .collect(),
+        credentials: credentials
+            .into_iter()
+            .map(|(id, name)| IdentityOption { id, name })
+            .collect(),
     }
 }
 
@@ -263,6 +472,18 @@ struct LogEntry {
     request_body: String,
     /// Captured response body.
     response_body: String,
+    /// Authenticated virtual key ID and name snapshot, if known.
+    #[schema(required = true)]
+    virtual_key_id: Option<String>,
+    /// Authenticated virtual key name snapshot.
+    #[schema(required = true)]
+    virtual_key_name: Option<String>,
+    /// Successfully selected provider credential ID, if any.
+    #[schema(required = true)]
+    credential_id: Option<String>,
+    /// Successfully selected provider credential name snapshot.
+    #[schema(required = true)]
+    credential_name: Option<String>,
 }
 
 /// Aggregate statistics for the selected range.
@@ -291,6 +512,62 @@ struct ObservabilityBucket {
     start: i64,
     /// Number of requests in the bucket.
     requests: usize,
+    /// Responses with status 200 through 399.
+    successes: usize,
+    /// Responses with status at least 400.
+    errors: usize,
+    /// Sum of reported input tokens.
+    #[schema(required = true)]
+    input_tokens: Option<i64>,
+    /// Sum of reported output tokens.
+    #[schema(required = true)]
+    output_tokens: Option<i64>,
+    /// Mean latency in milliseconds.
+    avg_latency_ms: f64,
+    /// Request counts by model in this bucket.
+    by_model: BTreeMap<String, usize>,
+}
+
+/// Available dimensions before applying dimension filters.
+#[derive(Serialize, utoipa::ToSchema)]
+struct FilterOptions {
+    /// Available providers.
+    providers: Vec<String>,
+    /// Available models.
+    models: Vec<String>,
+    /// Available paths.
+    paths: Vec<String>,
+    /// Virtual keys observed within the time range.
+    virtual_keys: Vec<IdentityOption>,
+    /// Provider credentials observed within the time range.
+    credentials: Vec<IdentityOption>,
+}
+
+/// A stable identity and its name snapshot.
+#[derive(Serialize, utoipa::ToSchema)]
+struct IdentityOption {
+    /// Stable identifier.
+    id: String,
+    /// Name observed in a request.
+    name: String,
+}
+
+/// Request counts grouped by provider and model.
+#[derive(Serialize, utoipa::ToSchema)]
+struct Breakdown {
+    /// Counts by provider.
+    providers: Vec<BreakdownEntry>,
+    /// Counts by model.
+    models: Vec<BreakdownEntry>,
+}
+
+/// One dimension value and its request count.
+#[derive(Serialize, utoipa::ToSchema)]
+struct BreakdownEntry {
+    /// Dimension value.
+    name: String,
+    /// Number of requests for the value.
+    requests: usize,
 }
 
 /// Dashboard metrics and recent request logs.
@@ -304,6 +581,10 @@ struct ObservabilityResponse {
     interval: Interval,
     /// Request counts by time bucket.
     buckets: Vec<ObservabilityBucket>,
+    /// Sorted dimension values in the selected date range.
+    filter_options: FilterOptions,
+    /// Counts by provider and model after filtering.
+    breakdown: Breakdown,
 }
 
 /// Request observability dashboard operation.
@@ -314,6 +595,10 @@ struct ObservabilityResponse {
         ObservabilityResponse,
         ObservabilitySummary,
         ObservabilityBucket,
+        FilterOptions,
+        IdentityOption,
+        Breakdown,
+        BreakdownEntry,
         Interval,
         LogEntry
     ))
@@ -333,6 +618,73 @@ fn now() -> i64 {
 mod tests {
     use super::*;
 
+    /// Opening an older database preserves logs and leaves their identities unknown.
+    #[tokio::test]
+    async fn migrates_existing_logs_without_identities() {
+        let path =
+            std::env::temp_dir().join(format!("zero-g-old-log-test-{}.db", uuid::Uuid::new_v4()));
+        let mut db = toasty::Db::builder()
+            .models(toasty::models!(
+                crate::storage::RequestLog,
+                crate::storage::Setting,
+                crate::storage::Secret,
+                crate::storage::VirtualKey,
+                crate::storage::ProviderRecord,
+                crate::storage::ProviderCredential
+            ))
+            .connect(&format!("turso:{}", path.display()))
+            .await
+            .unwrap();
+        for migration in [
+            include_str!("../../../toasty/migrations/0000_initial.sql"),
+            include_str!("../../../toasty/migrations/0001_add_providers.sql"),
+            include_str!("../../../toasty/migrations/0002_provider_credentials.sql"),
+        ] {
+            for statement in migration.split("-- #[toasty::breakpoint]") {
+                toasty::sql::statement(statement.trim())
+                    .exec(&mut db)
+                    .await
+                    .unwrap();
+            }
+        }
+        toasty::sql::statement("CREATE TABLE __toasty_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)")
+            .exec(&mut db).await.unwrap();
+        for (id, name) in [
+            (6_240_284_849_605_402_046_i64, "0000_initial.sql"),
+            (9_146_868_781_853_628_900_i64, "0001_add_providers.sql"),
+            (
+                7_352_461_067_189_203_411_i64,
+                "0002_provider_credentials.sql",
+            ),
+        ] {
+            toasty::sql::statement("INSERT INTO __toasty_migrations VALUES (?1, ?2, '2026-01-01')")
+                .bind(id)
+                .bind(name)
+                .exec(&mut db)
+                .await
+                .unwrap();
+        }
+        toasty::sql::statement("INSERT INTO request_logs (created_at, provider, model, path, status, latency_ms, request_body, response_body) VALUES (?1, 'p', 'm', '/v1', 200, 1, 'old request', 'old response')")
+            .bind(now()).exec(&mut db).await.unwrap();
+        drop(db);
+        let store = LogStore::new(Database::open(path.to_str().unwrap()).await.unwrap());
+        let result =
+            serde_json::to_value(store.dashboard(&DashboardQuery::default()).await.unwrap())
+                .unwrap();
+        assert_eq!(result["summary"]["requests"], 1);
+        assert_eq!(result["logs"][0]["request_body"], "old request");
+        for field in [
+            "virtual_key_id",
+            "virtual_key_name",
+            "credential_id",
+            "credential_name",
+        ] {
+            assert!(result["logs"][0][field].is_null());
+        }
+        drop(store);
+        std::fs::remove_file(path).unwrap();
+    }
+
     /// Persist request bodies and prune expired logs.
     #[tokio::test]
     async fn stores_and_expires_private_request_logs() {
@@ -351,6 +703,10 @@ mod tests {
             latency_ms: 42,
             input_tokens: Some(10),
             output_tokens: Some(3),
+            virtual_key_id: None,
+            virtual_key_name: None,
+            credential_id: None,
+            credential_name: None,
             request_body: "private prompt".into(),
             response_body: "private response".into(),
         };
@@ -359,7 +715,9 @@ mod tests {
             .await
             .unwrap();
         store.insert(entry(now())).await.unwrap();
-        let result = serde_json::to_value(store.dashboard(None, None).await.unwrap()).unwrap();
+        let result =
+            serde_json::to_value(store.dashboard(&DashboardQuery::default()).await.unwrap())
+                .unwrap();
         assert_eq!(result["summary"]["requests"], 1);
         assert_eq!(result["summary"]["input_tokens"], 10);
         assert_eq!(result["logs"][0]["request_body"], "private prompt");
@@ -385,6 +743,10 @@ mod tests {
             latency_ms: 42,
             input_tokens: Some(10),
             output_tokens: Some(3),
+            virtual_key_id: None,
+            virtual_key_name: None,
+            credential_id: None,
+            credential_name: None,
             request_body: body.into(),
             response_body: String::new(),
         };
@@ -392,7 +754,9 @@ mod tests {
             tokio::join!(store.insert(entry("first")), store.insert(entry("second")));
         first.unwrap();
         second.unwrap();
-        let result = serde_json::to_value(store.dashboard(None, None).await.unwrap()).unwrap();
+        let result =
+            serde_json::to_value(store.dashboard(&DashboardQuery::default()).await.unwrap())
+                .unwrap();
         assert_eq!(result["summary"]["requests"], 2);
         let logs = result["logs"].as_array().unwrap();
         assert_eq!(

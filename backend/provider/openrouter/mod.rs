@@ -1,3 +1,6 @@
+/// Native `OpenRouter` Decisions API forwarding.
+mod decisions;
+
 use std::{sync::LazyLock, time::Duration};
 
 use axum::{
@@ -19,6 +22,8 @@ use crate::{
 
 /// `OpenRouter`'s fixed inference endpoint.
 pub(crate) const BASE_URL: &str = "https://openrouter.ai/api/v1";
+/// `OpenRouter` API root used for endpoints outside `/api/v1`.
+const API_ROOT: &str = "https://openrouter.ai/api";
 /// Account credit endpoint requiring a management key.
 const CREDITS_URL: &str = "https://openrouter.ai/api/v1/credits";
 
@@ -31,7 +36,7 @@ impl openai::ModelEndpoint for Backend {
             BASE_URL,
             key,
             "models",
-            None,
+            Some("output_modalities=text,decisions"),
             Method::GET,
             &HeaderMap::new(),
             None,
@@ -140,6 +145,7 @@ impl common::Provider for Backend {
 
     fn router(settings: &SettingsStore) -> Router<AppState> {
         openai::routes::router_for(settings, "openrouter", Some(BASE_URL))
+            .merge(decisions::router(settings, API_ROOT))
     }
 
     async fn discover(

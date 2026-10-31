@@ -58,7 +58,7 @@ impl super::common::Provider for Backend {
         state: &crate::server::AppState,
         provider: &super::registry::Provider,
     ) -> Result<Vec<crate::openai::Model>, String> {
-        models::fetch_catalog_pool(state, provider).await
+        models::fetch_catalog_pool(state, provider, None).await
     }
 }
 

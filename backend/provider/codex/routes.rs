@@ -12,6 +12,7 @@ use crate::provider::codex::CodexAuthManager;
 use crate::provider::codex::auth::CodexCredentials;
 use crate::provider::codex::models::fetch_codex_models;
 use crate::provider::common::errors::{UpstreamError, retryable_status};
+use crate::provider::common::request_identity::RequestIdentity;
 use crate::provider::common::session::RequestSession;
 use crate::provider::registry::Provider;
 use crate::responses::ResponseCreateRequest;
@@ -117,6 +118,7 @@ impl PoolError {
 pub(crate) async fn with_pool<T, F, Fut>(
     state: &AppState,
     provider: &Provider,
+    identity: Option<&RequestIdentity>,
     request: F,
 ) -> Result<T, PoolError>
 where
@@ -133,7 +135,11 @@ where
                 .await.map_err(PoolError::local)?
                 .ok_or_else(|| PoolError::local("OpenAI Codex is not configured. Authenticate on the dashboard Providers page."))?;
             let creds = auth.get_credentials().await.map_err(PoolError::credential)?;
-            request(creds).await.map_err(PoolError::upstream)
+            let result = request(creds).await.map_err(PoolError::upstream)?;
+            if let Some(identity) = identity {
+                identity.set_credential(&credential.id, &credential.name);
+            }
+            Ok(result)
         }
     }).await
 }
@@ -165,10 +171,14 @@ async fn models_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
+    identity: Option<Extension<RequestIdentity>>,
 ) -> Response {
-    match with_pool(&state, &provider, |creds| async move {
-        fetch_codex_models(&creds).await
-    })
+    match with_pool(
+        &state,
+        &provider,
+        identity.as_ref().map(|Extension(identity)| identity),
+        |creds| async move { fetch_codex_models(&creds).await },
+    )
     .await
     {
         Ok(mut models) => {
@@ -187,6 +197,7 @@ async fn chat_handler(
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
     Extension(session): Extension<RequestSession>,
+    identity: Option<Extension<RequestIdentity>>,
     Json(mut req): Json<ChatCompletionRequest>,
 ) -> Response {
     req.model = strip_codex_prefix(&req.model);
@@ -196,16 +207,21 @@ async fn chat_handler(
     let client = &state.providers.codex_client;
     let req = &req;
     let session = &session.id;
-    match with_pool(&state, &provider, |creds| async move {
-        if req.stream.unwrap_or(false) {
-            client.stream_chat(&creds, req, session).await
-        } else {
-            client
-                .complete_chat_non_streaming(&creds, req, session)
-                .await
-                .map(|r| Json(r).into_response())
-        }
-    })
+    match with_pool(
+        &state,
+        &provider,
+        identity.as_ref().map(|Extension(identity)| identity),
+        |creds| async move {
+            if req.stream.unwrap_or(false) {
+                client.stream_chat(&creds, req, session).await
+            } else {
+                client
+                    .complete_chat_non_streaming(&creds, req, session)
+                    .await
+                    .map(|r| Json(r).into_response())
+            }
+        },
+    )
     .await
     {
         Ok(response) => response,
@@ -219,6 +235,7 @@ async fn responses_handler(
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
     Extension(session): Extension<RequestSession>,
+    identity: Option<Extension<RequestIdentity>>,
     Json(mut req): Json<ResponseCreateRequest>,
 ) -> Response {
     req.model = strip_codex_prefix(&req.model);
@@ -228,16 +245,21 @@ async fn responses_handler(
     let client = &state.providers.codex_client;
     let req = &req;
     let session = &session.id;
-    match with_pool(&state, &provider, |creds| async move {
-        if req.stream.unwrap_or(false) {
-            client.stream_responses(&creds, req, session).await
-        } else {
-            client
-                .complete_responses_non_streaming(&creds, req, session)
-                .await
-                .map(|r| Json(r).into_response())
-        }
-    })
+    match with_pool(
+        &state,
+        &provider,
+        identity.as_ref().map(|Extension(identity)| identity),
+        |creds| async move {
+            if req.stream.unwrap_or(false) {
+                client.stream_responses(&creds, req, session).await
+            } else {
+                client
+                    .complete_responses_non_streaming(&creds, req, session)
+                    .await
+                    .map(|r| Json(r).into_response())
+            }
+        },
+    )
     .await
     {
         Ok(response) => response,

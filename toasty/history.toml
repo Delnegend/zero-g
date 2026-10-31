@@ -14,3 +14,8 @@ snapshot_name = "0001_snapshot.toml"
 id = 7352461067189203411
 name = "0002_provider_credentials.sql"
 snapshot_name = "0002_snapshot.toml"
+
+[[migrations]]
+id = 9001098191863351684
+name = "0003_request_log_identities.sql"
+snapshot_name = "0003_snapshot.toml"

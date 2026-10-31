@@ -89,6 +89,59 @@ export type AntigravityStartResponseOutput = zod.output<
   typeof AntigravityStartResponse
 >;
 
+export const breakdownEntryRequestsMin = 0;
+
+export const BreakdownEntry = zod
+  .object({
+    name: zod.string().describe("Dimension value."),
+    requests: zod
+      .int()
+      .min(breakdownEntryRequestsMin)
+      .describe("Number of requests for the value."),
+  })
+  .describe("One dimension value and its request count.");
+
+export type BreakdownEntry = zod.input<typeof BreakdownEntry>;
+export type BreakdownEntryOutput = zod.output<typeof BreakdownEntry>;
+
+export const breakdownModelsItemRequestsMin = 0;
+
+export const breakdownProvidersItemRequestsMin = 0;
+
+export const Breakdown = zod
+  .object({
+    models: zod
+      .array(
+        zod
+          .object({
+            name: zod.string().describe("Dimension value."),
+            requests: zod
+              .int()
+              .min(breakdownModelsItemRequestsMin)
+              .describe("Number of requests for the value."),
+          })
+          .describe("One dimension value and its request count."),
+      )
+      .describe("Counts by model."),
+    providers: zod
+      .array(
+        zod
+          .object({
+            name: zod.string().describe("Dimension value."),
+            requests: zod
+              .int()
+              .min(breakdownProvidersItemRequestsMin)
+              .describe("Number of requests for the value."),
+          })
+          .describe("One dimension value and its request count."),
+      )
+      .describe("Counts by provider."),
+  })
+  .describe("Request counts grouped by provider and model.");
+
+export type Breakdown = zod.input<typeof Breakdown>;
+export type BreakdownOutput = zod.output<typeof Breakdown>;
+
 export const modelContextWindowMin = 0;
 
 export const modelCreatedMin = 0;
@@ -658,6 +711,47 @@ export const CursorStartResponse = zod
 export type CursorStartResponse = zod.input<typeof CursorStartResponse>;
 export type CursorStartResponseOutput = zod.output<typeof CursorStartResponse>;
 
+export const IdentityOption = zod
+  .object({
+    id: zod.string().describe("Stable identifier."),
+    name: zod.string().describe("Name observed in a request."),
+  })
+  .describe("A stable identity and its name snapshot.");
+
+export type IdentityOption = zod.input<typeof IdentityOption>;
+export type IdentityOptionOutput = zod.output<typeof IdentityOption>;
+
+export const FilterOptions = zod
+  .object({
+    credentials: zod
+      .array(
+        zod
+          .object({
+            id: zod.string().describe("Stable identifier."),
+            name: zod.string().describe("Name observed in a request."),
+          })
+          .describe("A stable identity and its name snapshot."),
+      )
+      .describe("Provider credentials observed within the time range."),
+    models: zod.array(zod.string()).describe("Available models."),
+    paths: zod.array(zod.string()).describe("Available paths."),
+    providers: zod.array(zod.string()).describe("Available providers."),
+    virtual_keys: zod
+      .array(
+        zod
+          .object({
+            id: zod.string().describe("Stable identifier."),
+            name: zod.string().describe("Name observed in a request."),
+          })
+          .describe("A stable identity and its name snapshot."),
+      )
+      .describe("Virtual keys observed within the time range."),
+  })
+  .describe("Available dimensions before applying dimension filters.");
+
+export type FilterOptions = zod.input<typeof FilterOptions>;
+export type FilterOptionsOutput = zod.output<typeof FilterOptions>;
+
 export const GrokPollInput = zod
   .object({
     id: zod.string().describe("Opaque flow identifier."),
@@ -796,7 +890,7 @@ export const InferenceRequest = zod
     zod
       .unknown()
       .describe(
-        "Remaining OpenAI-compatible request fields are passed through.",
+        "Remaining provider-specific request fields are passed through.",
       ),
   )
   .describe(
@@ -860,6 +954,14 @@ export type KeyListOutput = zod.output<typeof KeyList>;
 export const LogEntry = zod
   .object({
     created_at: zod.int().describe("Completion time in Unix seconds."),
+    credential_id: zod
+      .string()
+      .nullable()
+      .describe("Successfully selected provider credential ID, if any."),
+    credential_name: zod
+      .string()
+      .nullable()
+      .describe("Successfully selected provider credential name snapshot."),
     id: zod.int().describe("Database record identifier."),
     input_tokens: zod
       .int()
@@ -880,6 +982,14 @@ export const LogEntry = zod
     status: zod
       .int()
       .describe("HTTP status, or 499 for an incomplete response stream."),
+    virtual_key_id: zod
+      .string()
+      .nullable()
+      .describe("Authenticated virtual key ID and name snapshot, if known."),
+    virtual_key_name: zod
+      .string()
+      .nullable()
+      .describe("Authenticated virtual key name snapshot."),
   })
   .describe("Serialized request log returned by the dashboard.");
 
@@ -1107,15 +1217,41 @@ export const ModelSyncResult = zod
 export type ModelSyncResult = zod.input<typeof ModelSyncResult>;
 export type ModelSyncResultOutput = zod.output<typeof ModelSyncResult>;
 
+export const observabilityBucketByModelMinOne = 0;
+
+export const observabilityBucketErrorsMin = 0;
+
 export const observabilityBucketRequestsMin = 0;
+
+export const observabilityBucketSuccessesMin = 0;
 
 export const ObservabilityBucket = zod
   .object({
+    avg_latency_ms: zod.number().describe("Mean latency in milliseconds."),
+    by_model: zod
+      .record(zod.string(), zod.int().min(observabilityBucketByModelMinOne))
+      .describe("Request counts by model in this bucket."),
+    errors: zod
+      .int()
+      .min(observabilityBucketErrorsMin)
+      .describe("Responses with status at least 400."),
+    input_tokens: zod
+      .int()
+      .nullable()
+      .describe("Sum of reported input tokens."),
+    output_tokens: zod
+      .int()
+      .nullable()
+      .describe("Sum of reported output tokens."),
     requests: zod
       .int()
       .min(observabilityBucketRequestsMin)
       .describe("Number of requests in the bucket."),
     start: zod.int().describe("Bucket start in Unix seconds."),
+    successes: zod
+      .int()
+      .min(observabilityBucketSuccessesMin)
+      .describe("Responses with status 200 through 399."),
   })
   .describe("Request count for a UTC time bucket.");
 
@@ -1159,7 +1295,17 @@ export type ObservabilitySummaryOutput = zod.output<
   typeof ObservabilitySummary
 >;
 
+export const observabilityResponseBreakdownModelsItemRequestsMin = 0;
+
+export const observabilityResponseBreakdownProvidersItemRequestsMin = 0;
+
+export const observabilityResponseBucketsItemByModelMinOne = 0;
+
+export const observabilityResponseBucketsItemErrorsMin = 0;
+
 export const observabilityResponseBucketsItemRequestsMin = 0;
+
+export const observabilityResponseBucketsItemSuccessesMin = 0;
 
 export const observabilityResponseSummaryErrorsMin = 0;
 
@@ -1169,19 +1315,101 @@ export const observabilityResponseSummarySuccessesMin = 0;
 
 export const ObservabilityResponse = zod
   .object({
+    breakdown: zod
+      .object({
+        models: zod
+          .array(
+            zod
+              .object({
+                name: zod.string().describe("Dimension value."),
+                requests: zod
+                  .int()
+                  .min(observabilityResponseBreakdownModelsItemRequestsMin)
+                  .describe("Number of requests for the value."),
+              })
+              .describe("One dimension value and its request count."),
+          )
+          .describe("Counts by model."),
+        providers: zod
+          .array(
+            zod
+              .object({
+                name: zod.string().describe("Dimension value."),
+                requests: zod
+                  .int()
+                  .min(observabilityResponseBreakdownProvidersItemRequestsMin)
+                  .describe("Number of requests for the value."),
+              })
+              .describe("One dimension value and its request count."),
+          )
+          .describe("Counts by provider."),
+      })
+      .describe("Counts by provider and model after filtering."),
     buckets: zod
       .array(
         zod
           .object({
+            avg_latency_ms: zod
+              .number()
+              .describe("Mean latency in milliseconds."),
+            by_model: zod
+              .record(
+                zod.string(),
+                zod.int().min(observabilityResponseBucketsItemByModelMinOne),
+              )
+              .describe("Request counts by model in this bucket."),
+            errors: zod
+              .int()
+              .min(observabilityResponseBucketsItemErrorsMin)
+              .describe("Responses with status at least 400."),
+            input_tokens: zod
+              .int()
+              .nullable()
+              .describe("Sum of reported input tokens."),
+            output_tokens: zod
+              .int()
+              .nullable()
+              .describe("Sum of reported output tokens."),
             requests: zod
               .int()
               .min(observabilityResponseBucketsItemRequestsMin)
               .describe("Number of requests in the bucket."),
             start: zod.int().describe("Bucket start in Unix seconds."),
+            successes: zod
+              .int()
+              .min(observabilityResponseBucketsItemSuccessesMin)
+              .describe("Responses with status 200 through 399."),
           })
           .describe("Request count for a UTC time bucket."),
       )
       .describe("Request counts by time bucket."),
+    filter_options: zod
+      .object({
+        credentials: zod
+          .array(
+            zod
+              .object({
+                id: zod.string().describe("Stable identifier."),
+                name: zod.string().describe("Name observed in a request."),
+              })
+              .describe("A stable identity and its name snapshot."),
+          )
+          .describe("Provider credentials observed within the time range."),
+        models: zod.array(zod.string()).describe("Available models."),
+        paths: zod.array(zod.string()).describe("Available paths."),
+        providers: zod.array(zod.string()).describe("Available providers."),
+        virtual_keys: zod
+          .array(
+            zod
+              .object({
+                id: zod.string().describe("Stable identifier."),
+                name: zod.string().describe("Name observed in a request."),
+              })
+              .describe("A stable identity and its name snapshot."),
+          )
+          .describe("Virtual keys observed within the time range."),
+      })
+      .describe("Sorted dimension values in the selected date range."),
     interval: zod
       .enum(["hour", "day", "month", "year"])
       .describe("Bucket granularity."),
@@ -1190,6 +1418,18 @@ export const ObservabilityResponse = zod
         zod
           .object({
             created_at: zod.int().describe("Completion time in Unix seconds."),
+            credential_id: zod
+              .string()
+              .nullable()
+              .describe(
+                "Successfully selected provider credential ID, if any.",
+              ),
+            credential_name: zod
+              .string()
+              .nullable()
+              .describe(
+                "Successfully selected provider credential name snapshot.",
+              ),
             id: zod.int().describe("Database record identifier."),
             input_tokens: zod
               .int()
@@ -1214,6 +1454,16 @@ export const ObservabilityResponse = zod
               .describe(
                 "HTTP status, or 499 for an incomplete response stream.",
               ),
+            virtual_key_id: zod
+              .string()
+              .nullable()
+              .describe(
+                "Authenticated virtual key ID and name snapshot, if known.",
+              ),
+            virtual_key_name: zod
+              .string()
+              .nullable()
+              .describe("Authenticated virtual key name snapshot."),
           })
           .describe("Serialized request log returned by the dashboard."),
       )
@@ -1564,6 +1814,12 @@ export type UpdateModelSettingsBodyOutput = zod.output<
 export const GetObservabilityParams = zod.object({
   since: zod.int().optional(),
   until: zod.int().optional(),
+  providers: zod.string().optional(),
+  models: zod.string().optional(),
+  paths: zod.string().optional(),
+  statuses: zod.string().optional(),
+  virtual_key_ids: zod.string().optional(),
+  credential_ids: zod.string().optional(),
 });
 
 export type GetObservabilityParams = zod.input<typeof GetObservabilityParams>;

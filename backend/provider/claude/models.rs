@@ -153,7 +153,11 @@ async fn fetch(client: &reqwest::Client, base: &str, token: &str) -> Result<Vec<
 }
 
 /// Discover models using a connected credential from the weighted pool.
-pub(super) async fn discover(state: &AppState, provider: &Provider) -> Result<Vec<Model>, String> {
+pub(super) async fn discover(
+    state: &AppState,
+    provider: &Provider,
+    identity: Option<&crate::provider::common::request_identity::RequestIdentity>,
+) -> Result<Vec<Model>, String> {
     let credentials = crate::provider::credentials::list(&state.settings, &provider.id).await?;
     let http = super::client::http()?;
     let mut last = "No connected Claude credentials".to_string();
@@ -161,7 +165,12 @@ pub(super) async fn discover(state: &AppState, provider: &Provider) -> Result<Ve
         match auth::load(&state.settings, &provider.id, &credential.id).await {
             Ok(creds) => match fetch(&http, "https://api.anthropic.com", &creds.access_token).await
             {
-                Ok(models) => return Ok(models),
+                Ok(models) => {
+                    if let Some(identity) = identity {
+                        identity.set_credential(&credential.id, &credential.name);
+                    }
+                    return Ok(models);
+                }
                 Err(e) => last = e,
             },
             Err(e) => last = e,

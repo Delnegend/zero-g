@@ -8,7 +8,7 @@ use axum::{
 
 use crate::{
     openai::{ChatCompletionRequest, ModelListResponse},
-    provider::registry::Provider,
+    provider::{common::request_identity::RequestIdentity, registry::Provider},
     responses::ResponseCreateRequest,
     server::{
         AppState,
@@ -50,8 +50,15 @@ async fn models(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
+    identity: Option<Extension<RequestIdentity>>,
 ) -> Response {
-    match super::models::fetch_catalog_pool(&state, &provider).await {
+    match super::models::fetch_catalog_pool(
+        &state,
+        &provider,
+        identity.as_ref().map(|Extension(identity)| identity),
+    )
+    .await
+    {
         Ok(mut data) => {
             data.retain(|model| permissions.allows_model(strip_prefix(&model.id)));
             Json(ModelListResponse {
@@ -74,9 +81,18 @@ async fn chat(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
+    identity: Option<Extension<RequestIdentity>>,
     Json(req): Json<ChatCompletionRequest>,
 ) -> Response {
-    complete(state, permissions, provider, req, false).await
+    complete(
+        state,
+        permissions,
+        provider,
+        identity.map(|Extension(identity)| identity),
+        req,
+        false,
+    )
+    .await
 }
 
 /// Converts a Responses request and delegates to the shared completion path.
@@ -84,9 +100,18 @@ async fn responses(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
+    identity: Option<Extension<RequestIdentity>>,
     Json(req): Json<ResponseCreateRequest>,
 ) -> Response {
-    complete(state, permissions, provider, req.into_chat_request(), true).await
+    complete(
+        state,
+        permissions,
+        provider,
+        identity.map(|Extension(identity)| identity),
+        req.into_chat_request(),
+        true,
+    )
+    .await
 }
 
 /// Authorizes the model and tries eligible Cursor credentials.
@@ -94,6 +119,7 @@ async fn complete(
     state: AppState,
     permissions: Permissions,
     provider: Provider,
+    identity: Option<RequestIdentity>,
     mut req: ChatCompletionRequest,
     responses: bool,
 ) -> Response {
@@ -143,13 +169,19 @@ async fn complete(
             };
         match super::transport::start(&provider.base_url, &token, replay).await {
             Ok(rx) => {
-                return super::translation::respond(
+                let response = super::translation::respond(
                     rx,
                     req.model,
                     req.stream.unwrap_or(false),
                     responses,
                 )
                 .await;
+                if response.status().is_success()
+                    && let Some(identity) = &identity
+                {
+                    identity.set_credential(&credential.id, &credential.name);
+                }
+                return response;
             }
             Err(failure) => {
                 let retry = failure.retryable();

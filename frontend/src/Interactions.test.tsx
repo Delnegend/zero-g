@@ -2,6 +2,11 @@ import { afterEach, test } from "node:test";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  createMemoryHistory,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", {
   url: "http://localhost",
@@ -10,6 +15,7 @@ for (const name of [
   "window",
   "document",
   "navigator",
+  "localStorage",
   "HTMLElement",
   "HTMLInputElement",
   "HTMLButtonElement",
@@ -34,6 +40,10 @@ for (const name of [
     writable: true,
   });
 }
+Object.defineProperty(globalThis, "scrollTo", {
+  value() {},
+  configurable: true,
+});
 Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", {
   value: true,
   configurable: true,
@@ -105,7 +115,7 @@ const { act, render, screen, within, cleanup, waitFor } =
 const userEvent = (await import("@testing-library/user-event")).default;
 const { SettingsPage } = await import("./routes/settings");
 const { KeysPage } = await import("./routes/keys");
-const { ObservabilityPage } = await import("./routes/index");
+const { routeTree } = await import("./routeTree.gen");
 const { Credentials } = await import("./components/providers/Credentials");
 const { CredentialUsage } = await import("./components/CredentialUsage");
 const { ProviderCard } = await import("./components/providers/ProviderCard");
@@ -1352,8 +1362,7 @@ test("create a restricted key, dismiss its one-time token, and revoke it", async
   assert.equal(screen.queryByText("secret-once"), null);
 });
 
-test("inspect a log, close its details, and change the dashboard range", async () => {
-  const ranges: Array<[number, number]> = [];
+test("search and inspect a request in LLM logs", async () => {
   const log = {
     id: 42,
     created_at: 1700000000,
@@ -1366,18 +1375,27 @@ test("inspect a log, close its details, and change the dashboard range", async (
     request_body: '{"prompt":"hello"}',
     response_body: '{"answer":"world"}',
     status: 200,
+    virtual_key_id: "vk-1",
+    virtual_key_name: "CI key",
+    credential_id: "credential-1",
+    credential_name: "Primary account",
   };
   globalThis.fetch = (async (url) => {
     const parsed = new URL(String(url), "http://localhost");
     assert.equal(parsed.pathname, "/api/observability");
-    ranges.push([
-      Number(parsed.searchParams.get("since")),
-      Number(parsed.searchParams.get("until")),
-    ]);
+    assert.equal(parsed.searchParams.has("since"), false);
     return Response.json({
       interval: "hour",
       buckets: [],
-      logs: [log],
+      logs: [log, { ...log, id: 43, path: "/v1/decisions" }],
+      filter_options: {
+        providers: ["alpha"],
+        models: ["model-a"],
+        paths: ["/v1/chat/completions", "/v1/decisions"],
+        virtual_keys: [{ id: "vk-1", name: "CI key" }],
+        credentials: [{ id: "credential-1", name: "Primary account" }],
+      },
+      breakdown: { providers: [], models: [] },
       summary: {
         avg_latency_ms: 123,
         errors: 0,
@@ -1389,29 +1407,374 @@ test("inspect a log, close its details, and change the dashboard range", async (
     });
   }) as typeof fetch;
   const user = userEvent.setup();
-  mount(<ObservabilityPage />);
+  const history = createMemoryHistory({ initialEntries: ["/llm-logs"] });
+  const router = createRouter({ routeTree, history });
+  mount(<RouterProvider router={router} />);
+  assert.ok((await screen.findAllByText("Decisions")).length > 0);
+  assert.ok(screen.getAllByText("Chat completions").length > 0);
+  await user.type(screen.getByLabelText("Search request logs"), "decisions");
+  assert.ok(
+    screen.getAllByRole("button", { name: "View request 43" }).length > 0,
+  );
+  assert.equal(screen.queryByRole("button", { name: "View request 42" }), null);
+  await user.clear(screen.getByLabelText("Search request logs"));
   await user.click(
     (await screen.findAllByRole("button", { name: "View request 42" }))[0],
   );
   const details = await screen.findByRole("dialog");
   assert.ok(within(details).getByText(/alpha \/ model-a/));
+  assert.ok(within(details).getByText("CI key"));
+  assert.ok(within(details).getByText("Primary account"));
   assert.ok(within(details).getByText("123 ms"));
   assert.ok(within(details).getByText(/hello/));
   assert.ok(within(details).getByText(/world/));
   await user.keyboard("{Escape}");
   await waitFor(() => assert.equal(screen.queryByRole("dialog"), null));
+});
+
+test("LLM log filters load matching requests and reset pagination", async () => {
+  const history = createMemoryHistory({ initialEntries: ["/llm-logs"] });
+  const requests: URL[] = [];
+  const makeLog = (id: number, provider: string) => ({
+    id,
+    provider,
+    model: "test-model",
+    path: "/v1/responses",
+    status: 200,
+    created_at: 1700000000,
+    latency_ms: 100,
+    input_tokens: null,
+    output_tokens: null,
+    request_body: "{}",
+    response_body: "{}",
+    virtual_key_id: null,
+    virtual_key_name: null,
+    credential_id: null,
+    credential_name: null,
+  });
+  const logs = Array.from({ length: 25 }, (_, index) =>
+    makeLog(index + 1, "alpha"),
+  );
+  const olderMatch = makeLog(99, "beta");
+  globalThis.fetch = (async (url) => {
+    const parsed = new URL(String(url), "http://localhost");
+    requests.push(parsed);
+    const providers = JSON.parse(
+      parsed.searchParams.get("providers") ?? "[]",
+    ) as string[];
+    const visible = providers.includes("beta") ? [olderMatch] : logs;
+    return Response.json({
+      interval: "hour",
+      buckets: [],
+      logs: visible,
+      filter_options: {
+        providers: ["alpha", "beta"],
+        models: ["test-model"],
+        paths: ["/v1/responses"],
+        virtual_keys: [],
+        credentials: [],
+      },
+      breakdown: { providers: [], models: [] },
+      summary: {
+        requests: visible.length,
+        successes: visible.length,
+        errors: 0,
+        input_tokens: null,
+        output_tokens: null,
+        avg_latency_ms: 100,
+      },
+    });
+  }) as typeof fetch;
+  const user = userEvent.setup();
+  mount(<RouterProvider router={createRouter({ routeTree, history })} />);
+  await screen.findAllByRole("button", { name: "View request 1" });
+  await user.click(screen.getByRole("button", { name: "Go to next page" }));
+  assert.ok(
+    (await screen.findAllByRole("button", { name: "View request 21" })).length,
+  );
+  const filters = screen.getByRole("complementary", {
+    name: "Observability filters",
+  });
+  await user.click(
+    within(filters).getByText("Providers", { selector: "summary" }),
+  );
+  await user.click(within(filters).getByRole("checkbox", { name: "beta" }));
+  assert.ok(
+    (await screen.findAllByRole("button", { name: "View request 99" })).length,
+  );
+  assert.equal(screen.queryByRole("button", { name: "View request 21" }), null);
+  assert.deepEqual(
+    JSON.parse(requests.at(-1)!.searchParams.get("providers")!),
+    ["beta"],
+  );
+  assert.equal(requests.at(-1)!.searchParams.has("since"), false);
+  assert.deepEqual(
+    JSON.parse(new URLSearchParams(history.location.search).get("providers")!),
+    ["beta"],
+  );
+  await user.click(within(filters).getByRole("button", { name: "Reset" }));
+  assert.ok(
+    (await screen.findAllByRole("button", { name: "View request 1" })).length,
+  );
+});
+
+test("dashboard filters graphs and changes the time range without showing logs", async () => {
+  const requests: URL[] = [];
+  globalThis.fetch = (async (url) => {
+    const parsed = new URL(String(url), "http://localhost");
+    requests.push(parsed);
+    return Response.json({
+      interval: "hour",
+      buckets: [],
+      logs: [],
+      filter_options: {
+        providers: ["alpha", "beta"],
+        models: ["model-a"],
+        paths: ["/v1/some/very/long/path/for/request"],
+        virtual_keys: [
+          { id: "vk-1", name: "CI key" },
+          { id: "vk-2", name: "Development" },
+        ],
+        credentials: [{ id: "credential-1", name: "Primary account" }],
+      },
+      breakdown: { providers: [], models: [] },
+      summary: {
+        avg_latency_ms: 0,
+        errors: 0,
+        input_tokens: null,
+        output_tokens: null,
+        requests: 0,
+        successes: 0,
+      },
+    });
+  }) as typeof fetch;
+  const user = userEvent.setup();
+  const history = createMemoryHistory({ initialEntries: ["/"] });
+  const router = createRouter({ routeTree, history });
+  mount(<RouterProvider router={router} />);
+  assert.ok(await screen.findByText("Request volume"));
+  assert.equal(screen.queryByLabelText("Search request logs"), null);
+  const filters = screen.getByRole("complementary", {
+    name: "Observability filters",
+  });
+  await user.click(
+    within(filters).getByText("Providers", { selector: "summary" }),
+  );
+  await user.click(within(filters).getByRole("checkbox", { name: "alpha" }));
+  await user.click(within(filters).getByRole("checkbox", { name: "beta" }));
+  await waitFor(() =>
+    assert.deepEqual(
+      JSON.parse(requests.at(-1)!.searchParams.get("providers")!),
+      ["alpha", "beta"],
+    ),
+  );
+  await user.click(within(filters).getByRole("checkbox", { name: "Error" }));
+  await waitFor(() =>
+    assert.deepEqual(
+      JSON.parse(requests.at(-1)!.searchParams.get("statuses")!),
+      ["error"],
+    ),
+  );
+  assert.deepEqual(
+    JSON.parse(new URLSearchParams(history.location.search).get("providers")!),
+    ["alpha", "beta"],
+  );
+  assert.deepEqual(
+    JSON.parse(new URLSearchParams(history.location.search).get("statuses")!),
+    ["error"],
+  );
+  history.back();
+  await waitFor(() =>
+    assert.equal(requests.at(-1)?.searchParams.has("statuses"), false),
+  );
+  history.forward();
+  await waitFor(() =>
+    assert.deepEqual(
+      JSON.parse(requests.at(-1)!.searchParams.get("statuses")!),
+      ["error"],
+    ),
+  );
+  await user.click(
+    within(filters).getByText("Virtual keys", { selector: "summary" }),
+  );
+  await user.type(
+    within(filters).getByLabelText("Search Virtual keys"),
+    "CI key",
+  );
+  await user.click(
+    within(filters).getByRole("checkbox", { name: "CI key (vk-1)" }),
+  );
+  await waitFor(() =>
+    assert.deepEqual(
+      JSON.parse(requests.at(-1)!.searchParams.get("virtual_key_ids")!),
+      ["vk-1"],
+    ),
+  );
+  await user.click(
+    within(filters).getByText("Provider credentials", { selector: "summary" }),
+  );
+  await user.click(
+    within(filters).getByRole("checkbox", {
+      name: "Primary account (credential-1)",
+    }),
+  );
+  await waitFor(() =>
+    assert.deepEqual(
+      JSON.parse(requests.at(-1)!.searchParams.get("credential_ids")!),
+      ["credential-1"],
+    ),
+  );
+  assert.deepEqual(
+    JSON.parse(
+      new URLSearchParams(history.location.search).get("virtual_key_ids")!,
+    ),
+    ["vk-1"],
+  );
+  assert.deepEqual(
+    JSON.parse(
+      new URLSearchParams(history.location.search).get("credential_ids")!,
+    ),
+    ["credential-1"],
+  );
+  await user.click(
+    within(filters).getByText("Request paths", { selector: "summary" }),
+  );
+  await user.click(
+    within(filters).getByRole("checkbox", {
+      name: "/v1/some/very/long/path/for/request",
+    }),
+  );
+  await waitFor(() =>
+    assert.deepEqual(JSON.parse(requests.at(-1)!.searchParams.get("paths")!), [
+      "/v1/some/very/long/path/for/request",
+    ]),
+  );
   await user.click(
     screen.getByRole("button", { name: /Dashboard time range: Last 24 hours/ }),
   );
   await user.click(await screen.findByRole("button", { name: "Last 7 days" }));
-  await waitFor(() => assert.equal(ranges.length, 2));
-  assert.equal(ranges[0][1] - ranges[0][0], 24 * 3600);
-  assert.ok(Math.abs(ranges[1][1] - ranges[1][0] - 7 * 24 * 3600) <= 1);
-  assert.equal(screen.queryByRole("dialog"), null);
+  await waitFor(() => {
+    const query = requests.at(-1)!.searchParams;
+    assert.ok(
+      Math.abs(
+        Number(query.get("until")) - Number(query.get("since")) - 7 * 86400,
+      ) <= 1,
+    );
+    assert.deepEqual(JSON.parse(query.get("providers")!), ["alpha", "beta"]);
+    assert.deepEqual(JSON.parse(query.get("statuses")!), ["error"]);
+    assert.deepEqual(JSON.parse(query.get("virtual_key_ids")!), ["vk-1"]);
+    assert.deepEqual(JSON.parse(query.get("credential_ids")!), [
+      "credential-1",
+    ]);
+  });
   await user.click(
-    (await screen.findAllByRole("button", { name: "View request 42" }))[0],
+    screen.getByRole("button", { name: /Dashboard time range: Last 7 days/ }),
   );
-  assert.ok(await screen.findByText("Request details"));
+  await user.click(await screen.findByRole("button", { name: "Last hour" }));
+  await waitFor(() => {
+    const query = requests.at(-1)!.searchParams;
+    assert.ok(
+      Math.abs(
+        Number(query.get("until")) - Number(query.get("since")) - 3600,
+      ) <= 1,
+    );
+  });
+  await user.click(
+    screen.getByRole("button", { name: /Dashboard time range: Last hour/ }),
+  );
+  await user.click(await screen.findByRole("button", { name: "Last 6 hours" }));
+  await waitFor(() => {
+    const query = requests.at(-1)!.searchParams;
+    assert.ok(
+      Math.abs(
+        Number(query.get("until")) - Number(query.get("since")) - 6 * 3600,
+      ) <= 1,
+    );
+  });
+  await user.click(within(filters).getByRole("button", { name: "Reset" }));
+  await waitFor(() =>
+    assert.equal(requests.at(-1)?.searchParams.has("providers"), false),
+  );
+  assert.equal(requests.at(-1)?.searchParams.has("statuses"), false);
+});
+
+test("catalog distinguishes Decisions models without guessing missing metadata", async () => {
+  const card = (id: string, model: Record<string, unknown>) => ({
+    model: { id, ...model },
+    display_name: id,
+    description: null,
+    reasoning_efforts: [],
+    reasoning: null,
+    tool_call: null,
+    input_modalities: ["text"],
+    pricing: null,
+    raw_pricing: null,
+    parameters: null,
+    provider_metadata: null,
+  });
+  globalThis.fetch = (async () =>
+    Response.json({
+      datasheets_error: null,
+      providers: [
+        {
+          id: "openrouter",
+          name: "OpenRouter",
+          kind: "openrouter",
+          base_url: "",
+          error: null,
+          models: [
+            card("decision-only", {
+              architecture: { output_modalities: ["decisions"] },
+              endpoints: ["/api/alpha/decisions"],
+            }),
+            card("mixed", {
+              architecture: { output_modalities: ["text", "decisions"] },
+              endpoints: ["/v1/chat/completions", "/api/alpha/decisions"],
+            }),
+            card("ordinary-chat", {
+              architecture: { output_modalities: ["text"] },
+              endpoints: ["/v1/chat/completions"],
+            }),
+            card("unknown", {
+              architecture: { output_modalities: "decisions" },
+            }),
+          ],
+        },
+      ],
+    })) as typeof fetch;
+  const user = userEvent.setup();
+  mount(
+    <TooltipProvider>
+      <ModelCatalogPage />
+    </TooltipProvider>,
+  );
+  const modelCard = async (name: string) => {
+    const heading = await screen.findByRole("heading", { name });
+    const element = heading.closest('[data-slot="card"]');
+    assert.ok(element instanceof HTMLElement);
+    return within(element);
+  };
+  assert.ok(
+    (await modelCard("decision-only")).getByText(
+      "Decisions API only (not Chat Completions or Responses)",
+    ),
+  );
+  assert.ok(
+    (await modelCard("mixed")).getByText(
+      "Decisions API and other capabilities",
+    ),
+  );
+  assert.equal(
+    (await modelCard("ordinary-chat")).queryByText(/Decisions API/),
+    null,
+  );
+  assert.equal((await modelCard("unknown")).queryByText(/Decisions API/), null);
+  await user.type(
+    screen.getByLabelText("Search models or providers"),
+    "decision-only",
+  );
+  assert.ok(await screen.findByRole("heading", { name: "decision-only" }));
+  assert.equal(screen.queryByRole("heading", { name: "ordinary-chat" }), null);
 });
 
 test("model cards label supported input icons and retain unknown modalities", async () => {
@@ -1439,6 +1802,7 @@ test("model cards label supported input icons and retain unknown modalities", as
                 "audio",
                 "video",
                 "pdf",
+                "file",
                 "geometry",
                 "toString",
               ],
@@ -1467,7 +1831,7 @@ test("model cards label supported input icons and retain unknown modalities", as
   );
   assert.ok(await screen.findByRole("heading", { name: "Example 1 model" }));
   assert.ok(screen.getByRole("heading", { name: "Empty provider" }));
-  for (const modality of ["text", "image", "audio", "video", "pdf"]) {
+  for (const modality of ["text", "image", "audio", "video", "pdf", "file"]) {
     assert.ok(await screen.findByRole("button", { name: `${modality} input` }));
   }
   assert.ok(screen.getByText("geometry"));

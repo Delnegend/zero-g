@@ -63,7 +63,7 @@ pub(crate) async fn fetch_catalog_pool(
     state: &AppState,
     provider: &Provider,
 ) -> Result<ModelListResponse, String> {
-    crate::provider::codex::routes::with_pool(state, provider, |creds| async move {
+    crate::provider::codex::routes::with_pool(state, provider, None, |creds| async move {
         fetch_models(&creds).await
     })
     .await

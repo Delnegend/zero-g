@@ -12,6 +12,7 @@ pub(crate) async fn retry_api_keys<F, Fut>(
     settings: &SettingsStore,
     provider_id: &str,
     no_credentials: &'static str,
+    identity: Option<&crate::provider::common::request_identity::RequestIdentity>,
     mut send: F,
 ) -> Result<reqwest::Response, ProxyError>
 where
@@ -40,6 +41,11 @@ where
             response.status(),
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN | StatusCode::TOO_MANY_REQUESTS
         ) {
+            if response.status().is_success()
+                && let Some(identity) = identity
+            {
+                identity.set_credential(&credential.id, &credential.name);
+            }
             return Ok(response);
         }
         last = Some(response);
@@ -271,6 +277,7 @@ mod tests {
             &settings,
             "missing",
             "No connected Zen credentials",
+            None,
             |_| async { panic!("no request should be sent") },
         )
         .await

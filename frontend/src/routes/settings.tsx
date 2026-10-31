@@ -114,7 +114,7 @@ export function SettingsPage() {
           Settings saved.
         </p>
       )}
-      {settingsQuery.isPending && <FormSkeleton label="Loading settings" />}
+      {settingsQuery.isPending && <FormSkeleton />}
       {settings && (
         <Card className="mt-6 p-5">
           <form

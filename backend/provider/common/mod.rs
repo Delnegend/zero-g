@@ -4,6 +4,8 @@ pub(crate) mod catalog;
 pub(crate) mod errors;
 /// Helpers for OpenAI-compatible proxy responses and permissions.
 pub(crate) mod proxy;
+/// Request-scoped, non-secret identity snapshots for observability.
+pub(crate) mod request_identity;
 /// Scoped identities for upstream session affinity.
 pub(crate) mod session;
 

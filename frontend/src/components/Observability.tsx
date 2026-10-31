@@ -15,6 +15,7 @@ import { LogsTable } from "@/LogsTable";
 import { RequestBody, requestBodyTheme } from "@/RequestBody";
 import {
   observabilityQueryOptions,
+  type ObservabilityFilterValues,
   type DashboardRange,
   type Log,
 } from "@/server/api/observability";
@@ -30,7 +31,10 @@ function formatDate(value: number): string {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
 }
 
-export function useObservability(logsOnly = false) {
+export function useObservability(
+  logsOnly = false,
+  filters: ObservabilityFilterValues = {},
+) {
   const [range, setRange] = useState<DashboardRange>({
     kind: "preset",
     value: "24h",
@@ -40,7 +44,7 @@ export function useObservability(logsOnly = false) {
     error: queryError,
     isFetching: loading,
     refetch,
-  } = useQuery(observabilityQueryOptions(range, logsOnly));
+  } = useQuery(observabilityQueryOptions(range, logsOnly, filters));
   const error =
     !loading && queryError
       ? queryError instanceof Error
@@ -146,6 +150,24 @@ export function RequestLogs({
                     <dd>
                       {formatTokens(selected.input_tokens)} in ·{" "}
                       {formatTokens(selected.output_tokens)} out
+                    </dd>
+                  </div>
+                  <div className="min-w-0 max-w-full">
+                    <dt className="text-muted-foreground">Virtual key</dt>
+                    <dd className="break-words">
+                      {selected.virtual_key_name ??
+                        selected.virtual_key_id ??
+                        "Unknown"}
+                    </dd>
+                  </div>
+                  <div className="min-w-0 max-w-full">
+                    <dt className="text-muted-foreground">
+                      Provider credential
+                    </dt>
+                    <dd className="break-words">
+                      {selected.credential_name ??
+                        selected.credential_id ??
+                        "Unknown"}
                     </dd>
                   </div>
                 </dl>

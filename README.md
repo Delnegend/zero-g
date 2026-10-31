@@ -37,7 +37,7 @@ Use the returned model ID, such as `agy/gemini-3-pro`, in requests to the shared
 The API reference is available at `http://127.0.0.1:8080/redoc` after dashboard sign-in. Its OpenAPI document is at `/api/openapi.json`.
 
 Configure retention under **Settings**, and configure providers and their accounts under **Providers**. Set the listening address with `ZERO_G_BIND` in `.env`. Full request and response bodies are stored locally for 30 days by default. See [configuration](docs/configuration.md) and [deployment](docs/deployment.md) for secure setup and backups.
-Under **Observability**, the **Dashboard** shows totals and request trends for the selected time range; **LLM Logs** lets you search and sort the latest 200 requests in pages of 20. Select **View** to inspect a request in the right-side drawer, with JSON syntax highlighting for recorded bodies. On phones, requests appear as cards instead of a wide table. Dashboard pages have shareable URLs and support browser navigation.
+Under **Observability**, the **Dashboard** graphs request volume, outcomes, token usage, latency, providers and models. **LLM Logs** shows the latest 200 matching requests, searchable and sortable in pages of 20. Both pages filter by provider, model, path, status, virtual key or provider credential; the Dashboard also has a date filter. Select **View** to inspect a request in the right-side drawer, with JSON syntax highlighting for recorded bodies. On phones, requests appear as cards instead of a wide table. Dashboard pages have shareable URLs and support browser navigation.
 The dashboard theme toggle follows your system preference initially and remembers your choice in the browser.
 
 
@@ -45,7 +45,7 @@ Source builds from checkout: run `(cd frontend && bun install --frozen-lockfile)
 
 ## Highlights
 
-- **Unified API** — All providers share `/v1`; model IDs include the provider ID to distinguish identical names.
+- **Unified API** — All providers share `/v1`; model IDs include the provider ID. OpenRouter Decisions models use `/v1/decisions`.
 - **Multi-Provider Backends** — Connect Antigravity, Codex, Claude Code, Cursor, Grok, Grok Build, OpenCode Zen and Go, OpenRouter, and OpenAI-compatible upstreams.
 - **OAuth Refresh** — Refreshes supported access tokens on demand when they approach expiration.
 - **Claude & Gemini Support** — Formats Anthropic thinking beta headers, system instructions, and tool calling signatures automatically.

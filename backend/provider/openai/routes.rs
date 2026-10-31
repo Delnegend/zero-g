@@ -12,6 +12,7 @@ use serde_json::Value;
 #[cfg(test)]
 use crate::provider::common::proxy::filter_models;
 use crate::provider::common::proxy::{ProxyError, check_model, model_response, retry_api_keys};
+use crate::provider::common::request_identity::RequestIdentity;
 use crate::provider::openai;
 use crate::provider::registry::Provider;
 use crate::server::{
@@ -59,11 +60,13 @@ async fn send(
     method: Method,
     headers: &HeaderMap,
     body: Option<Bytes>,
+    identity: Option<&RequestIdentity>,
 ) -> Result<reqwest::Response, ProxyError> {
     retry_api_keys(
         settings,
         &provider.id,
         "No connected OpenAI-compatible credentials",
+        identity,
         |key| {
             let method = method.clone();
             let body = body.clone();
@@ -90,6 +93,7 @@ async fn models_handler(
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
     Extension(FixedBase(fixed_base)): Extension<FixedBase>,
+    identity: Option<Extension<RequestIdentity>>,
     RawQuery(query): RawQuery,
     headers: HeaderMap,
 ) -> Response {
@@ -102,6 +106,7 @@ async fn models_handler(
         Method::GET,
         &headers,
         None,
+        identity.as_ref().map(|Extension(identity)| identity),
     )
     .await
     {
@@ -122,6 +127,7 @@ async fn inference(
     headers: HeaderMap,
     body: Bytes,
     path: &str,
+    identity: Option<&RequestIdentity>,
 ) -> Response {
     if let Err(response) = check_model(&body, &permissions) {
         return response.into_response();
@@ -135,6 +141,7 @@ async fn inference(
         Method::POST,
         &headers,
         Some(body),
+        identity,
     )
     .await
     {
@@ -144,11 +151,13 @@ async fn inference(
 }
 
 /// Handle chat completion requests.
+#[allow(clippy::too_many_arguments)]
 async fn chat_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
     Extension(FixedBase(fixed_base)): Extension<FixedBase>,
+    identity: Option<Extension<RequestIdentity>>,
     RawQuery(query): RawQuery,
     headers: HeaderMap,
     body: Bytes,
@@ -162,16 +171,19 @@ async fn chat_handler(
         headers,
         body,
         "chat/completions",
+        identity.as_ref().map(|Extension(identity)| identity),
     )
     .await
 }
 
 /// Handle responses API requests.
+#[allow(clippy::too_many_arguments)]
 async fn responses_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
     Extension(FixedBase(fixed_base)): Extension<FixedBase>,
+    identity: Option<Extension<RequestIdentity>>,
     RawQuery(query): RawQuery,
     headers: HeaderMap,
     body: Bytes,
@@ -185,6 +197,7 @@ async fn responses_handler(
         headers,
         body,
         "responses",
+        identity.as_ref().map(|Extension(identity)| identity),
     )
     .await
 }
@@ -503,6 +516,7 @@ mod tests {
                     };
                     let server =
                         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+                    let identity = RequestIdentity::default();
                     let response = send(
                         &store,
                         &provider,
@@ -512,6 +526,7 @@ mod tests {
                         Method::GET,
                         &HeaderMap::new(),
                         None,
+                        Some(&identity),
                     )
                     .await
                     .unwrap();
@@ -524,6 +539,10 @@ mod tests {
                     assert_ne!(first, second);
                     assert!(first.starts_with(&format!("Bearer {}-", provider.id)));
                     assert!(second.starts_with(&format!("Bearer {}-", provider.id)));
+                    let snapshot = identity.snapshot();
+                    let expected = (!all_fail).then(|| second.trim_start_matches("Bearer "));
+                    assert_eq!(snapshot.credential_id.as_deref(), expected);
+                    assert_eq!(snapshot.credential_name.as_deref(), expected);
                     assert_eq!(count.load(Ordering::SeqCst), 2);
                     server.abort();
                 }
@@ -585,7 +604,8 @@ mod tests {
                     None,
                     Method::GET,
                     &HeaderMap::new(),
-                    None
+                    None,
+                    None,
                 )
                 .await
                 .unwrap()

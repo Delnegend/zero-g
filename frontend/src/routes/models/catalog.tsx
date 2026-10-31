@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useMemo, useRef, useState } from "react";
 import {
   AudioLines,
+  File,
   FileText,
   FileType,
   Image,
@@ -17,7 +18,7 @@ import {
   type CatalogModel,
   type Provider,
 } from "@/server/api/models";
-import { CardsSkeleton } from "@/components/Loading";
+import { CatalogSkeleton } from "@/components/Loading";
 import { RequestBody, requestBodyTheme } from "@/RequestBody";
 import { RefreshButton } from "@/components/RefreshButton";
 import { ScrollingText } from "@/components/ScrollingText";
@@ -63,6 +64,7 @@ const inputClass = "mt-1 w-full";
 
 const modalityIcons: Record<string, LucideIcon> = {
   text: FileText,
+  file: File,
   image: Image,
   audio: AudioLines,
   video: Video,
@@ -96,6 +98,41 @@ function ModelCard({
 }) {
   const descriptionRef = useRef<HTMLButtonElement>(null);
   const rawModel = model.model;
+  const architecture = rawModel.architecture;
+  const outputModalities =
+    architecture &&
+    typeof architecture === "object" &&
+    "output_modalities" in architecture
+      ? architecture.output_modalities
+      : undefined;
+  const modalities =
+    Array.isArray(outputModalities) &&
+    outputModalities.every((value) => typeof value === "string")
+      ? outputModalities
+      : null;
+  const endpoints =
+    Array.isArray(rawModel.endpoints) &&
+    rawModel.endpoints.every((value) => typeof value === "string")
+      ? rawModel.endpoints
+      : null;
+  const hasDecisions =
+    modalities?.includes("decisions") ||
+    endpoints?.some((value) => value.endsWith("/decisions"));
+  const hasOtherOutputs = modalities?.some((value) => value !== "decisions");
+  const hasOtherEndpoints = endpoints?.some(
+    (value) => !value.endsWith("/decisions"),
+  );
+  const decisionsOnly =
+    modalities?.length &&
+    modalities.every((value) => value === "decisions") &&
+    !hasOtherEndpoints;
+  const decisionsLabel = hasDecisions
+    ? decisionsOnly
+      ? "Decisions API only (not Chat Completions or Responses)"
+      : hasOtherOutputs || hasOtherEndpoints
+        ? "Decisions API and other capabilities"
+        : "Decisions API supported"
+    : null;
   const number = (value: unknown) =>
     typeof value === "number" && Number.isFinite(value)
       ? value.toLocaleString()
@@ -128,6 +165,7 @@ function ModelCard({
       : []),
   ];
   const rows = [
+    ...(decisionsLabel ? [["API", decisionsLabel]] : []),
     ["Model ID", `${provider.id}/${rawModel.id}`],
     ["Context window", number(rawModel.context_window)],
     ["Max output", number(rawModel.max_output_tokens)],
@@ -207,7 +245,7 @@ function ModelCard({
               )}
             </dt>
             <dd className="min-w-16 flex-1 text-right">
-              {label === "Model ID" ? (
+              {label === "Model ID" || label === "API" ? (
                 <ScrollingText text={value} align="right" />
               ) : (
                 <span className="break-all">{value}</span>
@@ -478,7 +516,7 @@ export function ModelCatalogPage() {
           </Select>
         </div>
       </div>
-      {catalog.isLoading && <CardsSkeleton label="Loading model catalog" />}
+      {catalog.isLoading && <CatalogSkeleton />}
       {catalog.data && catalog.data.providers.length === 0 && (
         <p className="mt-6 text-sm text-muted-foreground">
           No providers in the catalog. Configure a provider and refresh to

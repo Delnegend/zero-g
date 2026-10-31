@@ -11,6 +11,8 @@ use serde_json::Value;
 
 /// Chat Completions endpoint.
 mod chat_completions;
+/// Decisions endpoint.
+mod decisions;
 /// Shared request validation and provider dispatch.
 mod dispatch;
 /// Model discovery endpoint.
@@ -19,6 +21,7 @@ mod models;
 mod responses;
 
 use chat_completions::{__path_inference, inference};
+use decisions::{__path_inference_decisions, inference_decisions};
 use models::{__path_models, models};
 use responses::{__path_inference_responses, inference_responses};
 
@@ -30,7 +33,7 @@ pub(super) const INFERENCE_BODY_LIMIT: usize = 20_000_000;
 struct InferenceRequest {
     /// Model identifier in `provider/model` form.
     model: String,
-    /// Remaining OpenAI-compatible request fields are passed through.
+    /// Remaining provider-specific request fields are passed through.
     #[serde(flatten)]
     extra: std::collections::BTreeMap<String, Value>,
 }
@@ -58,7 +61,7 @@ struct InferenceModelList {
 /// Public unified inference operations.
 #[derive(utoipa::OpenApi)]
 #[openapi(
-    paths(models, inference, inference_responses),
+    paths(models, inference, inference_responses, inference_decisions),
     components(schemas(InferenceRequest, InferenceModelList, InferenceDiscoveryError, Model))
 )]
 pub(crate) struct Api;
@@ -72,6 +75,7 @@ fn error(status: StatusCode, message: &str, kind: &str, code: &str) -> Response 
 async fn permissions(
     state: &AppState,
     headers: &axum::http::HeaderMap,
+    identity: Option<&crate::provider::common::request_identity::RequestIdentity>,
 ) -> Result<Permissions, crate::provider::common::proxy::ProxyError> {
     let token = headers
         .get(header::AUTHORIZATION)
@@ -87,7 +91,7 @@ async fn permissions(
             "invalid_api_key",
         ));
     };
-    match state.settings.permissions(token).await {
+    match state.settings.permissions(token, identity).await {
         Ok(Some(permissions)) => Ok(permissions),
         Ok(None) => Err(crate::provider::common::proxy::error(
             StatusCode::UNAUTHORIZED,
@@ -113,6 +117,7 @@ pub(super) fn router(state: &AppState) -> Router<AppState> {
         .route("/v1/models", get(models))
         .route("/v1/chat/completions", post(inference))
         .route("/v1/responses", post(inference_responses))
+        .route("/v1/decisions", post(inference_decisions))
         .layer(axum::Extension(internal))
 }
 
@@ -497,6 +502,129 @@ mod tests {
         second_task.abort();
     }
 
+    /// Decisions preserve provider responses and enforce provider and model permissions.
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn unified_decisions_dispatch() {
+        let database = Database::open(":memory:").await.unwrap();
+        let store = settings::SettingsStore::new(
+            database.clone(),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )
+        .await
+        .unwrap();
+        let state = AppState {
+            providers: crate::provider::Providers::new(),
+            settings: store.clone(),
+            logs: LogStore::new(database),
+            dashboard_auth: crate::server::dashboard_auth_config::test_auth().await,
+        };
+        for body in [
+            json!({"kind":"openrouter"}),
+            json!({"id":"other","name":"other","kind":"openai","base_url":"http://127.0.0.1:1/v1"}),
+        ] {
+            let response = registry::router(store.clone())
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/providers")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::CREATED);
+        }
+        let keys = Router::new()
+            .route("/keys", post(settings::create_key))
+            .with_state(store);
+        let make_key = |providers: Value| {
+            let keys = keys.clone();
+            async move {
+                let response = keys.oneshot(Request::builder().method("POST").uri("/keys")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(json!({"name":"decisions","providers":providers,"models":["cloudflare/clef"]}).to_string())).unwrap()
+                ).await.unwrap();
+                assert_eq!(response.status(), StatusCode::CREATED);
+                json_body(response).await["key"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            }
+        };
+        let key = make_key(json!(["openrouter"])).await;
+        let unrestricted_provider = make_key(json!([])).await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = calls.clone();
+        let internal: Router = Router::new().route(
+            "/openrouter/openrouter/v1/decisions",
+            post(move |Json(body): Json<Value>| {
+                let seen = seen.clone();
+                async move {
+                    seen.fetch_add(1, Ordering::SeqCst);
+                    let status = if body["fail"] == true {
+                        StatusCode::TOO_MANY_REQUESTS
+                    } else {
+                        StatusCode::OK
+                    };
+                    (status, [("x-decision", "preserved")], Json(body))
+                }
+            }),
+        );
+        let app = Router::new()
+            .route("/v1/decisions", post(inference_decisions))
+            .layer(axum::Extension(internal))
+            .with_state(state);
+        let send = |key: &str, body: Value| {
+            app.clone().oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/decisions")
+                    .header(header::AUTHORIZATION, format!("Bearer {key}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+        };
+        let payload = json!({
+            "model":"openrouter/cloudflare/clef",
+            "state":[{"type":"image","url":"data:image/png;base64,AAAA"},{"nested":[1, {"x":true}]}],
+            "questions":[{"name":"choice","options":["a","b"]}],
+            "custom":{"preserve":true}
+        });
+        for fail in [false, true] {
+            let mut request = payload.clone();
+            request["fail"] = json!(fail);
+            let response = send(&key, request.clone()).await.unwrap();
+            assert_eq!(
+                response.status(),
+                if fail {
+                    StatusCode::TOO_MANY_REQUESTS
+                } else {
+                    StatusCode::OK
+                }
+            );
+            assert_eq!(response.headers()["x-decision"], "preserved");
+            request["model"] = json!("cloudflare/clef");
+            assert_eq!(json_body(response).await, request);
+        }
+        for model in ["other/cloudflare/clef", "openrouter/denied"] {
+            assert_eq!(
+                send(&key, json!({"model":model})).await.unwrap().status(),
+                StatusCode::FORBIDDEN
+            );
+        }
+        let response = send(
+            &unrestricted_provider,
+            json!({"model":"other/cloudflare/clef"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
     /// Reject invalid virtual keys before contacting any provider.
     #[tokio::test]
     async fn unified_api_authenticates_before_discovery_or_inference() {
@@ -520,6 +648,7 @@ mod tests {
             ("GET", "/v1/models"),
             ("POST", "/v1/chat/completions"),
             ("POST", "/v1/responses"),
+            ("POST", "/v1/decisions"),
         ] {
             for authorization in [
                 None,

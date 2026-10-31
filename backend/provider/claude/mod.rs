@@ -44,7 +44,7 @@ impl super::common::Provider for Backend {
         state: &crate::server::AppState,
         provider: &super::registry::Provider,
     ) -> Result<Vec<crate::openai::Model>, String> {
-        models::discover(state, provider).await
+        models::discover(state, provider, None).await
     }
 }
 impl super::common::DashboardProvider for Backend {

@@ -24,15 +24,17 @@ Use the exact `127.0.0.1` address above: `localhost` is a different origin and i
 
 Run `just fmt` to format Rust and frontend code, and `just lint` to lint the frontend.
 Vite runs the experimental Oxc React Compiler for development and production builds, automatically memoizing eligible components.
-Dashboard pages use the shared skeleton components in `frontend/src/components/Loading.tsx` for initial data loads. The dashboard keeps the previous results visible and shows **Updating** while a refresh or new time range loads, preventing layout shifts.
+Dashboard pages use layout-specific skeleton components for initial data loads. The dashboard keeps the previous results visible and shows **Updating** while a refresh, filter or new time range loads.
 Dashboard and catalog refresh controls share `frontend/src/components/RefreshButton.tsx`, including their disabled and updating states.
 The root tooltip provider opens shadcn tooltips without delay. Model descriptions show a tooltip only when clipped to three lines; long tooltip text scrolls within the popup.
 Dashboard routes, page layouts and titles live in `frontend/src/routes/`, mirroring their URLs. Shared components remain outside the routes directory. The TanStack Router Vite plugin generates `frontend/src/routeTree.gen.ts` during development and builds; commit the generated file when changing routes and do not edit it manually.
 Provider management keeps its page in `frontend/src/routes/models/providers.tsx` and its form, credential list and provider card components in `frontend/src/components/providers/`. The add-provider dialog keeps its initial kind choices until it closes, so a refresh after saving cannot replace the selected label.
-The requests chart uses TanStack Charts' motion renderer and theme-aware tooltip tokens; motion respects the browser's reduced-motion preference.
+The dashboard graphs use TanStack Charts' motion renderer and theme-aware tooltip tokens; motion respects the browser's reduced-motion preference.
 The request log table uses TanStack Table v9 with explicit filtering, sorting and pagination features.
 
 To populate the dashboard, start zero-g once to initialize its database, then stop it and run `just seed`. It reads `ZERO_G_LOG_DB` from `.env` (or uses `zero-g-logs.db`), creates example providers where needed, and appends 140 example requests and two restricted virtual keys per run. It reuses an existing provider of each kind without changing its credentials. Request and response bodies contain `_seed: true`. Copy the newly generated keys from the command output; they cannot be retrieved later. Newly created providers require upstream credentials before making requests. If an example ID belongs to a different or deleted provider, the seed fails without adding data. Use a development database, not production. Restart `just dev` to view the data.
+
+Seeded logs include example virtual-key identities and synthetic provider-credential identities for testing the dashboard filters. These credential identities do not create or connect provider credentials.
 
 ## Build & Test
 

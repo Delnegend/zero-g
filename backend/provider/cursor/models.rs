@@ -153,6 +153,7 @@ struct Variant {
 pub(crate) async fn fetch_catalog_pool(
     state: &AppState,
     provider: &Provider,
+    identity: Option<&crate::provider::common::request_identity::RequestIdentity>,
 ) -> Result<Vec<Model>, String> {
     let credentials = crate::provider::credentials::list(&state.settings, &provider.id).await?;
     let client = reqwest::Client::builder()
@@ -176,7 +177,12 @@ pub(crate) async fn fetch_catalog_pool(
                 }
             };
         match fetch_models(&client, base, &token).await {
-            Ok(models) => return Ok(models),
+            Ok(models) => {
+                if let Some(identity) = identity {
+                    identity.set_credential(&credential.id, &credential.name);
+                }
+                return Ok(models);
+            }
             Err(error) if error.retryable() => last = Some(error.message),
             Err(error) => return Err(error.message),
         }

@@ -29,7 +29,13 @@ At least one allowed email or group is required. If both are configured, a verif
 
 Sign in to the dashboard and open **Settings** to configure log retention (default 30 days, range 1–36500).
 
-The Dashboard's date picker defaults to the last 24 hours and offers presets for 7 days, 1 month, 6 months and 1 year. Select calendar dates and choose **Apply dates** for a custom range, including both full days in your browser's local time zone. Totals and the chart include all retained requests in the selected range; the request list shows the latest 200. The chart groups requests by UTC hour for ranges up to one day, day up to three calendar months, month up to three calendar years, and year for longer ranges. Only periods with requests are shown. Preset months and years use calendar dates. Longer ranges cannot show requests already removed by log retention.
+The Dashboard's date picker defaults to the last 24 hours and offers presets for 1 hour, 6 hours, 7 days, 1 month, 6 months and 1 year. Select calendar dates and choose **Apply dates** for a custom range, including both full days in your browser's local time zone. Filter graphs by provider, model, request path and success or error status. Graphs include all retained matching requests, not just the latest 200 shown in **LLM Logs**. Time graphs group requests by UTC hour for ranges up to one day, day up to three calendar months, month up to three calendar years, and year for longer ranges. Only periods with requests are shown. Token usage is shown only when reported by the provider. Preset months and years use calendar dates. Longer ranges cannot show requests already removed by log retention.
+
+Use the filter sidebar on the Dashboard or LLM Logs to select one or more providers, models, request paths, response statuses, virtual keys or provider credentials. Options within a group match any selection; groups combine to narrow the results. LLM Logs loads the latest 200 requests after applying these filters; its text search and sorting work within those results. Reset clears the filters without changing the date range. Filters stay in each page address for sharing and browser navigation; the Dashboard date range remains local to the current page. Use the controls on a time graph to switch between bars and lines.
+
+The filter sidebar stays visible while scrolling; on small screens, the **Filters** button stays visible instead. Long request paths scroll inside the filter while visible. Scrolling respects the device's reduced-motion setting.
+
+Request log details show the authenticated virtual key and the provider credential that successfully served the request. Failed authentication, requests without a successful provider credential, and logs written before this feature show **Unknown** where the identity is unavailable. Names are stored as they appeared when the request was handled, so filters continue to work after a key is renamed or deleted. Identity fields contain IDs and names, not key secrets; request and response bodies are still stored in full.
 
 Request log rows show the status, request type, model, latency and input/output tokens. Select a row or its timestamp on desktop, or **View** on mobile, to open request details; unavailable token counts are shown as unknown.
 
@@ -69,15 +75,19 @@ Remove every credential, including disabled ones, before deleting its provider. 
 
 **Models → Catalog** shows discovered models as cards grouped by provider, with available context, output limits and pricing. Antigravity models with matching low, medium or high reasoning variants share one model ID and display their available efforts as badges; the unified `/v1/models` endpoint exposes the same normalized model with its provider prefix. Search by model or provider, filter by provider, and expand a card's details for syntax-highlighted metadata and datasheets. Descriptions are limited to three lines; hover or focus to see the full text. Each provider's models appear in a swipeable row with navigation controls; a faded edge indicates more cards in that direction. A dash means the information is unavailable. Refresh the catalog to fetch models immediately; failed providers retain their last successful list and show an error. Zen uses OpenCode's model endpoint.
 
-The number of visible model cards adapts to the space available, including when the sidebar is open. Long model names and IDs scroll in a continuous loop with a pause while their cards are visible; hovering reveals the full text. Scrolling is disabled when your device requests reduced motion.
+The number of visible model cards adapts to the space available, including when the sidebar is open. Long model names, IDs and API labels scroll in a continuous loop with a pause while their cards are visible; hovering reveals the full text. Scrolling is disabled when your device requests reduced motion.
 
-Input types use icons for text, images, audio, video and PDFs; hover over an icon to see its label. Unrecognized input types remain visible as text.
+While dashboard data loads, placeholders follow the layout of the corresponding charts, tables, cards, and settings forms. The final size can vary with the data returned.
+
+Input types use icons for text, files, images, audio, video and PDFs; hover over an icon to see its label. Unrecognized input types remain visible as text.
 
 Antigravity input icons reflect the model's advertised capabilities, including enabled MIME types. Actual media support depends on the selected model and upstream service.
 
 OpenCode Zen and Go supply their own model limits, capabilities and base token prices. Their prices can differ for the same model; Go's rates count against its subscription allowance and can have time-based multipliers. Zen may fill missing details from the community-maintained [Models.dev](https://models.dev) catalog, cached for one hour. Missing information remains unknown.
 
 OpenRouter supplies model descriptions, limits, input types, supported parameters and base token prices. Actual prices can vary with provider routing, pricing overrides and non-token charges.
+
+OpenRouter discovery includes text and Decisions models. Cards identify models that use the Decisions API; send those requests to `/v1/decisions`, not Chat Completions or Responses. See the [gateway guide](gateways.md) for an example and input limits.
 
 Claude model details come from the authenticated Anthropic model list, supplemented by exact Anthropic-owned records in the configured datasheets. Anthropic API prices are reference prices, not Claude subscription charges. PDF support shown in the catalog describes the model; Zero-G currently forwards only text and images to Claude.
 

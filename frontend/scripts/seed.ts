@@ -114,14 +114,17 @@ try {
       await addKey.close();
     }
     const insert = await tx.prepare(`INSERT INTO request_logs
-      (created_at, provider, model, path, status, latency_ms, input_tokens, output_tokens, request_body, response_body)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      (created_at, provider, model, path, status, latency_ms, input_tokens, output_tokens, request_body, response_body, virtual_key_id, virtual_key_name, credential_id, credential_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     try {
       for (let i = 0; i < count; i++) {
         const provider = providers[i % providers.length];
         const status = i % 19 === 0 ? 500 : i % 13 === 0 ? 429 : 200;
         const input = 120 + ((i * 97) % 4000);
         const output = 40 + ((i * 53) % 1200);
+        const key = keys.find(
+          (candidate) => candidate.provider.name === provider.name,
+        );
         await insert.run(
           now - i * 3600,
           providerIds.get(provider.name),
@@ -160,6 +163,12 @@ try {
                   },
                 },
           ),
+          key?.id ?? null,
+          key?.name ?? null,
+          status === 200
+            ? `seed-credential-${providerIds.get(provider.name)}`
+            : null,
+          status === 200 ? `Example ${provider.label} credential` : null,
         );
       }
     } finally {

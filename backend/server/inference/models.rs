@@ -18,7 +18,8 @@ use serde_json::json;
         (status = 500, description = "Registry or permissions error", body = Value),
         (status = 502, description = "All provider discoveries failed", body = Value)))]
 pub(super) async fn models(State(state): State<AppState>, request: Request) -> Response {
-    let permissions = match permissions(&state, request.headers()).await {
+    let permissions = match permissions(&state, request.headers(), request.extensions().get()).await
+    {
         Ok(p) => p,
         Err(e) => return e.into_response(),
     };

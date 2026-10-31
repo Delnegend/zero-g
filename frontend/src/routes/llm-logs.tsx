@@ -1,19 +1,47 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { ObservabilitySkeleton } from "@/components/Loading";
+import {
+  ObservabilityFilters,
+  updateObservabilityFilters,
+  validateObservabilityFilters,
+} from "@/components/ObservabilityFilters";
+import { ObservabilitySkeleton } from "@/components/ObservabilitySkeleton";
 import {
   ObservabilityError,
   RequestLogs,
   useObservability,
 } from "@/components/Observability";
 import { RefreshButton } from "@/components/RefreshButton";
+import type { ObservabilityFilterValues } from "@/server/api/observability";
 
 export const Route = createFileRoute("/llm-logs")({
   head: () => ({ meta: [{ title: "LLM Logs · Zero-G" }] }),
-  component: LlmLogsPage,
+  validateSearch: validateObservabilityFilters,
+  component: RoutedLlmLogsPage,
 });
 
-export function LlmLogsPage() {
-  const observability = useObservability(true);
+function RoutedLlmLogsPage() {
+  const filters = Route.useSearch();
+  const navigate = Route.useNavigate();
+  return (
+    <LlmLogsPage
+      filters={filters}
+      onFiltersChange={(next) =>
+        void navigate({
+          search: (current) => updateObservabilityFilters(current, next),
+        })
+      }
+    />
+  );
+}
+
+export function LlmLogsPage({
+  filters,
+  onFiltersChange,
+}: {
+  filters: ObservabilityFilterValues;
+  onFiltersChange: (filters: ObservabilityFilterValues) => void;
+}) {
+  const observability = useObservability(true, filters);
   const { data, loading, refetch, error } = observability;
   return (
     <main
@@ -35,8 +63,20 @@ export function LlmLogsPage() {
         </div>
       </header>
       <ObservabilityError error={error} refetch={refetch} />
-      {loading && !data && <ObservabilitySkeleton logsOnly />}
-      {data?.summary && <RequestLogs {...observability} />}
+      <div className="flex min-w-0 flex-col gap-4 md:flex-row md:items-start">
+        <ObservabilityFilters
+          filters={filters}
+          options={data?.filter_options}
+          onChange={(next) => {
+            observability.setSelectedId(null);
+            onFiltersChange(next);
+          }}
+        />
+        <div className="min-w-0 flex-1">
+          {loading && !data && <ObservabilitySkeleton logsOnly />}
+          {data?.summary && <RequestLogs {...observability} />}
+        </div>
+      </div>
     </main>
   );
 }

@@ -1,3 +1,4 @@
+use crate::provider::common::request_identity::RequestIdentity;
 use crate::provider::common::session::RequestSession;
 use axum::http::StatusCode;
 use axum::{
@@ -63,8 +64,15 @@ async fn list(
     State(state): State<AppState>,
     Extension(provider): Extension<Provider>,
     Extension(permissions): Extension<Permissions>,
+    identity: Option<Extension<RequestIdentity>>,
 ) -> Response {
-    match models::discover(&state, &provider).await {
+    match models::discover(
+        &state,
+        &provider,
+        identity.as_ref().map(|Extension(identity)| identity),
+    )
+    .await
+    {
         Ok(mut models) => {
             models.retain(|m| permissions.allows_model(&m.id));
             Json(ModelListResponse {
@@ -82,9 +90,19 @@ async fn chat(
     Extension(provider): Extension<Provider>,
     Extension(permissions): Extension<Permissions>,
     Extension(session): Extension<RequestSession>,
+    identity: Option<Extension<RequestIdentity>>,
     Json(req): Json<ChatCompletionRequest>,
 ) -> Response {
-    inference(state, provider, permissions, session, req, false).await
+    inference(
+        state,
+        provider,
+        permissions,
+        session,
+        identity.map(|Extension(identity)| identity),
+        req,
+        false,
+    )
+    .await
 }
 /// Handle Responses API requests.
 async fn responses(
@@ -92,6 +110,7 @@ async fn responses(
     Extension(provider): Extension<Provider>,
     Extension(permissions): Extension<Permissions>,
     Extension(session): Extension<RequestSession>,
+    identity: Option<Extension<RequestIdentity>>,
     Json(req): Json<ResponseCreateRequest>,
 ) -> Response {
     if let crate::responses::ResponseInput::Items(items) = &req.input
@@ -114,6 +133,7 @@ async fn responses(
         provider,
         permissions,
         session,
+        identity.map(|Extension(identity)| identity),
         req.into_chat_request(),
         true,
     )
@@ -126,6 +146,7 @@ async fn inference(
     provider: Provider,
     permissions: Permissions,
     session: RequestSession,
+    request_identity: Option<RequestIdentity>,
     mut req: ChatCompletionRequest,
     responses: bool,
 ) -> Response {
@@ -198,6 +219,9 @@ async fn inference(
         }
         let decoder = Decoder::new(req.model.clone());
         if req.stream.unwrap_or(false) {
+            if let Some(identity) = &request_identity {
+                identity.set_credential(&credential.id, &credential.name);
+            }
             return stream_response(
                 response,
                 decoder,
@@ -207,8 +231,16 @@ async fn inference(
             );
         }
         return match client::consume(response, decoder, None).await {
-            Ok(done) if responses => Json(response_object(&done)).into_response(),
-            Ok(done) => Json(json!({"id":done.id,"object":"chat.completion","created":done.created,"model":done.model,"choices":[{"index":0,"message":done.message(),"finish_reason":done.stop_reason}],"usage":done.usage()})).into_response(),
+            Ok(done) => {
+                if let Some(identity) = &request_identity {
+                    identity.set_credential(&credential.id, &credential.name);
+                }
+                if responses {
+                    Json(response_object(&done)).into_response()
+                } else {
+                    Json(json!({"id":done.id,"object":"chat.completion","created":done.created,"model":done.model,"choices":[{"index":0,"message":done.message(),"finish_reason":done.stop_reason}],"usage":done.usage()})).into_response()
+                }
+            }
             Err(e) => failure(StatusCode::BAD_GATEWAY, &e),
         };
     }

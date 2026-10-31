@@ -47,7 +47,7 @@ pub(crate) async fn virtual_key_auth(
         )
             .into_response();
     };
-    match store.permissions(token).await {
+    match store.permissions(token, req.extensions().get()).await {
         Ok(Some(permissions))
             if permissions.providers.is_empty()
                 || permissions.providers.iter().any(|p| p == &id) =>

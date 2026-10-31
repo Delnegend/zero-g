@@ -16,6 +16,7 @@ use crate::provider::antigravity::models::{ResolveError, normalize_models};
 use crate::provider::antigravity::responses::ResponsesStreamSerializer;
 use crate::provider::antigravity::{AntigravityClient, AuthManager};
 use crate::provider::common::errors::UpstreamError;
+use crate::provider::common::request_identity::RequestIdentity;
 use crate::provider::common::session::RequestSession;
 use crate::provider::registry::Provider;
 use crate::responses::{
@@ -121,15 +122,16 @@ impl std::fmt::Display for PoolError {
 }
 
 /// Tries credentials in order, advancing on retryable upstream failures.
-async fn try_candidates<T, F, Fut>(ids: Vec<String>, mut attempt: F) -> Result<T, PoolError>
+async fn try_candidates<C, T, F, Fut>(candidates: Vec<C>, mut attempt: F) -> Result<T, PoolError>
 where
-    F: FnMut(String) -> Fut,
+    F: FnMut(C) -> Fut,
     Fut: Future<Output = Result<T, PoolError>>,
 {
-    let mut ids = ids.into_iter().peekable();
-    while let Some(id) = ids.next() {
-        match attempt(id).await {
-            Err(PoolError::Upstream(error)) if error.retryable() && ids.peek().is_some() => {}
+    let mut candidates = candidates.into_iter().peekable();
+    while let Some(candidate) = candidates.next() {
+        match attempt(candidate).await {
+            Err(PoolError::Upstream(error)) if error.retryable() && candidates.peek().is_some() => {
+            }
             result => return result,
         }
     }
@@ -143,6 +145,7 @@ where
 async fn with_pool<T, F, Fut>(
     state: &AppState,
     provider: &Provider,
+    identity: Option<&RequestIdentity>,
     operation: F,
 ) -> Result<T, PoolError>
 where
@@ -152,16 +155,12 @@ where
     let credentials = crate::provider::credentials::list(&state.settings, &provider.id)
         .await
         .map_err(PoolError::Internal)?;
-    let ids = credentials
-        .into_iter()
-        .map(|credential| credential.id)
-        .collect();
-    try_candidates(ids, |id| {
+    try_candidates(credentials, |credential| {
         let store = state.settings.clone();
         let provider_id = provider.id.clone();
         let operation = &operation;
         async move {
-            let auth = AuthManager::load(store, &provider_id, &id)
+            let auth = AuthManager::load(store, &provider_id, &credential.id)
                 .await
                 .map_err(PoolError::Internal)?
                 .ok_or_else(|| {
@@ -181,7 +180,11 @@ where
                         }),
                         _ => PoolError::Internal(error.message),
                     })?;
-            operation(creds).await.map_err(PoolError::Upstream)
+            let result = operation(creds).await.map_err(PoolError::Upstream)?;
+            if let Some(identity) = identity {
+                identity.set_credential(&credential.id, &credential.name);
+            }
+            Ok(result)
         }
     })
     .await
@@ -193,8 +196,9 @@ async fn pooled_stream(
     provider: &Provider,
     req: &ChatCompletionRequest,
     session_id: &str,
+    identity: Option<&RequestIdentity>,
 ) -> Result<reqwest::Response, PoolError> {
-    with_pool(state, provider, |creds| async move {
+    with_pool(state, provider, identity, |creds| async move {
         let models = state.providers.client.fetch_models(&creds).await?;
         let info = models
             .iter()
@@ -220,8 +224,9 @@ async fn pooled_stream(
 async fn pool_models(
     state: &AppState,
     provider: &Provider,
+    identity: Option<&RequestIdentity>,
 ) -> Result<Vec<(String, AntigravityModelInfo)>, PoolError> {
-    with_pool(state, provider, |creds| async move {
+    with_pool(state, provider, identity, |creds| async move {
         state.providers.client.fetch_models(&creds).await
     })
     .await
@@ -232,7 +237,7 @@ pub(crate) async fn fetch_models(
     state: &AppState,
     provider: &Provider,
 ) -> Result<Vec<(String, AntigravityModelInfo)>, String> {
-    pool_models(state, provider)
+    pool_models(state, provider, None)
         .await
         .map_err(|error| error.to_string())
 }
@@ -265,8 +270,15 @@ async fn models_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
+    identity: Option<Extension<RequestIdentity>>,
 ) -> Response {
-    let live_models = match pool_models(&state, &provider).await {
+    let live_models = match pool_models(
+        &state,
+        &provider,
+        identity.as_ref().map(|Extension(identity)| identity),
+    )
+    .await
+    {
         Ok(models) => models,
         Err(error) => return pool_error_response(error),
     };
@@ -408,7 +420,7 @@ async fn resolve_request_model(
     {
         return Ok(model.to_owned());
     }
-    let models = pool_models(state, provider)
+    let models = pool_models(state, provider, None)
         .await
         .map_err(RequestModelError::Pool)?;
     resolve_model(models, model, effort, permissions).map_err(RequestModelError::Resolve)
@@ -420,6 +432,7 @@ async fn chat_handler(
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
     Extension(session): Extension<RequestSession>,
+    identity: Option<Extension<RequestIdentity>>,
     Json(mut req): Json<ChatCompletionRequest>,
 ) -> Response {
     if let Some(error) = validate_tool_choice(req.tool_choice.as_ref(), req.tools.as_deref()) {
@@ -443,14 +456,26 @@ async fn chat_handler(
     let is_streaming = req.stream.unwrap_or(false);
 
     if is_streaming {
-        handle_chat_streaming(&state, &provider, req, &session.id).await
+        handle_chat_streaming(
+            &state,
+            &provider,
+            req,
+            &session.id,
+            identity.as_ref().map(|Extension(identity)| identity),
+        )
+        .await
     } else {
-        match with_pool(&state, &provider, |creds| {
-            let req = &req;
-            let client = &state.providers.client;
-            let session_id = &session.id;
-            async move { client.complete_non_streaming(&creds, req, session_id).await }
-        })
+        match with_pool(
+            &state,
+            &provider,
+            identity.as_ref().map(|Extension(identity)| identity),
+            |creds| {
+                let req = &req;
+                let client = &state.providers.client;
+                let session_id = &session.id;
+                async move { client.complete_non_streaming(&creds, req, session_id).await }
+            },
+        )
         .await
         {
             Ok(resp) => Json(resp).into_response(),
@@ -465,8 +490,9 @@ async fn handle_chat_streaming(
     provider: &Provider,
     req: ChatCompletionRequest,
     session_id: &str,
+    identity: Option<&RequestIdentity>,
 ) -> Response {
-    let upstream_resp = match pooled_stream(state, provider, &req, session_id).await {
+    let upstream_resp = match pooled_stream(state, provider, &req, session_id, identity).await {
         Ok(response) => response,
         Err(error) => return pool_error_response(error),
     };
@@ -503,6 +529,7 @@ async fn responses_handler(
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
     Extension(session): Extension<RequestSession>,
+    identity: Option<Extension<RequestIdentity>>,
     Json(req): Json<ResponseCreateRequest>,
 ) -> Response {
     if let Some(error) = validate_tool_choice(req.tool_choice.as_ref(), req.tools.as_deref()) {
@@ -530,18 +557,31 @@ async fn responses_handler(
     let original_model = chat_req.model.clone();
 
     if is_streaming {
-        handle_responses_streaming(&state, &provider, chat_req, original_model, &session.id).await
+        handle_responses_streaming(
+            &state,
+            &provider,
+            chat_req,
+            original_model,
+            &session.id,
+            identity.as_ref().map(|Extension(identity)| identity),
+        )
+        .await
     } else {
-        match with_pool(&state, &provider, |creds| {
-            let chat_req = &chat_req;
-            let client = &state.providers.client;
-            let session_id = &session.id;
-            async move {
-                client
-                    .complete_non_streaming(&creds, chat_req, session_id)
-                    .await
-            }
-        })
+        match with_pool(
+            &state,
+            &provider,
+            identity.as_ref().map(|Extension(identity)| identity),
+            |creds| {
+                let chat_req = &chat_req;
+                let client = &state.providers.client;
+                let session_id = &session.id;
+                async move {
+                    client
+                        .complete_non_streaming(&creds, chat_req, session_id)
+                        .await
+                }
+            },
+        )
         .await
         {
             Ok(resp) => {
@@ -611,8 +651,10 @@ async fn handle_responses_streaming(
     chat_req: ChatCompletionRequest,
     original_model: String,
     session_id: &str,
+    identity: Option<&RequestIdentity>,
 ) -> Response {
-    let upstream_resp = match pooled_stream(state, provider, &chat_req, session_id).await {
+    let upstream_resp = match pooled_stream(state, provider, &chat_req, session_id, identity).await
+    {
         Ok(response) => response,
         Err(error) => return pool_error_response(error),
     };
@@ -664,10 +706,10 @@ mod tests {
         ] {
             let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
             let seen = calls.clone();
-            let result = try_candidates(vec!["first".into(), "second".into()], move |id| {
+            let result = try_candidates(vec!["first", "second"], move |id| {
                 let seen = seen.clone();
                 async move {
-                    seen.lock().expect("lock").push(id.clone());
+                    seen.lock().expect("lock").push(id);
                     if id == "first" {
                         Err(PoolError::Upstream(UpstreamError {
                             status: Some(status),
@@ -693,38 +735,35 @@ mod tests {
         ] {
             let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
             let seen = calls.clone();
-            let result: Result<(), _> =
-                try_candidates(vec!["first".into(), "second".into()], move |_| {
-                    seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    async move {
-                        Err(PoolError::Upstream(UpstreamError {
-                            status,
-                            message: "failed".into(),
-                        }))
-                    }
-                })
-                .await;
+            let result: Result<(), _> = try_candidates(vec!["first", "second"], move |_| {
+                seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                async move {
+                    Err(PoolError::Upstream(UpstreamError {
+                        status,
+                        message: "failed".into(),
+                    }))
+                }
+            })
+            .await;
             assert!(result.is_err());
             assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
         }
-        let result: Result<(), _> =
-            try_candidates(vec!["first".into(), "second".into()], |_| async {
-                Err(PoolError::Upstream(UpstreamError {
-                    status: Some(StatusCode::TOO_MANY_REQUESTS),
-                    message: "last failure".into(),
-                }))
-            })
-            .await;
+        let result: Result<(), _> = try_candidates(vec!["first", "second"], |_| async {
+            Err(PoolError::Upstream(UpstreamError {
+                status: Some(StatusCode::TOO_MANY_REQUESTS),
+                message: "last failure".into(),
+            }))
+        })
+        .await;
         assert!(
             matches!(result, Err(PoolError::Upstream(error)) if error.status == Some(StatusCode::TOO_MANY_REQUESTS))
         );
-        let empty: Result<(), _> = try_candidates(Vec::new(), |_| async { Ok(()) }).await;
+        let empty: Result<(), _> = try_candidates(Vec::<&str>::new(), |_| async { Ok(()) }).await;
         assert!(matches!(empty, Err(PoolError::Internal(_))));
-        let internal: Result<(), _> =
-            try_candidates(vec!["first".into(), "second".into()], |_| async {
-                Err(PoolError::Internal("credential error".into()))
-            })
-            .await;
+        let internal: Result<(), _> = try_candidates(vec!["first", "second"], |_| async {
+            Err(PoolError::Internal("credential error".into()))
+        })
+        .await;
         assert!(matches!(internal, Err(PoolError::Internal(_))));
     }
 
@@ -1024,8 +1063,10 @@ mod tests {
                 .body(Body::from(body.to_string()))
                 .unwrap()
         };
+        let identity = RequestIdentity::default();
         let first = app
             .clone()
+            .layer(Extension(identity.clone()))
             .oneshot(request(json!({
                 "model":"model", "reasoning_effort":"high", "max_tokens":300,
                 "messages":[{"role":"user","content":"hello"}],
@@ -1035,6 +1076,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(first.status(), StatusCode::OK);
+        let snapshot = identity.snapshot();
+        assert_eq!(snapshot.credential_id.as_deref(), Some("credential"));
+        assert_eq!(snapshot.credential_name.as_deref(), Some("credential"));
         let response: Value = serde_json::from_slice(
             &axum::body::to_bytes(first.into_body(), 1024 * 1024)
                 .await
@@ -1107,8 +1151,10 @@ mod tests {
             payload["request"]["toolConfig"]["functionCallingConfig"]["allowedFunctionNames"],
             json!(["lookup"])
         );
+        let stream_identity = RequestIdentity::default();
         let streamed = app
             .clone()
+            .layer(Extension(stream_identity.clone()))
             .oneshot(request(json!({
                 "model":"model-high", "stream":true, "stream_options":{"include_usage":true},
                 "messages":[{"role":"user","content":"hello"}]
@@ -1116,6 +1162,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(streamed.status(), StatusCode::OK);
+        let snapshot = stream_identity.snapshot();
+        assert_eq!(snapshot.credential_id.as_deref(), Some("credential"));
+        assert_eq!(snapshot.credential_name.as_deref(), Some("credential"));
         let bytes = axum::body::to_bytes(streamed.into_body(), 1024 * 1024)
             .await
             .unwrap();

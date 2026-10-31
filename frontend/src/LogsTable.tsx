@@ -85,6 +85,7 @@ function relativeDate(value: number): string {
 function requestType(path: string): string {
   if (path.endsWith("/chat/completions")) return "Chat completions";
   if (path.endsWith("/responses")) return "Responses";
+  if (path.endsWith("/decisions")) return "Decisions";
   return path;
 }
 
@@ -233,7 +234,7 @@ export function LogsTable({
             Request logs
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            The latest 200 requests. Select one to inspect its details.
+            The latest 200 matching requests. Select one to inspect its details.
           </p>
         </div>
         <div className="relative w-full sm:w-72">
@@ -417,7 +418,7 @@ export function LogsTable({
         {rows.length === 0 && (
           <p className="px-5 py-10 text-center text-sm text-muted-foreground">
             {logs.length === 0
-              ? "No requests recorded yet."
+              ? "No requests match the current filters."
               : "No requests match your search."}
           </p>
         )}
