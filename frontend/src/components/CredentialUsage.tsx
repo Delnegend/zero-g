@@ -96,21 +96,12 @@ export function CredentialUsage({
         />
       )}
       {connected && usage.isError && (
-        <div className="space-y-2 text-sm">
-          <p className="break-words text-destructive">
-            Usage unavailable: {message(usage.error)}
-          </p>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => void usage.refetch()}
-          >
-            Retry
-          </Button>
-        </div>
+        <p className="break-words text-sm text-destructive" role="alert">
+          {usage.data ? "Refresh failed" : "Usage unavailable"}:{" "}
+          {message(usage.error)}
+        </p>
       )}
       {connected &&
-        !usage.isError &&
         usage.data?.kind === "quota" &&
         (usage.data.windows.length ? (
           <div className="space-y-3 @md:grid @md:grid-cols-[4.5rem_minmax(0,1fr)_8rem_minmax(11rem,max-content)] @md:gap-x-3">
@@ -123,7 +114,7 @@ export function CredentialUsage({
             No quota windows available.
           </p>
         ))}
-      {connected && !usage.isError && usage.data?.kind === "grouped_quota" && (
+      {connected && usage.data?.kind === "grouped_quota" && (
         <div className="space-y-4 @md:grid @md:grid-cols-[4.5rem_minmax(0,1fr)_8rem_minmax(11rem,max-content)] @md:gap-x-3">
           {usage.data.groups.map((group, index) => (
             <section
@@ -147,7 +138,7 @@ export function CredentialUsage({
           ))}
         </div>
       )}
-      {connected && !usage.isError && usage.data?.kind === "balance" && (
+      {connected && usage.data?.kind === "balance" && (
         <p className="text-sm">
           <span className="text-muted-foreground">Balance: </span>
           <span className="font-semibold">
@@ -157,6 +148,22 @@ export function CredentialUsage({
             }).format(usage.data.amount)}
           </span>
         </p>
+      )}
+      {connected && (usage.data || usage.isError) && (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={usage.isFetching}
+          onClick={() => void usage.refetch()}
+        >
+          {usage.isFetching
+            ? usage.isError
+              ? "Retrying…"
+              : "Refreshing…"
+            : usage.isError
+              ? "Retry"
+              : "Refresh usage"}
+        </Button>
       )}
     </div>
   );
