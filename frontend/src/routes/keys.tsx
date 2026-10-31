@@ -275,10 +275,13 @@ export function KeysPage() {
   });
   const [newKey, setNewKey] = useState("");
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [busy, setBusy] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [revokeKey, setRevokeKey] = useState<VirtualKey | null>(null);
   const [editKey, setEditKey] = useState<VirtualKey | null>(null);
+  const refreshError =
+    success && keysQuery.error ? message(keysQuery.error) : "";
   const keys = keysQuery.data?.keys ?? [];
   const catalogErrors =
     catalogQuery.data?.providers.filter((provider) => provider.error) ?? [];
@@ -296,10 +299,7 @@ export function KeysPage() {
     onSubmit: ({ value }) => create(value),
   });
   async function refreshKeys() {
-    await queryClient.invalidateQueries(
-      { queryKey: keysOptions().queryKey },
-      { throwOnError: true },
-    );
+    await queryClient.invalidateQueries({ queryKey: keysOptions().queryKey });
   }
   async function create(value: {
     name: string;
@@ -309,6 +309,7 @@ export function KeysPage() {
   }) {
     setBusy(true);
     setError("");
+    setSuccess("");
     setNewKey("");
     try {
       const result = await createMutation.mutateAsync({
@@ -318,6 +319,7 @@ export function KeysPage() {
         expires_at: expiration(value.expiresAt),
       });
       setNewKey(result.key);
+      setSuccess("Key created successfully.");
       form.reset();
       await refreshKeys();
     } catch (err) {
@@ -330,10 +332,12 @@ export function KeysPage() {
   async function revoke(key: VirtualKey) {
     setBusy(true);
     setError("");
+    setSuccess("");
     try {
       await revokeMutation.mutateAsync(key.id);
-      await refreshKeys();
       setRevokeKey(null);
+      setSuccess("Key revoked successfully.");
+      await refreshKeys();
     } catch (err) {
       setError(message(err));
     } finally {
@@ -343,13 +347,15 @@ export function KeysPage() {
   async function saveExpiration(key: VirtualKey, value: string) {
     setBusy(true);
     setError("");
+    setSuccess("");
     try {
       await updateMutation.mutateAsync({
         id: key.id,
         expires_at: expiration(value),
       });
-      await refreshKeys();
       setEditKey(null);
+      setSuccess("Key expiration updated successfully.");
+      await refreshKeys();
     } catch (err) {
       setError(message(err));
     } finally {
@@ -363,9 +369,25 @@ export function KeysPage() {
         Create keys for inference access and restrict their providers and
         models.
       </p>
-      {keysQuery.error && (
+      {success && !createOpen && (
+        <p role="status" className="mt-5">
+          {success}
+        </p>
+      )}
+      {(refreshError || keysQuery.error) && !createOpen && (
         <Alert variant="destructive" className="mt-5">
-          <AlertDescription>{message(keysQuery.error)}</AlertDescription>
+          <AlertDescription>
+            {refreshError
+              ? `The key list could not be refreshed and may be out of date. ${refreshError}`
+              : message(keysQuery.error)}
+            <Button
+              variant="outline"
+              className="ml-3"
+              onClick={() => void refreshKeys()}
+            >
+              Retry key list
+            </Button>
+          </AlertDescription>
         </Alert>
       )}
       <Button
@@ -398,6 +420,22 @@ export function KeysPage() {
                 : "Create an inference key and choose its provider and model restrictions."}
             </DialogDescription>
           </DialogHeader>
+          {newKey && <p role="status">{success}</p>}
+          {refreshError && (
+            <Alert variant="destructive">
+              <AlertDescription>
+                The key list could not be refreshed and may be out of date.{" "}
+                {refreshError}
+                <Button
+                  variant="outline"
+                  className="ml-3"
+                  onClick={() => void refreshKeys()}
+                >
+                  Retry key list
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
           {error && (
             <Alert variant="destructive">
               <AlertDescription>{error}</AlertDescription>
