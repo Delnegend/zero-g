@@ -117,21 +117,32 @@ export function ObservabilitySkeleton({ logsOnly }: { logsOnly: boolean }) {
         {logsOnly ? (
           <LogsSkeleton />
         ) : (
-          <div className="grid min-w-0 grid-cols-1 gap-2 @min-[672px]:grid-cols-2 @min-[1008px]:grid-cols-3">
-            {Array.from({ length: 5 }, (_, index) => (
-              <Card
-                key={index}
-                className="flex h-[260px] min-w-0 flex-col gap-2 rounded-sm p-2 shadow-none sm:h-[330px]"
-              >
-                <Skeleton className="h-5 w-32" />
-                <div className="flex items-center justify-between">
-                  <Skeleton className="h-5 w-24" />
-                  <Skeleton className="h-7 w-16" />
-                </div>
-                <Skeleton className="min-h-0 w-full flex-1" />
-              </Card>
-            ))}
-          </div>
+          <>
+            <div className="mb-3 grid min-w-0 grid-cols-2 gap-3 @min-[1008px]:grid-cols-4">
+              {Array.from({ length: 4 }, (_, index) => (
+                <Card key={index} className="min-w-0 gap-0 p-3 sm:p-5">
+                  <Skeleton className="h-5 w-28" />
+                  <Skeleton className="mt-4 h-8 w-24" />
+                  <Skeleton className="mt-1 h-4 w-36 max-w-full" />
+                </Card>
+              ))}
+            </div>
+            <div className="grid min-w-0 grid-cols-1 gap-3 @min-[672px]:grid-cols-2">
+              {Array.from({ length: 6 }, (_, index) => (
+                <Card
+                  key={index}
+                  className="flex h-[207px] min-w-0 flex-col gap-0 p-3 shadow-none sm:h-[293px] sm:p-5"
+                >
+                  <div className="flex min-h-8 items-start justify-between gap-2">
+                    <Skeleton className="h-5 w-40 max-w-[70%]" />
+                    {index !== 4 && <Skeleton className="h-4 w-12" />}
+                  </div>
+                  <Skeleton className="min-h-0 w-full flex-1" />
+                  <Skeleton className="mt-1 h-3 w-32" />
+                </Card>
+              ))}
+            </div>
+          </>
         )}
       </div>
     </div>

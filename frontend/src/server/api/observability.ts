@@ -16,8 +16,8 @@ export type ObservabilityFilterValues = {
   credential_ids?: string[];
 };
 
-export function rangeStart(range: Preset): number {
-  const date = new Date();
+export function rangeStart(range: Preset, now = Date.now()): number {
+  const date = new Date(now);
   if (range === "1h" || range === "6h" || range === "24h" || range === "7d") {
     const hours =
       range === "1h" ? 1 : range === "6h" ? 6 : range === "24h" ? 24 : 168;
@@ -35,6 +35,19 @@ export function rangeStart(range: Preset): number {
   return Math.floor(date.getTime() / 1000);
 }
 
+export type ObservabilityComparison = {
+  data: ObservabilityResponse | null;
+  currentSince: number;
+  currentUntil: number;
+  previousSince: number;
+  previousUntil: number;
+  retentionCutoff: number | null;
+};
+
+export type Observability = ObservabilityResponse & {
+  comparison?: ObservabilityComparison;
+};
+
 export function observabilityQueryOptions(
   range: DashboardRange,
   logsOnly: boolean,
@@ -42,18 +55,48 @@ export function observabilityQueryOptions(
 ) {
   return queryOptions({
     queryKey: ["observability", logsOnly ? { filters } : { range, filters }],
-    queryFn: ({ signal }) => {
-      if (logsOnly) return getObservability(signal, filters);
-      if (range.kind === "preset") {
-        const until = Math.floor(Date.now() / 1000);
-        const since = rangeStart(range.value);
-        return getObservability(signal, { since, until, ...filters });
-      }
-      return getObservability(signal, {
-        since: range.from,
-        until: range.until,
-        ...filters,
-      });
+    queryFn: async ({ signal }): Promise<Observability> => {
+      if (logsOnly)
+        return getObservability(signal, { ...filters, logs_only: true });
+
+      const now = Math.floor(Date.now() / 1000);
+      const currentUntil = range.kind === "preset" ? now : range.until;
+      const currentSince =
+        range.kind === "preset"
+          ? rangeStart(range.value, currentUntil * 1000)
+          : range.from;
+      const previousUntil = currentSince - 1;
+      const previousSince = previousUntil - (currentUntil - currentSince);
+      const [current, previous] = await Promise.all([
+        getObservability(signal, {
+          ...filters,
+          since: currentSince,
+          until: currentUntil,
+        }),
+        getObservability(signal, {
+          ...filters,
+          since: previousSince,
+          until: previousUntil,
+        }).catch((error: unknown) => {
+          if (signal.aborted) throw error;
+          return null;
+        }),
+      ]);
+      const retentionCutoff = Math.max(
+        current.retention_cutoff,
+        previous?.retention_cutoff ?? current.retention_cutoff,
+      );
+      return {
+        ...current,
+        comparison: {
+          data: previousSince >= retentionCutoff ? previous : null,
+          currentSince,
+          currentUntil,
+          previousSince,
+          previousUntil,
+          retentionCutoff,
+        },
+      };
     },
     placeholderData: keepPreviousData,
     retry: false,
@@ -64,15 +107,19 @@ export function observabilityQueryOptions(
 }
 
 export type Log = LogEntry;
-export type Observability = ObservabilityResponse;
 
 export function getObservability(
   signal: AbortSignal,
-  range?: { since?: number; until?: number } & ObservabilityFilterValues,
+  range?: {
+    since?: number;
+    until?: number;
+    logs_only?: boolean;
+  } & ObservabilityFilterValues,
 ) {
   const params = range && {
     since: range.since,
     until: range.until,
+    logs_only: range.logs_only,
     providers: range.providers?.length
       ? JSON.stringify(range.providers)
       : undefined,
