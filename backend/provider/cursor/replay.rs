@@ -715,7 +715,9 @@ mod tests {
             key_hash: digest.as_ref().to_vec(),
             providers: "[]".to_string(),
             models: "[]".to_string(),
-            created_at: 0_i64
+            created_at: 0_i64,
+            expires_at: None,
+            revoked_at: None
         })
         .exec(&mut db)
         .await

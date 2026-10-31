@@ -19,3 +19,13 @@ snapshot_name = "0002_snapshot.toml"
 id = 9001098191863351684
 name = "0003_request_log_identities.sql"
 snapshot_name = "0003_snapshot.toml"
+
+[[migrations]]
+id = 8667431527314492811
+name = "0004_log_filter_options.sql"
+snapshot_name = "0004_snapshot.toml"
+
+[[migrations]]
+id = 7314259498501627381
+name = "0005_virtual_key_lifecycle.sql"
+snapshot_name = "0005_snapshot.toml"

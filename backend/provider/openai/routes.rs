@@ -343,7 +343,9 @@ mod tests {
                 .to_vec(),
             providers: "[\"openrouter\"]".to_string(),
             models: "[\"vendor/nested-model\"]".to_string(),
-            created_at: 0
+            created_at: 0,
+            expires_at: None,
+            revoked_at: None
         })
         .exec(&mut db)
         .await

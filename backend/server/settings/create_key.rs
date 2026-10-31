@@ -9,7 +9,6 @@ use ring::{
     digest,
     rand::{SecureRandom, SystemRandom},
 };
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Creates a virtual key and returns its token once.
 #[utoipa::path(post, path = "/api/keys", operation_id = "createKey",
@@ -38,9 +37,13 @@ pub(in crate::server) async fn create_key(
     );
     let hash = digest::digest(&digest::SHA256, token.as_bytes());
     let id = uuid::Uuid::new_v4().to_string();
-    let created_at = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
+    let created_at = super::unix_now();
+    if input
+        .expires_at
+        .is_some_and(|expires| expires <= created_at)
+    {
+        return (StatusCode::BAD_REQUEST, "Expiration must be in the future").into_response();
+    }
     let providers = match serde_json::to_string(&input.providers) {
         Ok(v) => v,
         Err(e) => return internal_error(&e.to_string()),
@@ -50,13 +53,19 @@ pub(in crate::server) async fn create_key(
         Err(e) => return internal_error(&e.to_string()),
     };
     let result = transaction_with_retry!(store.database, |mut tx| {
+        if input
+            .expires_at
+            .is_some_and(|expires| expires <= super::unix_now())
+        {
+            return Ok(Some("Expiration must be in the future"));
+        }
         for provider_id in &input.providers {
             let row = ProviderRecord::filter_by_id(provider_id.as_str())
                 .first()
                 .exec(&mut tx)
                 .await?;
             if !matches!(row, Some(row) if !row.deleted) {
-                return Ok(false);
+                return Ok(Some("Invalid key provider"));
             }
         }
         toasty::create!(VirtualKey {
@@ -65,15 +74,17 @@ pub(in crate::server) async fn create_key(
             key_hash: hash.as_ref().to_vec(),
             providers: providers.clone(),
             models: models.clone(),
-            created_at
+            created_at,
+            expires_at: input.expires_at,
+            revoked_at: None
         })
         .exec(&mut tx)
         .await?;
         tx.commit().await?;
-        Ok(true)
+        Ok(None)
     });
     match result {
-        Ok(true) => (
+        Ok(None) => (
             StatusCode::CREATED,
             Json(CreatedKey {
                 id,
@@ -81,11 +92,13 @@ pub(in crate::server) async fn create_key(
                 providers: input.providers,
                 models: input.models,
                 created_at,
+                expires_at: input.expires_at,
+                revoked_at: None,
                 key: token,
             }),
         )
             .into_response(),
-        Ok(false) => (StatusCode::BAD_REQUEST, "Invalid key provider").into_response(),
+        Ok(Some(message)) => (StatusCode::BAD_REQUEST, message).into_response(),
         Err(err) => internal_error(&err.to_string()),
     }
 }

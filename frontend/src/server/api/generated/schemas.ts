@@ -543,6 +543,10 @@ export type ConsoleConnectionOutput = zod.output<typeof ConsoleConnection>;
 
 export const CreateKey = zod
   .object({
+    expires_at: zod
+      .int()
+      .nullish()
+      .describe("Optional expiration time in Unix seconds."),
     models: zod
       .array(zod.string())
       .optional()
@@ -586,11 +590,19 @@ export type CreateProviderOutput = zod.output<typeof CreateProvider>;
 export const CreatedKey = zod
   .object({
     created_at: zod.int().describe("Creation time in Unix seconds."),
+    expires_at: zod
+      .int()
+      .nullable()
+      .describe("Expiration time in Unix seconds, if set."),
     id: zod.string().describe("Stable identifier."),
     key: zod.string().describe("Secret token, returned only on creation."),
     models: zod.array(zod.string()).describe("Allowed model IDs."),
     name: zod.string().describe("User-assigned name."),
     providers: zod.array(zod.string()).describe("Allowed provider IDs."),
+    revoked_at: zod
+      .int()
+      .nullable()
+      .describe("Revocation time in Unix seconds, initially null."),
   })
   .describe("Newly created key including its one-time token.");
 
@@ -910,12 +922,20 @@ export type IntervalOutput = zod.output<typeof Interval>;
 export const KeyInfo = zod
   .object({
     created_at: zod.int().describe("Creation time in Unix seconds."),
+    expires_at: zod
+      .int()
+      .nullable()
+      .describe("Expiration time in Unix seconds, if set."),
     id: zod.string().describe("Stable identifier used to revoke the key."),
     models: zod.array(zod.string()).describe("Model IDs allowed by the key."),
     name: zod.string().describe("User-assigned key name."),
     providers: zod
       .array(zod.string())
       .describe("Provider IDs allowed by the key."),
+    revoked_at: zod
+      .int()
+      .nullable()
+      .describe("Revocation time in Unix seconds, if revoked."),
   })
   .describe("Public metadata for a virtual key, excluding its secret token.");
 
@@ -929,6 +949,10 @@ export const KeyList = zod
         zod
           .object({
             created_at: zod.int().describe("Creation time in Unix seconds."),
+            expires_at: zod
+              .int()
+              .nullable()
+              .describe("Expiration time in Unix seconds, if set."),
             id: zod
               .string()
               .describe("Stable identifier used to revoke the key."),
@@ -939,6 +963,10 @@ export const KeyList = zod
             providers: zod
               .array(zod.string())
               .describe("Provider IDs allowed by the key."),
+            revoked_at: zod
+              .int()
+              .nullable()
+              .describe("Revocation time in Unix seconds, if revoked."),
           })
           .describe(
             "Public metadata for a virtual key, excluding its secret token.",
@@ -1734,6 +1762,18 @@ export const SettingsResponse = zod
 export type SettingsResponse = zod.input<typeof SettingsResponse>;
 export type SettingsResponseOutput = zod.output<typeof SettingsResponse>;
 
+export const UpdateKey = zod
+  .object({
+    expires_at: zod
+      .int()
+      .nullable()
+      .describe("Expiration time in Unix seconds, or null to clear it."),
+  })
+  .describe("Replacement expiration for a virtual key.");
+
+export type UpdateKey = zod.input<typeof UpdateKey>;
+export type UpdateKeyOutput = zod.output<typeof UpdateKey>;
+
 export const UpdateProvider = zod
   .object({
     base_url: zod
@@ -1768,6 +1808,10 @@ export type UpdateSettings = zod.input<typeof UpdateSettings>;
 export type UpdateSettingsOutput = zod.output<typeof UpdateSettings>;
 export const CreateKeyBody = zod
   .object({
+    expires_at: zod
+      .int()
+      .nullish()
+      .describe("Optional expiration time in Unix seconds."),
     models: zod
       .array(zod.string())
       .optional()
@@ -1784,6 +1828,18 @@ export const CreateKeyBody = zod
 
 export type CreateKeyBody = zod.input<typeof CreateKeyBody>;
 export type CreateKeyBodyOutput = zod.output<typeof CreateKeyBody>;
+
+export const UpdateKeyBody = zod
+  .object({
+    expires_at: zod
+      .int()
+      .nullable()
+      .describe("Expiration time in Unix seconds, or null to clear it."),
+  })
+  .describe("Replacement expiration for a virtual key.");
+
+export type UpdateKeyBody = zod.input<typeof UpdateKeyBody>;
+export type UpdateKeyBodyOutput = zod.output<typeof UpdateKeyBody>;
 
 export const updateModelSettingsBodyDiscoveryIntervalMinutesMin = 0;
 

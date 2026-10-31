@@ -264,6 +264,9 @@ async fn create_provider(
                 return Ok(Some("Provider ID or provider kind/base URL already exists"));
             }
             for key in VirtualKey::all().exec(&mut tx).await? {
+                if key.revoked_at.is_some() {
+                    continue;
+                }
                 let permissions: Vec<String> = match serde_json::from_str(&key.providers) {
                     Ok(value) => value,
                     Err(_) => {
@@ -454,7 +457,7 @@ pub(crate) async fn migrate_fixed_identities(store: &SettingsStore) -> Result<()
                 Ok(value) => value,
                 Err(e) => return Ok(Err(e.to_string())),
             };
-            VirtualKey::upsert_by_id(key.id.as_str()).name(key.name).key_hash(key.key_hash).providers(permissions).models(key.models).created_at(key.created_at).exec(&mut tx).await?;
+            VirtualKey::upsert_by_id(key.id.as_str()).name(key.name).key_hash(key.key_hash).providers(permissions).models(key.models).created_at(key.created_at).expires_at(key.expires_at).revoked_at(key.revoked_at).exec(&mut tx).await?;
         }
         for credential in ProviderCredential::all().exec(&mut tx).await? {
             if let Some(target) = remap.get(&credential.provider_id) {
@@ -940,7 +943,9 @@ mod tests {
             key_hash: vec![1],
             providers: "[\"agy\"]".to_string(),
             models: "[]".to_string(),
-            created_at: 0
+            created_at: 0,
+            expires_at: Some(1),
+            revoked_at: None
         })
         .exec(&mut db)
         .await
@@ -951,7 +956,17 @@ mod tests {
                 .0,
             StatusCode::CONFLICT
         );
-        VirtualKey::delete_by_id(&mut db, "key").await.unwrap();
+        VirtualKey::upsert_by_id("key")
+            .name("restricted")
+            .key_hash(vec![1])
+            .providers("[\"agy\"]")
+            .models("[]")
+            .created_at(0)
+            .expires_at(Some(1))
+            .revoked_at(Some(1))
+            .exec(&mut db)
+            .await
+            .unwrap();
         assert_eq!(
             request(&router, "POST", "/api/providers", r#"{"kind":"agy"}"#)
                 .await
@@ -968,7 +983,9 @@ mod tests {
             key_hash: vec![3],
             providers: "[]".to_string(),
             models: "[]".to_string(),
-            created_at: 0
+            created_at: 0,
+            expires_at: None,
+            revoked_at: None
         })
         .exec(&mut db)
         .await
@@ -1037,7 +1054,9 @@ mod tests {
             key_hash: vec![2],
             providers: "[\"old\"]".to_string(),
             models: "[]".to_string(),
-            created_at: 0
+            created_at: 0,
+            expires_at: None,
+            revoked_at: None
         })
         .exec(&mut db)
         .await

@@ -75,13 +75,14 @@ export function updateObservabilityFilters(
   };
 }
 
-function FilterGroup({
+export function FilterGroup({
   title,
   values,
   selected,
   onChange,
   identities,
   defaultOpen = false,
+  disabled = false,
 }: {
   title: string;
   values: string[];
@@ -89,6 +90,7 @@ function FilterGroup({
   onChange: (values: string[]) => void;
   identities?: { id: string; name: string }[];
   defaultOpen?: boolean;
+  disabled?: boolean;
 }) {
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(defaultOpen || selected.length > 0);
@@ -133,6 +135,7 @@ function FilterGroup({
             >
               <Checkbox
                 checked={selected.includes(value)}
+                disabled={disabled}
                 onCheckedChange={(checked) =>
                   onChange(
                     checked

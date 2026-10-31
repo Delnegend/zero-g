@@ -25,6 +25,8 @@ pub(in crate::server) async fn list_keys(State(store): State<SettingsStore>) -> 
                 providers: serde_json::from_str(&row.providers).map_err(|e| e.to_string())?,
                 models: serde_json::from_str(&row.models).map_err(|e| e.to_string())?,
                 created_at: row.created_at,
+                expires_at: row.expires_at,
+                revoked_at: row.revoked_at,
             });
         }
         Ok(keys)

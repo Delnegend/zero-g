@@ -110,8 +110,16 @@ Object.defineProperty(window, "cancelAnimationFrame", {
 });
 
 // These modules capture the browser document at import time, so load them after JSDOM setup.
-const { act, render, screen, within, cleanup, waitFor } =
-  await import("@testing-library/react");
+const {
+  act,
+  fireEvent,
+  render,
+  within,
+  cleanup,
+  waitFor,
+  getQueriesForElement,
+} = await import("@testing-library/react");
+const screen = getQueriesForElement(dom.window.document.body);
 const userEvent = (await import("@testing-library/user-event")).default;
 const { SettingsPage } = await import("./routes/settings");
 const { KeysPage } = await import("./routes/keys");
@@ -1280,17 +1288,33 @@ test("rejects an untrusted provider authorization URL", async () => {
   assert.equal(screen.queryByRole("link", { name: /authorization/ }), null);
 });
 
-test("create a restricted key, dismiss its one-time token, and revoke it", async () => {
-  const requests: unknown[] = [];
+test("create restricted keys, edit expiration, and retain revoked metadata", async () => {
+  let creates = 0;
   let keys: Array<{
     id: string;
     name: string;
     providers: string[];
     models: string[];
     created_at: number;
+    expires_at: number | null;
+    revoked_at: number | null;
   }> = [];
+  const card = (id: string) => ({
+    model: { id },
+    display_name: id,
+    description: null,
+    reasoning_efforts: [],
+    reasoning: null,
+    tool_call: null,
+    input_modalities: ["text"],
+    pricing: null,
+    raw_pricing: null,
+    parameters: null,
+    provider_metadata: null,
+  });
   globalThis.fetch = (async (url, options) => {
     const path = String(url);
+    const method = options?.method ?? "GET";
     if (path === "/api/providers")
       return Response.json({
         providers: [
@@ -1308,64 +1332,180 @@ test("create a restricted key, dismiss its one-time token, and revoke it", async
           },
         ],
       });
-    if (path === "/api/keys" && options?.method === "POST") {
-      const body = JSON.parse(String(options.body));
-      requests.push(body);
-      if (
-        body.name !== "CI key" ||
-        JSON.stringify(body.providers) !== '["alpha"]' ||
-        JSON.stringify(body.models) !== '["model-a","model-b"]'
-      )
-        return new Response("Bad restrictions", { status: 400 });
-      const key = {
-        id: "key-1",
-        name: "CI key",
-        providers: ["alpha"],
-        models: ["model-a", "model-b"],
-        created_at: 1,
-      };
+    if (path === "/api/model-catalog")
+      return Response.json({
+        datasheets_error: null,
+        providers: [
+          {
+            id: "alpha",
+            name: "Alpha",
+            kind: "openai",
+            base_url: "",
+            error: null,
+            models: [card("model-a"), card("model-b")],
+          },
+        ],
+      });
+    if (path === "/api/keys" && method === "POST") {
+      const body = JSON.parse(String(options?.body));
+      creates++;
+      const key = { id: "key-1", ...body, created_at: 1, revoked_at: null };
       keys = [key];
       return Response.json({ ...key, key: "secret-once" });
     }
-    if (path === "/api/keys/key-1" && options?.method === "DELETE") {
-      requests.push({ method: "DELETE", path });
-      keys = [];
+    if (path === "/api/keys/key-1" && method === "PATCH") {
+      const body = JSON.parse(String(options?.body));
+      keys = [{ ...keys[0], expires_at: body.expires_at }];
+      return new Response(null, { status: 204 });
+    }
+    if (path === "/api/keys/key-1/revoke" && method === "POST") {
+      keys = [{ ...keys[0], revoked_at: 1 }];
       return new Response(null, { status: 204 });
     }
     if (path === "/api/keys") return Response.json({ keys });
     throw new Error(`Unexpected request: ${path}`);
   }) as typeof fetch;
   const user = userEvent.setup();
-  mount(<KeysPage />);
+  mount(
+    <TooltipProvider>
+      <KeysPage />
+    </TooltipProvider>,
+  );
   await screen.findByText("No keys created yet.");
   await user.click(screen.getByRole("button", { name: "Create key" }));
   const dialog = await screen.findByRole("dialog");
   await user.type(within(dialog).getByLabelText("Name"), "CI key");
-  await user.click(
-    await within(dialog).findByRole("checkbox", { name: "Alpha (alpha)" }),
+  await user.type(
+    await within(dialog).findByLabelText("Search Providers"),
+    "Alpha",
   );
-  await user.type(within(dialog).getByLabelText(/Models/), "model-a, model-b");
+  await user.click(
+    within(dialog).getByRole("checkbox", { name: "Alpha (alpha)" }),
+  );
+  await user.type(within(dialog).getByLabelText("Search Models"), "model-a");
+  await user.click(within(dialog).getByRole("checkbox", { name: "model-a" }));
+  await user.clear(within(dialog).getByLabelText("Search Models"));
+  await user.click(within(dialog).getByRole("checkbox", { name: "model-b" }));
+  await user.click(
+    within(dialog).getByRole("button", { name: /Choose expiration date/ }),
+  );
+  await user.click(screen.getByRole("button", { name: /previous month/i }));
+  const previousMonth = new Date();
+  previousMonth.setDate(1);
+  previousMonth.setMonth(previousMonth.getMonth() - 1);
+  previousMonth.setDate(15);
+  const pastDay = document.querySelector<HTMLButtonElement>(
+    `[data-slot="calendar"] button[data-day="${previousMonth.toLocaleDateString()}"]`,
+  );
+  assert.ok(pastDay);
+  await user.click(pastDay);
+  await user.click(screen.getByRole("button", { name: "Done" }));
+  await user.click(within(dialog).getByRole("button", { name: "Create key" }));
+  assert.ok(
+    await within(dialog).findByText("Expiration must be in the future."),
+  );
+  assert.equal(creates, 0);
+  await user.click(
+    within(dialog).getByRole("button", { name: /Choose expiration date/ }),
+  );
+  await user.click(screen.getByRole("button", { name: /next month/i }));
+  await user.click(screen.getByRole("button", { name: /next month/i }));
+  const nextMonth = new Date();
+  nextMonth.setDate(1);
+  nextMonth.setMonth(nextMonth.getMonth() + 1);
+  nextMonth.setDate(15);
+  const futureDay = document.querySelector<HTMLButtonElement>(
+    `[data-slot="calendar"] button[data-day="${nextMonth.toLocaleDateString()}"]`,
+  );
+  assert.ok(futureDay);
+  await user.click(futureDay);
+  fireEvent.change(screen.getByLabelText("Time (24-hour)"), {
+    target: { value: "99:00" },
+  });
+  await user.click(screen.getByRole("button", { name: "Done" }));
+  await user.click(within(dialog).getByRole("button", { name: "Create key" }));
+  assert.ok(
+    await within(dialog).findByText("Enter a valid time as HH:MM or HH:MM:SS."),
+  );
+  assert.equal(creates, 0);
+  await user.click(
+    within(dialog).getByRole("button", { name: /Choose expiration date/ }),
+  );
+  fireEvent.change(screen.getByLabelText("Time (24-hour)"), {
+    target: { value: "12:00:00" },
+  });
+  await user.click(screen.getByRole("button", { name: "Done" }));
   await user.click(within(dialog).getByRole("button", { name: "Create key" }));
   await screen.findByText("secret-once");
-  assert.deepEqual(requests[0], {
-    name: "CI key",
-    providers: ["alpha"],
-    models: ["model-a", "model-b"],
-  });
-  assert.ok(screen.getByText("It will not be shown again."));
   await user.click(screen.getByRole("button", { name: "Dismiss" }));
-  assert.equal(screen.queryByText("secret-once"), null);
-  await screen.findByText("CI key");
-  assert.ok(screen.getByText(/Providers: alpha.*Models: model-a, model-b/));
-  await user.click(screen.getByRole("button", { name: "Revoke / delete" }));
-  const confirmation = await screen.findByRole("dialog");
-  assert.ok(within(confirmation).getByText(/CI key.*cannot be undone/));
+  assert.ok(screen.getByRole("button", { name: /Expires in/ }));
   await user.click(
-    within(confirmation).getByRole("button", { name: "Revoke / delete" }),
+    screen.getByRole("button", { name: "Edit expiration for CI key" }),
   );
-  await screen.findByText("No keys created yet.");
-  assert.deepEqual(requests[1], { method: "DELETE", path: "/api/keys/key-1" });
-  assert.equal(screen.queryByText("secret-once"), null);
+  let edit = await screen.findByRole("dialog");
+  await user.click(
+    within(edit).getByRole("button", { name: /Choose expiration date/ }),
+  );
+  fireEvent.change(screen.getByLabelText("Time (24-hour)"), {
+    target: { value: "12:30:00" },
+  });
+  await user.click(screen.getByRole("button", { name: "Done" }));
+  await user.click(
+    within(edit).getByRole("button", { name: "Save expiration" }),
+  );
+  await waitFor(() => assert.equal(screen.queryByRole("dialog"), null));
+  await user.click(
+    screen.getByRole("button", { name: "Edit expiration for CI key" }),
+  );
+  edit = await screen.findByRole("dialog");
+  await user.click(
+    within(edit).getByRole("button", { name: /Choose expiration date/ }),
+  );
+  await user.click(screen.getByRole("button", { name: "Clear expiration" }));
+  await user.click(
+    within(edit).getByRole("button", { name: "Save expiration" }),
+  );
+  await screen.findByText("Never expires");
+  await user.click(screen.getByRole("button", { name: "Revoke CI key" }));
+  const confirmation = await screen.findByRole("dialog");
+  await user.click(
+    within(confirmation).getByRole("button", { name: "Revoke" }),
+  );
+  await screen.findByText("Revoked");
+  assert.ok(screen.getByText("CI key"));
+  assert.equal(
+    (screen.getByRole("button", { name: "Revoke CI key" }) as HTMLButtonElement)
+      .disabled,
+    true,
+  );
+});
+
+test("catalog failure warns about unrestricted models without blocking key creation", async () => {
+  globalThis.fetch = (async (url) => {
+    const path = String(url);
+    if (path === "/api/providers") return Response.json({ providers: [] });
+    if (path === "/api/keys") return Response.json({ keys: [] });
+    if (path === "/api/model-catalog")
+      return new Response("Unavailable", { status: 503 });
+    throw new Error(`Unexpected request: ${path}`);
+  }) as typeof fetch;
+  const user = userEvent.setup();
+  mount(
+    <TooltipProvider>
+      <KeysPage />
+    </TooltipProvider>,
+  );
+  await user.click(screen.getByRole("button", { name: "Create key" }));
+  const dialog = await screen.findByRole("dialog");
+  await within(dialog).findByText(/selecting none allows all models/);
+  assert.equal(
+    (
+      within(dialog).getByRole("button", {
+        name: "Create key",
+      }) as HTMLButtonElement
+    ).disabled,
+    false,
+  );
 });
 
 test("search and inspect a request in LLM logs", async () => {

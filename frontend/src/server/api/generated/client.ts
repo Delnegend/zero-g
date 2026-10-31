@@ -45,6 +45,7 @@ import type {
   GetObservabilityParams,
   GrokPollInput,
   ManagementKey,
+  UpdateKey,
   UpdateProvider,
   UpdateSettings,
 } from "./schemas";
@@ -111,12 +112,56 @@ export const createKey = async (
   });
 };
 
-export const getRevokeKeyUrl = (id: string) => {
+export const getUpdateKeyUrl = (id: string) => {
   return `/api/keys/${encodeURIComponent(String(id))}`;
 };
 
 /**
- * @summary Deletes a virtual key by ID.
+ * @summary Changes or clears the expiration of a non-revoked key.
+ */
+export const updateKey = async (
+  id: string,
+  updateKeyBody: UpdateKey,
+  options?: Parameters<typeof request>[1],
+): Promise<void> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<
+      string | readonly string[] | undefined
+    >(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return request<void>(getUpdateKeyUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...getHeaders(options?.headers),
+    },
+    body: JSON.stringify(updateKeyBody),
+  });
+};
+
+export const getRevokeKeyUrl = (id: string) => {
+  return `/api/keys/${encodeURIComponent(String(id))}/revoke`;
+};
+
+/**
+ * @summary Revokes a virtual key by ID while retaining its metadata.
  */
 export const revokeKey = async (
   id: string,
@@ -124,7 +169,7 @@ export const revokeKey = async (
 ): Promise<void> => {
   return request<void>(getRevokeKeyUrl(id), {
     ...options,
-    method: "DELETE",
+    method: "POST",
   });
 };
 

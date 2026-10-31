@@ -37,6 +37,24 @@ pub(crate) struct RequestLog {
     pub credential_name: Option<String>,
 }
 
+/// Retention-maintained log filter dimension and identity-name snapshot.
+#[derive(Debug, toasty::Model)]
+#[table = "log_filter_options"]
+pub(crate) struct LogFilterOption {
+    /// Unambiguous encoding of kind, value, and name.
+    #[key]
+    pub id: String,
+    /// Dimension discriminator.
+    pub kind: i64,
+    /// Dimension value or stable identity.
+    pub value: String,
+    /// Identity name, or empty for non-identity dimensions.
+    pub name: String,
+    /// Most recent request having this exact option.
+    #[index]
+    pub last_seen: i64,
+}
+
 /// Named application setting.
 #[derive(Debug, toasty::Model)]
 #[table = "settings"]
@@ -77,6 +95,10 @@ pub(crate) struct VirtualKey {
     pub models: String,
     /// Key creation timestamp.
     pub created_at: i64,
+    /// Optional expiration and revocation times in Unix seconds.
+    pub expires_at: Option<i64>,
+    /// Time at which the key was revoked.
+    pub revoked_at: Option<i64>,
 }
 
 /// Persisted provider configuration.

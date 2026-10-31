@@ -51,7 +51,8 @@ impl Database {
                 crate::storage::Secret,
                 crate::storage::VirtualKey,
                 crate::storage::ProviderRecord,
-                crate::storage::ProviderCredential
+                crate::storage::ProviderCredential,
+                crate::storage::LogFilterOption
             ))
             .connect(&format!("turso:{path}"))
             .await

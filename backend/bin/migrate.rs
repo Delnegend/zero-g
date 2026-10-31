@@ -14,7 +14,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             storage::Secret,
             storage::VirtualKey,
             storage::ProviderRecord,
-            storage::ProviderCredential
+            storage::ProviderCredential,
+            storage::LogFilterOption
         ))
         .connect(&format!("turso:{path}"))
         .await?;

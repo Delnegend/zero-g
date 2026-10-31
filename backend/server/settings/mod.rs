@@ -21,6 +21,8 @@ mod list_keys;
 mod put_settings;
 /// Revoke a virtual key.
 mod revoke_key;
+/// Change a virtual key's expiration.
+mod update_key;
 /// Authenticate virtual key requests.
 mod virtual_key_auth;
 
@@ -34,6 +36,8 @@ use put_settings::__path_put_settings;
 pub(crate) use put_settings::put_settings;
 use revoke_key::__path_revoke_key;
 pub(super) use revoke_key::revoke_key;
+use update_key::__path_update_key;
+pub(super) use update_key::update_key;
 pub(crate) use virtual_key_auth::virtual_key_auth;
 
 /// Reserved secret name for checking the configured encryption key.
@@ -93,6 +97,12 @@ struct KeyInfo {
     models: Vec<String>,
     /// Creation time in Unix seconds.
     created_at: i64,
+    /// Expiration time in Unix seconds, if set.
+    #[schema(required = true)]
+    expires_at: Option<i64>,
+    /// Revocation time in Unix seconds, if revoked.
+    #[schema(required = true)]
+    revoked_at: Option<i64>,
 }
 
 /// Request to create a named virtual key with optional restrictions.
@@ -106,6 +116,31 @@ pub(super) struct CreateKey {
     /// Allowed model IDs; empty permits every model.
     #[serde(default)]
     models: Vec<String>,
+    /// Optional expiration time in Unix seconds.
+    expires_at: Option<i64>,
+}
+
+/// Replacement expiration for a virtual key.
+#[derive(Deserialize, ToSchema)]
+pub(super) struct UpdateKey {
+    /// Expiration time in Unix seconds, or null to clear it.
+    #[serde(deserialize_with = "deserialize_expiration")]
+    #[schema(required = true)]
+    expires_at: Option<i64>,
+}
+
+/// Require the field while allowing an explicit null.
+fn deserialize_expiration<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<i64>, D::Error> {
+    Option::<i64>::deserialize(deserializer)
+}
+
+/// Current Unix time in seconds.
+pub(crate) fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
 }
 
 /// Virtual keys returned without their tokens.
@@ -128,6 +163,12 @@ struct CreatedKey {
     models: Vec<String>,
     /// Creation time in Unix seconds.
     created_at: i64,
+    /// Expiration time in Unix seconds, if set.
+    #[schema(required = true)]
+    expires_at: Option<i64>,
+    /// Revocation time in Unix seconds, initially null.
+    #[schema(required = true)]
+    revoked_at: Option<i64>,
     /// Secret token, returned only on creation.
     key: String,
 }
@@ -135,12 +176,20 @@ struct CreatedKey {
 /// Settings and virtual key dashboard operations.
 #[derive(utoipa::OpenApi)]
 #[openapi(
-    paths(get_settings, put_settings, list_keys, create_key, revoke_key),
+    paths(
+        get_settings,
+        put_settings,
+        list_keys,
+        create_key,
+        revoke_key,
+        update_key
+    ),
     components(schemas(
         SettingsResponse,
         UpdateSettings,
         KeyInfo,
         CreateKey,
+        UpdateKey,
         KeyList,
         CreatedKey
     ))
@@ -287,6 +336,9 @@ impl SettingsStore {
         else {
             return Ok(None);
         };
+        if row.revoked_at.is_some() || row.expires_at.is_some_and(|expires| expires <= unix_now()) {
+            return Ok(None);
+        }
         if let Some(identity) = identity {
             identity.set_virtual_key(&row.id, &row.name);
         }
@@ -409,7 +461,7 @@ mod tests {
         std::fs::remove_file(path).unwrap();
     }
 
-    /// Concurrent revocations allow only one successful deletion.
+    /// Concurrent revocations retain one revocation timestamp.
     #[tokio::test]
     async fn concurrent_key_revocations_have_one_winner() {
         let path = path();
@@ -421,6 +473,7 @@ mod tests {
                 name: "test".into(),
                 providers: vec![],
                 models: vec![],
+                expires_at: None,
             }),
         )
         .await;
@@ -440,6 +493,164 @@ mod tests {
         );
         drop(store);
         std::fs::remove_file(path).unwrap();
+    }
+
+    /// Expiration changes govern authentication.
+    #[tokio::test]
+    async fn key_expiration_lifecycle() {
+        let store = SettingsStore::new(Database::open(":memory:").await.unwrap(), &key(1))
+            .await
+            .unwrap();
+        let make = |expires_at| CreateKey {
+            name: "lifecycle".into(),
+            providers: vec![],
+            models: vec![],
+            expires_at,
+        };
+        assert_eq!(
+            create_key(State(store.clone()), Json(make(Some(unix_now()))))
+                .await
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        let future = unix_now() + 3600;
+        let created =
+            json_body(create_key(State(store.clone()), Json(make(Some(future)))).await).await;
+        assert_eq!(created["expires_at"], future);
+        assert!(created["revoked_at"].is_null());
+        let id = created["id"].as_str().unwrap().to_owned();
+        let token = created["key"].as_str().unwrap().to_owned();
+        assert!(store.permissions(&token, None).await.unwrap().is_some());
+        assert_eq!(
+            update_key(
+                State(store.clone()),
+                Path(id.clone()),
+                Json(UpdateKey {
+                    expires_at: Some(unix_now())
+                })
+            )
+            .await
+            .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            update_key(
+                State(store.clone()),
+                Path(id.clone()),
+                Json(UpdateKey { expires_at: None })
+            )
+            .await
+            .status(),
+            StatusCode::NO_CONTENT
+        );
+        assert!(
+            json_body(list_keys(State(store.clone())).await).await["keys"][0]["expires_at"]
+                .is_null()
+        );
+        assert_eq!(
+            update_key(
+                State(store.clone()),
+                Path(id.clone()),
+                Json(UpdateKey {
+                    expires_at: Some(future)
+                })
+            )
+            .await
+            .status(),
+            StatusCode::NO_CONTENT
+        );
+
+        let row = VirtualKey::filter_by_id(id.as_str())
+            .first()
+            .exec(&mut (*store.database.db).clone())
+            .await
+            .unwrap()
+            .unwrap();
+        VirtualKey::upsert_by_id(id.as_str())
+            .name(row.name)
+            .key_hash(row.key_hash)
+            .providers(row.providers)
+            .models(row.models)
+            .created_at(row.created_at)
+            .expires_at(Some(unix_now()))
+            .revoked_at(None)
+            .exec(&mut (*store.database.db).clone())
+            .await
+            .unwrap();
+        let identity = crate::provider::common::request_identity::RequestIdentity::default();
+        assert!(
+            store
+                .permissions(&token, Some(&identity))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(identity.snapshot().virtual_key_id.is_none());
+        assert_eq!(
+            update_key(
+                State(store.clone()),
+                Path(id.clone()),
+                Json(UpdateKey { expires_at: None })
+            )
+            .await
+            .status(),
+            StatusCode::NO_CONTENT
+        );
+        assert!(store.permissions(&token, None).await.unwrap().is_some());
+    }
+
+    /// Revocation blocks authentication and keeps metadata visible.
+    #[tokio::test]
+    async fn key_revocation_lifecycle() {
+        let store = SettingsStore::new(Database::open(":memory:").await.unwrap(), &key(1))
+            .await
+            .unwrap();
+        let created = json_body(
+            create_key(
+                State(store.clone()),
+                Json(CreateKey {
+                    name: "lifecycle".into(),
+                    providers: vec![],
+                    models: vec![],
+                    expires_at: None,
+                }),
+            )
+            .await,
+        )
+        .await;
+        let id = created["id"].as_str().unwrap().to_owned();
+        let token = created["key"].as_str().unwrap().to_owned();
+        assert_eq!(
+            revoke_key(State(store.clone()), Path(id.clone()))
+                .await
+                .status(),
+            StatusCode::NO_CONTENT
+        );
+        assert!(store.permissions(&token, None).await.unwrap().is_none());
+        let listed = json_body(list_keys(State(store.clone())).await).await;
+        assert_eq!(listed["keys"][0]["id"], id);
+        assert!(listed["keys"][0]["revoked_at"].is_i64());
+        assert_eq!(
+            update_key(
+                State(store.clone()),
+                Path(id),
+                Json(UpdateKey { expires_at: None })
+            )
+            .await
+            .status(),
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            update_key(
+                State(store),
+                Path("missing".into()),
+                Json(UpdateKey { expires_at: None })
+            )
+            .await
+            .status(),
+            StatusCode::NOT_FOUND
+        );
+        assert!(serde_json::from_value::<UpdateKey>(json!({})).is_err());
     }
 
     /// Test handler checks model access using attached permissions.
@@ -524,6 +735,7 @@ mod tests {
                     name: "invalid".into(),
                     providers: vec!["missing".into()],
                     models: vec![],
+                    expires_at: None,
                 })
             )
             .await
@@ -536,6 +748,7 @@ mod tests {
                 name: "limited".into(),
                 providers: vec!["account-a".into()],
                 models: vec!["allowed-model".into()],
+                expires_at: None,
             }),
         )
         .await;
@@ -722,6 +935,7 @@ mod tests {
                     name: name.into(),
                     providers: vec![],
                     models: vec![],
+                    expires_at: None,
                 }),
             )
             .await;

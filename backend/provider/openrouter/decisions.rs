@@ -168,7 +168,9 @@ mod tests {
                 .to_vec(),
             providers: r#"["openrouter"]"#.to_string(),
             models: r#"["cloudflare/clef"]"#.to_string(),
-            created_at: 0
+            created_at: 0,
+            expires_at: None,
+            revoked_at: None
         })
         .exec(&mut db)
         .await

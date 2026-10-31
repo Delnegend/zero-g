@@ -5,8 +5,8 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 
-/// Deletes a virtual key by ID.
-#[utoipa::path(delete, path = "/api/keys/{id}", operation_id = "revokeKey",
+/// Revokes a virtual key by ID while retaining its metadata.
+#[utoipa::path(post, path = "/api/keys/{id}/revoke", operation_id = "revokeKey",
     params(("id" = String, Path, description = "Virtual key ID")),
     responses((status = 204, description = "Key revoked"),
         (status = 404, description = "Key not found"), (status = 500, description = "Settings store error")))]
@@ -22,7 +22,19 @@ pub(in crate::server) async fn revoke_key(
         else {
             return Ok(false);
         };
-        row.delete().exec(&mut tx).await?;
+        if row.revoked_at.is_some() {
+            return Ok(false);
+        }
+        VirtualKey::upsert_by_id(row.id.as_str())
+            .name(row.name)
+            .key_hash(row.key_hash)
+            .providers(row.providers)
+            .models(row.models)
+            .created_at(row.created_at)
+            .expires_at(row.expires_at)
+            .revoked_at(Some(super::unix_now()))
+            .exec(&mut tx)
+            .await?;
         tx.commit().await?;
         Ok(true)
     });

@@ -611,7 +611,7 @@ pub(crate) async fn migrate_legacy(store: &SettingsStore) -> Result<(), String> 
             for provider in &mut permissions { if let Some(id) = remap.get(provider) { *provider = id.clone(); } }
             permissions.sort(); permissions.dedup();
             let permissions = match serde_json::to_string(&permissions) { Ok(value) => value, Err(e) => return Ok(Err(e.to_string())) };
-            VirtualKey::upsert_by_id(key.id.as_str()).name(key.name).key_hash(key.key_hash).providers(permissions).models(key.models).created_at(key.created_at).exec(&mut tx).await?;
+            VirtualKey::upsert_by_id(key.id.as_str()).name(key.name).key_hash(key.key_hash).providers(permissions).models(key.models).created_at(key.created_at).expires_at(key.expires_at).revoked_at(key.revoked_at).exec(&mut tx).await?;
         }
         for (provider, target, id, old_name, new_name, encrypted) in &entries {
             toasty::create!(ProviderCredential { id: id.clone(), provider_id: target.clone(), name: provider.name.clone(), weight: 1, enabled: true }).exec(&mut tx).await?;
@@ -807,7 +807,9 @@ mod tests {
             key_hash: vec![1],
             providers: "[\"first\"]".to_string(),
             models: "[]".to_string(),
-            created_at: 1
+            created_at: 1,
+            expires_at: None,
+            revoked_at: None
         })
         .exec(&mut db)
         .await

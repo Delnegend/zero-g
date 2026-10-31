@@ -73,9 +73,54 @@
       }
     },
     "/api/keys/{id}": {
-      "delete": {
+      "patch": {
         "tags": [],
-        "summary": "Deletes a virtual key by ID.",
+        "summary": "Changes or clears the expiration of a non-revoked key.",
+        "operationId": "updateKey",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Virtual key ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateKey"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Expiration updated"
+          },
+          "400": {
+            "description": "Expiration must be in the future"
+          },
+          "404": {
+            "description": "Key not found"
+          },
+          "409": {
+            "description": "Key is revoked"
+          },
+          "500": {
+            "description": "Settings store error"
+          }
+        }
+      }
+    },
+    "/api/keys/{id}/revoke": {
+      "post": {
+        "tags": [],
+        "summary": "Revokes a virtual key by ID while retaining its metadata.",
         "operationId": "revokeKey",
         "parameters": [
           {
@@ -2354,6 +2399,11 @@
         "description": "Request to create a named virtual key with optional restrictions.",
         "required": ["name"],
         "properties": {
+          "expires_at": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Optional expiration time in Unix seconds."
+          },
           "models": {
             "type": "array",
             "items": {
@@ -2401,12 +2451,26 @@
       "CreatedKey": {
         "type": "object",
         "description": "Newly created key including its one-time token.",
-        "required": ["id", "name", "providers", "models", "created_at", "key"],
+        "required": [
+          "id",
+          "name",
+          "providers",
+          "models",
+          "created_at",
+          "expires_at",
+          "revoked_at",
+          "key"
+        ],
         "properties": {
           "created_at": {
             "type": "integer",
             "format": "int64",
             "description": "Creation time in Unix seconds."
+          },
+          "expires_at": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Expiration time in Unix seconds, if set."
           },
           "id": {
             "type": "string",
@@ -2433,6 +2497,11 @@
               "type": "string"
             },
             "description": "Allowed provider IDs."
+          },
+          "revoked_at": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Revocation time in Unix seconds, initially null."
           }
         }
       },
@@ -2754,12 +2823,25 @@
       "KeyInfo": {
         "type": "object",
         "description": "Public metadata for a virtual key, excluding its secret token.",
-        "required": ["id", "name", "providers", "models", "created_at"],
+        "required": [
+          "id",
+          "name",
+          "providers",
+          "models",
+          "created_at",
+          "expires_at",
+          "revoked_at"
+        ],
         "properties": {
           "created_at": {
             "type": "integer",
             "format": "int64",
             "description": "Creation time in Unix seconds."
+          },
+          "expires_at": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Expiration time in Unix seconds, if set."
           },
           "id": {
             "type": "string",
@@ -2782,6 +2864,11 @@
               "type": "string"
             },
             "description": "Provider IDs allowed by the key."
+          },
+          "revoked_at": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Revocation time in Unix seconds, if revoked."
           }
         }
       },
@@ -3386,6 +3473,18 @@
             "description": "Number of days to retain logs.",
             "maximum": 4294967295,
             "minimum": 0
+          }
+        }
+      },
+      "UpdateKey": {
+        "type": "object",
+        "description": "Replacement expiration for a virtual key.",
+        "required": ["expires_at"],
+        "properties": {
+          "expires_at": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Expiration time in Unix seconds, or null to clear it."
           }
         }
       },
