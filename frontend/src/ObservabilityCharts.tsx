@@ -48,6 +48,23 @@ function bucketIndex(start: number, interval: Interval) {
   return date.getUTCFullYear();
 }
 
+function bucketStart(index: number, interval: Interval) {
+  if (interval === "hour" || interval === "day")
+    return index * (interval === "hour" ? 3600 : 86400);
+  const date = new Date(0);
+  const year = interval === "month" ? Math.floor(index / 12) : index;
+  const month = interval === "month" ? ((index % 12) + 12) % 12 : 0;
+  date.setUTCFullYear(year, month, 1);
+  date.setUTCHours(0, 0, 0, 0);
+  return date.getTime() / 1000;
+}
+
+function bucketPhase(start: number, interval: Interval) {
+  const index = bucketIndex(start, interval);
+  const boundary = bucketStart(index, interval);
+  return (start - boundary) / (bucketStart(index + 1, interval) - boundary);
+}
+
 function formatChartPeriod(label: string) {
   return `Current: ${label} UTC`;
 }
@@ -314,7 +331,7 @@ function GraphPanel({
             renderer={chartRenderer}
             height={desktop ? 205 : 135}
             ariaLabel={title}
-            ariaDescription={`${description}${previousSeries.some((item) => item.points.length > 0) ? " Previous values are aligned from first activity, not by calendar date." : ""} Exact values follow the chart.`}
+            ariaDescription={`${description}${previousSeries.some((item) => item.points.length > 0) ? " Previous values are aligned by offsets from the selected period boundaries." : ""} Exact values follow the chart.`}
           />
         )}
       </div>
@@ -388,36 +405,23 @@ export function ObservabilityCharts({
   );
   const positionLabel = (position: number) => {
     const index = currentBase + position;
-    let seconds: number;
-    if (interval === "hour" || interval === "day") {
-      seconds = index * (interval === "hour" ? 3600 : 86400);
-    } else {
-      const date = new Date(0);
-      const year = interval === "month" ? Math.floor(index / 12) : index;
-      const month = interval === "month" ? ((index % 12) + 12) % 12 : 0;
-      date.setUTCFullYear(year, month, 1);
-      date.setUTCHours(0, 0, 0, 0);
-      seconds = date.getTime() / 1000;
-    }
+    const seconds = bucketStart(index, interval);
     const outside =
-      comparison && index > bucketIndex(comparison.currentUntil, interval);
+      comparison &&
+      (index < currentBase ||
+        index > bucketIndex(comparison.currentUntil, interval));
     return `${bucketLabel(seconds, interval)}${outside ? "*" : ""}`;
   };
   const previousData = comparison?.data ?? null;
-  const previousFirst = previousData?.buckets.reduce(
-    (first, bucket) => Math.min(first, bucket.start),
-    Infinity,
-  );
-  // Anchor both curves at their first recorded bucket, retaining gaps within
-  // each period. Accessible rows retain the actual dates.
+  const previousSince = comparison?.previousSince ?? 0;
+  const phaseDifference = comparison
+    ? bucketPhase(previousSince, interval) -
+      bucketPhase(comparison.currentSince, interval)
+    : 0;
+  // Align the closest bucket boundaries, including tiny partial edge buckets.
   const previousBase =
-    Number.isFinite(firstStart) &&
-    previousFirst !== undefined &&
-    Number.isFinite(previousFirst) &&
-    previousData?.interval === interval
-      ? bucketIndex(previousFirst, interval) -
-        (bucketIndex(firstStart, interval) - currentBase)
-      : bucketIndex(comparison?.previousSince ?? 0, interval);
+    bucketIndex(previousSince, interval) +
+    (phaseDifference > 0.5 ? 1 : phaseDifference < -0.5 ? -1 : 0);
   const makePeriods = (items: Bucket[], base: number) =>
     [...items]
       .sort((a, b) => a.start - b.start)
@@ -506,7 +510,7 @@ export function ObservabilityCharts({
             previous !== null &&
             previousData.buckets.length > 0 &&
             periods.length > 0
-          ? ` The dashed line starts at the first recorded request in each period, not on matching dates.${domain.some((label) => label.endsWith("*")) ? " Dates marked * are outside the selected range." : ""}`
+          ? ` The dashed line aligns bucket offsets from the start of each selected period.${domain.some((label) => label.endsWith("*")) ? " Dates marked * are outside the selected range." : ""}`
           : ""
     }`,
   });
@@ -574,7 +578,7 @@ export function ObservabilityCharts({
   const providerLabel = (name: string) => name || "(not provided)";
   const providerCount = (items: Breakdown, name: string) =>
     items.find((item) => item.name === name)?.requests ?? 0;
-  const dateDescription = `Recorded requests grouped by UTC ${interval}. The first recorded buckets are aligned; gaps remain in their original positions. Edge buckets can cover different durations.`;
+  const dateDescription = `Recorded requests grouped by UTC ${interval}. Buckets are aligned by their offsets from the selected period boundaries; gaps remain in their original positions. Edge buckets can cover different durations.`;
 
   return (
     <div className="grid min-w-0 grid-cols-1 gap-3 @min-[672px]:grid-cols-2">

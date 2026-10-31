@@ -235,10 +235,10 @@ test("seven-day previous points overlay their matching bars despite missing curr
   }
 });
 
-test("previous activity overlays the first current bars while preserving gaps", () => {
+test("sparse periods align selected boundaries rather than first activity", () => {
   const day = 86400;
-  const current = [7, 8, 9].map((i) => bucket(i * day, i, i));
-  const prior = [4, 6].map((i) => bucket(i * day, i, i));
+  const current = [8, 11, 13].map((i) => bucket(i * day, i, i));
+  const prior = [0, 2, 4, 6].map((i) => bucket(i * day, i + 1, i));
   const html = renderToStaticMarkup(
     <ObservabilityCharts
       interval="day"
@@ -246,9 +246,9 @@ test("previous activity overlays the first current bars while preserving gaps", 
       breakdown={breakdown}
       comparison={{
         data: { ...previous, interval: "day", buckets: prior },
-        currentSince: 7 * day,
+        currentSince: 7 * day + 3600,
         currentUntil: 14 * day - 1,
-        previousSince: 0,
+        previousSince: 3600,
         previousUntil: 7 * day - 1,
         retentionCutoff: 0,
       }}
@@ -263,10 +263,20 @@ test("previous activity overlays the first current bars while preserving gaps", 
   ].filter(
     (point) => point.getAttribute("fill") === bars[0].getAttribute("fill"),
   );
-  assert.equal(points.length, 2);
+  assert.equal(points.length, 4);
+  assert.ok(
+    Number(points[0].getAttribute("cx")) < Number(bars[0].getAttribute("x")),
+  );
+  const firstCenter =
+    Number(bars[0].getAttribute("x")) +
+    Number(bars[0].getAttribute("width")) / 2;
+  assert.ok(Number(points[1].getAttribute("cx")) > firstCenter);
+  assert.ok(
+    Number(points[1].getAttribute("cx")) < Number(bars[1].getAttribute("x")),
+  );
   for (const [point, index] of [
-    [points[0], 0],
-    [points[1], 2],
+    [points[2], 1],
+    [points[3], 2],
   ] as const) {
     const bar = bars[index];
     const center =
@@ -278,14 +288,85 @@ test("previous activity overlays the first current bars while preserving gaps", 
   );
   assert.ok(
     previousRows?.textContent?.includes(
-      "1970-01-05 UTC (aligned with 1970-01-08 UTC)",
+      "1970-01-01 UTC (aligned with 1970-01-08 UTC)",
     ),
   );
   assert.ok(
     previousRows?.textContent?.includes(
-      "1970-01-07 UTC (aligned with 1970-01-10 UTC)",
+      "1970-01-07 UTC (aligned with 1970-01-14 UTC)",
     ),
   );
+});
+
+test("extra previous buckets retain their offsets beyond the current boundary", () => {
+  const day = 86400;
+  const html = renderToStaticMarkup(
+    <ObservabilityCharts
+      interval="day"
+      buckets={[bucket(7 * day, 1, 1), bucket(9 * day, 1, 1)]}
+      breakdown={breakdown}
+      comparison={{
+        data: {
+          ...previous,
+          interval: "day",
+          buckets: [bucket(3 * day, 1, 1)],
+        },
+        currentSince: 7 * day,
+        currentUntil: 10 * day - 1,
+        previousSince: 0,
+        previousUntil: 4 * day - 1,
+        retentionCutoff: 0,
+      }}
+    />,
+  );
+  const document = new JSDOM(html).window.document;
+  const previousRows = document.querySelector(
+    '[aria-label="Request volume previous period data"]',
+  );
+  assert.ok(
+    previousRows?.textContent?.includes(
+      "1970-01-04 UTC (aligned with 1970-01-11* UTC)",
+    ),
+  );
+  assert.match(html, /Dates marked \* are outside the selected range/);
+});
+
+test("inclusive one-second edge buckets do not shift the previous series", () => {
+  const hour = 3600;
+  const html = renderToStaticMarkup(
+    <ObservabilityCharts
+      interval="hour"
+      buckets={[bucket(12 * hour, 2, 1)]}
+      breakdown={breakdown}
+      comparison={{
+        data: {
+          ...previous,
+          buckets: [bucket(10 * hour, 1, 1), bucket(11 * hour, 1, 1)],
+        },
+        currentSince: 12 * hour,
+        currentUntil: 13 * hour,
+        previousSince: 11 * hour - 1,
+        previousUntil: 12 * hour - 1,
+        retentionCutoff: 0,
+      }}
+    />,
+  );
+  const document = new JSDOM(html).window.document;
+  const previousRows = document.querySelector(
+    '[aria-label="Request volume previous period data"]',
+  );
+  assert.ok(
+    previousRows?.textContent?.includes(
+      "1970-01-01 10:00 UTC (aligned with 1970-01-01 11:00* UTC)",
+    ),
+  );
+  assert.ok(
+    previousRows?.textContent?.includes(
+      "1970-01-01 11:00 UTC (aligned with 1970-01-01 12:00 UTC)",
+    ),
+  );
+  assert.match(html, /aligned by offsets from the selected period boundaries/);
+  assert.doesNotMatch(html, /first (recorded buckets|activity)/);
 });
 
 test("model usage stacks only current models without previous period content", () => {
