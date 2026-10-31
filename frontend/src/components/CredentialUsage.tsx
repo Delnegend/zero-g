@@ -7,7 +7,7 @@ import {
 } from "../server/api/providers";
 import { Button } from "./ui/button";
 import { Progress } from "./ui/progress";
-import { Skeleton } from "./ui/skeleton";
+import { CredentialUsageSkeleton } from "./providers/ProviderSkeletons";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 function ResetTime({ reset }: { reset: Date }) {
@@ -71,11 +71,13 @@ export function CredentialUsage({
   providerId,
   credentialId,
   credentialName,
+  providerKind,
   connected,
 }: {
   providerId: string;
   credentialId: string;
   credentialName: string;
+  providerKind: string;
   connected: boolean;
 }) {
   const usage = useQuery(
@@ -88,7 +90,10 @@ export function CredentialUsage({
       aria-label={`Usage for ${credentialName}`}
     >
       {connected && usage.isPending && (
-        <Skeleton className="h-20 w-40 max-w-full" aria-label="Loading usage" />
+        <CredentialUsageSkeleton
+          balance={providerKind === "zen" || providerKind === "openrouter"}
+          grouped={providerKind === "agy" || providerKind === "claude"}
+        />
       )}
       {connected && usage.isError && (
         <div className="space-y-2 text-sm">

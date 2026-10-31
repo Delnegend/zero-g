@@ -745,6 +745,7 @@ test("quota resets show a countdown and reveal the exact time", async () => {
     <TooltipProvider>
       <CredentialUsage
         providerId="codex"
+        providerKind="codex"
         credentialId="account"
         credentialName="Account"
         connected
@@ -785,6 +786,7 @@ test("Antigravity quotas show each pool with its own windows", async () => {
   mount(
     <CredentialUsage
       providerId="agy"
+      providerKind="agy"
       credentialId="account"
       credentialName="Account"
       connected

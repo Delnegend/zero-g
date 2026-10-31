@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { CardsSkeleton } from "@/components/Loading";
+import { ProvidersSkeleton } from "@/components/providers/ProviderSkeletons";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderForm } from "@/components/providers/ProviderForm";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -110,7 +110,7 @@ export function ProvidersPage() {
         />
       )}
       {providers.isPending ? (
-        <CardsSkeleton label="Loading providers" />
+        <ProvidersSkeleton />
       ) : providers.data?.providers.length === 0 ? (
         <p className="mt-6 text-sm text-muted-foreground">
           No providers configured yet.
