@@ -85,19 +85,14 @@ impl AuthManager {
     ) -> Result<Option<Self>, String> {
         let lock = crate::provider::login::credential_lock(credential_id).await;
         let _guard = lock.lock().await;
-        crate::provider::login::require_credential(&store, provider_id, credential_id, "agy")
-            .await
-            .map_err(|(_, message)| message)?;
-        let creds = match store
-            .secret_get(&format!("credential.{credential_id}.credential"))
-            .await?
-        {
-            Some(json) => Some(
-                serde_json::from_str(&json)
-                    .map_err(|e| format!("Failed to parse stored Antigravity credentials: {e}"))?,
-            ),
-            None => None,
-        };
+        let creds = crate::provider::credentials::load_oauth(
+            &store,
+            provider_id,
+            credential_id,
+            "agy",
+            "Antigravity",
+        )
+        .await?;
         Ok(creds.map(|creds| Self {
             creds: Arc::new(RwLock::new(creds)),
             store,
@@ -110,21 +105,15 @@ impl AuthManager {
     pub(crate) async fn get_credentials(&self) -> Result<Credentials, CredentialError> {
         let lock = crate::provider::login::credential_lock(&self.credential_id).await;
         let _guard = lock.lock().await;
-        crate::provider::login::require_credential(
+        let current: Credentials = crate::provider::credentials::load_oauth(
             &self.store,
             &self.provider_id,
             &self.credential_id,
             "agy",
+            "Antigravity",
         )
-        .await
-        .map_err(|(_, message)| message)?;
-        let stored = self
-            .store
-            .secret_get(&format!("credential.{}.credential", self.credential_id))
-            .await?
-            .ok_or_else(|| "Antigravity credentials no longer exist in the store".to_string())?;
-        let current: Credentials = serde_json::from_str(&stored)
-            .map_err(|e| format!("Failed to parse stored Antigravity credentials: {e}"))?;
+        .await?
+        .ok_or_else(|| "Antigravity credentials no longer exist in the store".to_string())?;
         *self.creds.write().await = current;
         let needs_refresh = {
             let r = self.creds.read().await;

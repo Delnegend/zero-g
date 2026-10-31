@@ -1,14 +1,14 @@
-use axum::body::{Body, Bytes};
+use axum::body::Bytes;
 use axum::extract::{RawQuery, State};
-use axum::http::{HeaderMap, Method, StatusCode, header};
+#[cfg(test)]
+use axum::http::StatusCode;
+use axum::http::{HeaderMap, Method, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Router};
 use serde_json::Value;
 
-use crate::provider::common::proxy::{
-    ProxyError, check_model, error, filter_models, settings_error,
-};
+use crate::provider::common::proxy::{ProxyError, check_model, model_response, retry_api_keys};
 use crate::provider::openai;
 use crate::provider::quota::{QuotaSnapshot, QuotaWindow};
 use crate::provider::registry::Provider;
@@ -179,50 +179,28 @@ async fn send(
     headers: &HeaderMap,
     body: Option<Bytes>,
 ) -> Result<reqwest::Response, ProxyError> {
-    let credentials = crate::provider::credentials::list(settings, &provider.id)
-        .await
-        .map_err(|_| settings_error())?;
-    let mut last = None;
-    for credential in credentials {
-        let key = settings
-            .secret_get(&format!("credential.{}.api_key", credential.id))
-            .await
-            .map_err(|_| settings_error())?
-            .ok_or_else(settings_error)?;
-        let response = send_upstream(
-            base(provider, path == "models"),
-            &key,
-            path,
-            query,
-            method.clone(),
-            headers,
-            body.clone(),
-        )
-        .await
-        .map_err(|message| {
-            error(
-                StatusCode::BAD_GATEWAY,
-                message,
-                "upstream_error",
-                "bad_gateway",
-            )
-        })?;
-        if !matches!(
-            response.status(),
-            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN | StatusCode::TOO_MANY_REQUESTS
-        ) {
-            return Ok(response);
-        }
-        last = Some(response);
-    }
-    last.ok_or_else(|| {
-        error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "No connected OpenCode Go credentials",
-            "upstream_error",
-            "no_credentials",
-        )
-    })
+    retry_api_keys(
+        settings,
+        &provider.id,
+        "No connected OpenCode Go credentials",
+        |key| {
+            let method = method.clone();
+            let body = body.clone();
+            async move {
+                send_upstream(
+                    base(provider, path == "models"),
+                    &key,
+                    path,
+                    query,
+                    method,
+                    headers,
+                    body,
+                )
+                .await
+            }
+        },
+    )
+    .await
 }
 
 /// Fetch and filter models allowed by the virtual key.
@@ -247,35 +225,7 @@ async fn models_handler(
         Ok(response) => response,
         Err(response) => return response.into_response(),
     };
-    if !response.status().is_success() || permissions.models.is_empty() {
-        return openai::forward(response);
-    }
-    let status = response.status();
-    let content_type = response.headers().get(header::CONTENT_TYPE).cloned();
-    let Ok(mut value) = response.json::<Value>().await else {
-        return error(
-            StatusCode::BAD_GATEWAY,
-            "Invalid upstream model list",
-            "upstream_error",
-            "bad_gateway",
-        )
-        .into_response();
-    };
-    if !filter_models(&mut value, &permissions) {
-        return error(
-            StatusCode::BAD_GATEWAY,
-            "Invalid upstream model list",
-            "upstream_error",
-            "bad_gateway",
-        )
-        .into_response();
-    }
-    let mut result = Response::new(Body::from(value.to_string()));
-    *result.status_mut() = status;
-    if let Some(value) = content_type {
-        result.headers_mut().insert(header::CONTENT_TYPE, value);
-    }
-    result
+    model_response(response, &permissions).await
 }
 
 /// Forward an inference request after checking model permissions.
@@ -407,6 +357,7 @@ impl super::common::QuotaProvider for Backend {
 mod tests {
     use super::*;
     use axum::Json;
+    use axum::body::Body;
     use serde_json::json;
     use tokio::sync::mpsc;
 

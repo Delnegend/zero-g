@@ -151,7 +151,7 @@ impl super::common::Provider for Backend {
         state: &crate::server::AppState,
         provider: &super::registry::Provider,
     ) -> Result<Vec<crate::openai::Model>, String> {
-        discover_permitted(
+        <Self as super::common::Provider>::discover_permitted(
             state,
             provider,
             &crate::server::settings::Permissions {
@@ -161,16 +161,15 @@ impl super::common::Provider for Backend {
         )
         .await
     }
-}
 
-/// Discover model families with the same variant restrictions as inference.
-pub(crate) async fn discover_permitted(
-    state: &crate::server::AppState,
-    provider: &super::registry::Provider,
-    permissions: &crate::server::settings::Permissions,
-) -> Result<Vec<crate::openai::Model>, String> {
-    let models = routes::fetch_models(state, provider).await?;
-    Ok(permitted_models(models, permissions))
+    async fn discover_permitted(
+        state: &crate::server::AppState,
+        provider: &super::registry::Provider,
+        permissions: &crate::server::settings::Permissions,
+    ) -> Result<Vec<crate::openai::Model>, String> {
+        let models = routes::fetch_models(state, provider).await?;
+        Ok(permitted_models(models, permissions))
+    }
 }
 
 /// Normalize and filter discovered families while retaining provider metadata.

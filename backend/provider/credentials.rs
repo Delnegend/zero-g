@@ -176,6 +176,49 @@ pub(crate) async fn list(
     Ok(result)
 }
 
+/// Loads typed OAuth state after revalidating its owner. The caller must hold
+/// the credential lock until it has finished using or refreshing the state.
+pub(crate) async fn load_oauth<T: serde::de::DeserializeOwned>(
+    store: &SettingsStore,
+    provider_id: &str,
+    credential_id: &str,
+    kind: &str,
+    provider_name: &str,
+) -> Result<Option<T>, String> {
+    crate::provider::login::require_credential(store, provider_id, credential_id, kind)
+        .await
+        .map_err(|(_, message)| message)?;
+    store
+        .secret_get(&format!("credential.{credential_id}.credential"))
+        .await?
+        .map(|json| {
+            serde_json::from_str(&json)
+                .map_err(|e| format!("Failed to parse stored {provider_name} credentials: {e}"))
+        })
+        .transpose()
+}
+
+/// Checks auxiliary-secret ownership inside the transaction performing the write.
+pub(crate) async fn owns_auxiliary_secret(
+    tx: &mut toasty::Transaction<'_>,
+    provider_id: &str,
+    credential_id: &str,
+    kind: &str,
+) -> Result<bool, toasty::Error> {
+    let provider = ProviderRecord::filter_by_id(provider_id)
+        .first()
+        .exec(&mut *tx)
+        .await?;
+    let credential = ProviderCredential::filter_by_id(credential_id)
+        .first()
+        .exec(&mut *tx)
+        .await?;
+    Ok(
+        matches!(provider, Some(row) if !row.deleted && row.kind == kind)
+            && matches!(credential, Some(row) if row.provider_id == provider_id),
+    )
+}
+
 /// Callers hold the credential lock while writing OAuth state.
 pub(crate) async fn save_oauth(
     store: &SettingsStore,
@@ -589,6 +632,82 @@ pub(crate) async fn migrate_legacy(store: &SettingsStore) -> Result<(), String> 
 mod tests {
     use super::*;
     use crate::database::Database;
+
+    /// Typed OAuth reads revalidate ownership and observe the latest stored secret.
+    #[tokio::test]
+    async fn oauth_load_revalidates_and_reads_current_secret() {
+        let store = SettingsStore::new(
+            Database::open(":memory:").await.unwrap(),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )
+        .await
+        .unwrap();
+        let mut db = (*store.database.db).clone();
+        for id in ["owner", "other"] {
+            toasty::create!(ProviderRecord {
+                id: id.to_string(),
+                name: id.to_string(),
+                kind: "codex".to_string(),
+                base_url: String::new(),
+                deleted: false
+            })
+            .exec(&mut db)
+            .await
+            .unwrap();
+        }
+        toasty::create!(ProviderCredential {
+            id: "account".to_string(),
+            provider_id: "owner".to_string(),
+            name: "Account".to_string(),
+            weight: 1,
+            enabled: true
+        })
+        .exec(&mut db)
+        .await
+        .unwrap();
+        let lock = crate::provider::login::credential_lock("account").await;
+        let _guard = lock.lock().await;
+        assert!(
+            load_oauth::<serde_json::Value>(&store, "owner", "account", "codex", "Codex")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let name = "credential.account.credential";
+        for value in ["first", "rotated"] {
+            let json = serde_json::json!({"access_token": value}).to_string();
+            Secret::upsert_by_name(name)
+                .value(store.encrypt(name, &json).unwrap())
+                .exec(&mut db)
+                .await
+                .unwrap();
+            let loaded =
+                load_oauth::<serde_json::Value>(&store, "owner", "account", "codex", "Codex")
+                    .await
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(loaded["access_token"], value);
+        }
+        assert!(
+            load_oauth::<serde_json::Value>(&store, "other", "account", "codex", "Codex")
+                .await
+                .is_err()
+        );
+        assert!(
+            load_oauth::<serde_json::Value>(&store, "owner", "account", "agy", "Antigravity")
+                .await
+                .is_err()
+        );
+        Secret::upsert_by_name(name)
+            .value(store.encrypt(name, "not json").unwrap())
+            .exec(&mut db)
+            .await
+            .unwrap();
+        let error = load_oauth::<serde_json::Value>(&store, "owner", "account", "codex", "Codex")
+            .await
+            .unwrap_err();
+        assert!(error.starts_with("Failed to parse stored Codex credentials: "));
+    }
 
     /// Dashboard credential lists expose account profiles without exposing OAuth secrets.
     #[tokio::test]

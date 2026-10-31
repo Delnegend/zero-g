@@ -23,6 +23,17 @@ pub(crate) trait Provider {
     ) -> Result<Vec<Model>, String>;
 }
 
+
+    /// Discovers models allowed by the virtual key.
+    async fn discover_permitted(
+        state: &AppState,
+        provider: &registry::Provider,
+        permissions: &crate::server::settings::Permissions,
+    ) -> Result<Vec<Model>, String> {
+        let mut models = Self::discover(state, provider).await?;
+        models.retain(|model| permissions.allows_model(&model.id));
+        Ok(models)
+    }
 /// Provider backend capable of reporting credential quota.
 pub(crate) trait QuotaProvider {
     /// Fetches quota for the named provider and credential.

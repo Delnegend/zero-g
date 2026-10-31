@@ -14,7 +14,7 @@ use crate::{
     database::transaction_with_retry,
     provider::{common, openai, quota::QuotaSnapshot, registry::Provider},
     server::{AppState, settings::SettingsStore},
-    storage::{ProviderCredential, ProviderRecord, Secret},
+    storage::Secret,
 };
 
 /// `OpenRouter`'s fixed inference endpoint.
@@ -110,16 +110,13 @@ async fn connection(
     let lock = crate::provider::login::credential_lock(credential).await;
     let _guard = lock.lock().await;
     let result = transaction_with_retry!(store.database, |mut tx| {
-        let p = ProviderRecord::filter_by_id(provider)
-            .first()
-            .exec(&mut tx)
-            .await?;
-        let c = ProviderCredential::filter_by_id(credential)
-            .first()
-            .exec(&mut tx)
-            .await?;
-        if !matches!(p, Some(p) if !p.deleted && p.kind == "openrouter")
-            || !matches!(c, Some(c) if c.provider_id == provider)
+        if !crate::provider::credentials::owns_auxiliary_secret(
+            &mut tx,
+            provider,
+            credential,
+            "openrouter",
+        )
+        .await?
         {
             return Ok(false);
         }
@@ -348,6 +345,7 @@ mod tests {
         let request = |provider: &str, credential: &str, origin: &str| {
             Request::builder()
                 .method("PUT")
+    use crate::storage::{ProviderCredential, ProviderRecord};
                 .uri(format!(
                     "/api/providers/{provider}/credentials/{credential}/openrouter/management-key"
                 ))

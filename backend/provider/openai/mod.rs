@@ -43,6 +43,44 @@ pub(crate) async fn discover<E: ModelEndpoint>(
     store: &SettingsStore,
     provider: &Provider,
 ) -> Result<Vec<crate::openai::Model>, String> {
+/// Read and validate an OpenAI-shaped model-list envelope without discarding its metadata.
+pub(crate) async fn parse_model_list<S, E>(
+    stream: S,
+    read_error: &'static str,
+    size_error: &'static str,
+    invalid_error: &'static str,
+) -> Result<Value, String>
+where
+    S: futures_util::Stream<Item = Result<Bytes, E>>,
+{
+    let mut bytes = Vec::new();
+    futures_util::pin_mut!(stream);
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|_| read_error)?;
+        if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
+            return Err(size_error.into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let value: Value = serde_json::from_slice(&bytes).map_err(|_| invalid_error)?;
+    if !value.get("data").is_some_and(Value::is_array) {
+        return Err(invalid_error.into());
+    }
+    Ok(value)
+}
+
+/// Decode valid, nonempty model entries from a validated envelope.
+pub(crate) fn models_from_list(value: &Value) -> Vec<crate::openai::Model> {
+    value
+        .get("data")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|model| serde_json::from_value::<crate::openai::Model>(model.clone()).ok())
+        .filter(|model| !model.id.is_empty())
+        .collect()
+}
+
     let credentials = crate::provider::credentials::list(store, &provider.id).await?;
     let mut response = None;
     for credential in credentials {
@@ -65,25 +103,14 @@ pub(crate) async fn discover<E: ModelEndpoint>(
             response.status().as_u16()
         ));
     }
-    let mut bytes = Vec::new();
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|_| "Failed to read provider model list")?;
-        if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
-            return Err("Provider model list is too large".into());
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    let value: Value = serde_json::from_slice(&bytes).map_err(|_| "Invalid provider model list")?;
-    let models = value
-        .get("data")
-        .and_then(Value::as_array)
-        .ok_or("Invalid provider model list")?;
-    Ok(models
-        .iter()
-        .filter_map(|model| serde_json::from_value::<crate::openai::Model>(model.clone()).ok())
-        .filter(|model| !model.id.is_empty())
-        .collect())
+    let value = parse_model_list(
+        response.bytes_stream(),
+        "Failed to read provider model list",
+        "Provider model list is too large",
+        "Invalid provider model list",
+    )
+    .await?;
+    Ok(models_from_list(&value))
 }
 
 /// Shared client used for OpenAI-compatible upstream requests.
@@ -236,6 +263,101 @@ mod tests {
     async fn forwards_protocol_auth_errors_and_streams() {
         let (seen_tx, mut seen_rx) = mpsc::unbounded_channel();
         let (stream_tx, stream_rx) = mpsc::unbounded_channel::<Result<Bytes, std::io::Error>>();
+    #[tokio::test]
+    async fn model_list_enforces_boundaries_and_provider_errors() {
+        for (read_error, size_error, invalid_error) in [
+            (
+                "Failed to read provider model list",
+                "Provider model list is too large",
+                "Invalid provider model list",
+            ),
+            (
+                "Failed to read Grok model list",
+                "Grok model list is too large",
+                "Invalid Grok model list",
+            ),
+        ] {
+            let prefix = Bytes::from_static(b"{\"data\":[]}");
+            let padding = Bytes::from(vec![b' '; MAX_RESPONSE_BYTES - prefix.len()]);
+            let chunks: Vec<Result<Bytes, std::io::Error>> =
+                vec![Ok(prefix.clone()), Ok(padding.clone())];
+            let value = parse_model_list(
+                futures_util::stream::iter(chunks),
+                read_error,
+                size_error,
+                invalid_error,
+            )
+            .await
+            .unwrap();
+            assert!(models_from_list(&value).is_empty());
+
+            let chunks: Vec<Result<Bytes, std::io::Error>> =
+                vec![Ok(prefix), Ok(padding), Ok(Bytes::from_static(b" "))];
+            assert_eq!(
+                parse_model_list(
+                    futures_util::stream::iter(chunks),
+                    read_error,
+                    size_error,
+                    invalid_error,
+                )
+                .await
+                .unwrap_err(),
+                size_error
+            );
+
+            for body in [b"{".as_slice(), b"{}", b"{\"data\":null}", b"{\"data\":{}}"] {
+                let chunks: Vec<Result<Bytes, std::io::Error>> =
+                    vec![Ok(Bytes::copy_from_slice(body))];
+                assert_eq!(
+                    parse_model_list(
+                        futures_util::stream::iter(chunks),
+                        read_error,
+                        size_error,
+                        invalid_error,
+                    )
+                    .await
+                    .unwrap_err(),
+                    invalid_error
+                );
+            }
+            let chunks: Vec<Result<Bytes, std::io::Error>> =
+                vec![Err(std::io::Error::other("broken stream"))];
+            assert_eq!(
+                parse_model_list(
+                    futures_util::stream::iter(chunks),
+                    read_error,
+                    size_error,
+                    invalid_error,
+                )
+                .await
+                .unwrap_err(),
+                read_error
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn model_list_retains_envelope_and_filters_invalid_models() {
+        let body = Bytes::from_static(
+            br#"{"object":"list","extra":"preserved","data":[{"id":"valid","custom":true},{"id":""},{"id":42},{},null]}"#,
+        );
+        let chunks: Vec<Result<Bytes, std::io::Error>> = vec![Ok(body)];
+        let value = parse_model_list(
+            futures_util::stream::iter(chunks),
+            "read",
+            "large",
+            "invalid",
+        )
+        .await
+        .unwrap();
+        assert_eq!(value["extra"], "preserved");
+        assert_eq!(value["data"].as_array().unwrap().len(), 5);
+        let models = models_from_list(&value);
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "valid");
+        assert_eq!(models[0].extra["custom"], true);
+    }
+
         let stream_rx = Arc::new(Mutex::new(Some(stream_rx)));
         let app = Router::new()
             .route(

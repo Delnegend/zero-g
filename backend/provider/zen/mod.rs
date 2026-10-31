@@ -4,7 +4,7 @@ pub(crate) mod routes;
 use crate::database::transaction_with_retry;
 use crate::provider::quota::QuotaSnapshot;
 use crate::server::settings::SettingsStore;
-use crate::storage::{ProviderCredential, ProviderRecord, Secret};
+use crate::storage::Secret;
 use axum::Json;
 use axum::response::{IntoResponse, Response};
 use axum::{
@@ -72,16 +72,10 @@ pub(crate) async fn connection(
     let lock = crate::provider::login::credential_lock(credential).await;
     let _guard = lock.lock().await;
     let result = transaction_with_retry!(store.database, |mut tx| {
-        let p = ProviderRecord::filter_by_id(provider)
-            .first()
-            .exec(&mut tx)
-            .await?;
-        let c = ProviderCredential::filter_by_id(credential)
-            .first()
-            .exec(&mut tx)
-            .await?;
-        if !matches!(p, Some(p) if !p.deleted && p.kind == "zen")
-            || !matches!(c, Some(c) if c.provider_id == provider)
+        if !crate::provider::credentials::owns_auxiliary_secret(
+            &mut tx, provider, credential, "zen",
+        )
+        .await?
         {
             return Ok(false);
         }

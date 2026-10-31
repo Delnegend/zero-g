@@ -9,7 +9,7 @@ use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
-use crate::provider::common::proxy::{ProxyError, check_model, error, settings_error};
+use crate::provider::common::proxy::{ProxyError, check_model, error, retry_api_keys};
 use crate::provider::{openai, registry::Provider};
 use crate::server::AppState;
 use crate::server::settings::{self, Permissions, SettingsStore};
@@ -324,51 +324,28 @@ async fn send_upstream(
     headers: &HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, ProxyError> {
-    let credentials = crate::provider::credentials::list(settings, &provider.id)
-        .await
-        .map_err(|_| settings_error())?;
-    let mut last = None;
-    for credential in credentials {
-        let key = settings
-            .secret_get(&format!("credential.{}.api_key", credential.id))
-            .await
-            .map_err(|_| settings_error())?
-            .ok_or_else(settings_error)?;
-        let response = openai::send_with_headers(
-            base,
-            &key,
-            path,
-            query,
-            Method::POST,
-            headers,
-            Some(body.clone()),
-            true,
-        )
-        .await
-        .map_err(|message| {
-            error(
-                StatusCode::BAD_GATEWAY,
-                message,
-                "upstream_error",
-                "bad_gateway",
-            )
-        })?;
-        if !matches!(
-            response.status(),
-            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN | StatusCode::TOO_MANY_REQUESTS
-        ) {
-            return Ok(response);
-        }
-        last = Some(response);
-    }
-    last.ok_or_else(|| {
-        error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "No connected Zen credentials",
-            "upstream_error",
-            "no_credentials",
-        )
-    })
+    retry_api_keys(
+        settings,
+        &provider.id,
+        "No connected Zen credentials",
+        |key| {
+            let body = body.clone();
+            async move {
+                openai::send_with_headers(
+                    base,
+                    &key,
+                    path,
+                    query,
+                    Method::POST,
+                    headers,
+                    Some(body),
+                    true,
+                )
+                .await
+            }
+        },
+    )
+    .await
 }
 
 #[cfg(test)]

@@ -54,78 +54,61 @@ impl Providers {
     }
 }
 
-/// Descriptors for every supported provider kind.
-pub(crate) const PROVIDER_KINDS: &[ProviderDescriptor] = &[
-    antigravity::Backend::DESCRIPTOR,
-    codex::Backend::DESCRIPTOR,
-    claude::Backend::DESCRIPTOR,
-    cursor::Backend::DESCRIPTOR,
-    grok::Backend::DESCRIPTOR,
-    grok::BuildBackend::DESCRIPTOR,
-    zen::Backend::DESCRIPTOR,
-    go::Backend::DESCRIPTOR,
-    openai::Backend::DESCRIPTOR,
-    openrouter::Backend::DESCRIPTOR,
-];
+/// Defines the static provider registry and its descriptor mapping together.
+macro_rules! providers {
+    ($( $(#[$meta:meta])* $variant:ident => $backend:path ),+ $(,)?) => {
+        /// Supported provider backend kinds.
+        #[derive(Clone, Copy)]
+        pub(crate) enum ProviderKind {
+            $( $(#[$meta])* $variant, )+
+        }
 
-/// Supported provider backend kinds.
-#[derive(Clone, Copy)]
-pub(crate) enum ProviderKind {
-    /// Google Antigravity backend.
-    Antigravity,
-    /// `OpenAI` Codex backend.
-    Codex,
-    /// Claude Code backend.
-    Claude,
-    /// Cursor backend.
-    Cursor,
-    /// xAI OAuth backend.
-    Grok,
-    /// Grok Build backend.
-    GrokBuild,
-    /// Zen backend.
-    Zen,
-    /// Go backend.
-    Go,
-    /// Generic OpenAI-compatible backend.
-    Openai,
-    /// `OpenRouter` backend.
-    Openrouter,
+        /// Provider kinds in registration order.
+        const ALL: &[ProviderKind] = &[ $( ProviderKind::$variant, )+ ];
+
+        /// Descriptors for every supported provider kind.
+        pub(crate) const PROVIDER_KINDS: &[ProviderDescriptor] = &[
+            $( <$backend as Provider>::DESCRIPTOR, )+
+        ];
+
+        impl ProviderKind {
+            /// Returns this backend's static descriptor.
+            pub(crate) const fn descriptor(self) -> ProviderDescriptor {
+                match self {
+                    $( Self::$variant => <$backend as Provider>::DESCRIPTOR, )+
+                }
+            }
+        }
+    };
 }
 
-/// Provider kinds in registration order.
-const ALL: [ProviderKind; 10] = [
-    ProviderKind::Antigravity,
-    ProviderKind::Codex,
-    ProviderKind::Claude,
-    ProviderKind::Cursor,
-    ProviderKind::Grok,
-    ProviderKind::GrokBuild,
-    ProviderKind::Zen,
-    ProviderKind::Go,
-    ProviderKind::Openrouter,
-    ProviderKind::Openai,
-];
+providers! {
+    /// Google Antigravity backend.
+    Antigravity => antigravity::Backend,
+    /// `OpenAI` Codex backend.
+    Codex => codex::Backend,
+    /// Claude Code backend.
+    Claude => claude::Backend,
+    /// Cursor backend.
+    Cursor => cursor::Backend,
+    /// xAI OAuth backend.
+    Grok => grok::Backend,
+    /// Grok Build backend.
+    GrokBuild => grok::BuildBackend,
+    /// Zen backend.
+    Zen => zen::Backend,
+    /// Go backend.
+    Go => go::Backend,
+    /// Generic OpenAI-compatible backend.
+    Openai => openai::Backend,
+    /// `OpenRouter` backend.
+    Openrouter => openrouter::Backend,
+}
 
 impl ProviderKind {
     /// Looks up a provider kind by its stable identifier.
     pub(crate) fn from_str(value: &str) -> Option<Self> {
-        ALL.into_iter().find(|kind| kind.as_str() == value)
-    }
-    /// Returns this backend's static descriptor.
-    pub(crate) const fn descriptor(self) -> ProviderDescriptor {
-        match self {
-            Self::Antigravity => antigravity::Backend::DESCRIPTOR,
-            Self::Codex => codex::Backend::DESCRIPTOR,
-            Self::Claude => claude::Backend::DESCRIPTOR,
-            Self::Cursor => cursor::Backend::DESCRIPTOR,
-            Self::Grok => grok::Backend::DESCRIPTOR,
-            Self::GrokBuild => grok::BuildBackend::DESCRIPTOR,
-            Self::Zen => zen::Backend::DESCRIPTOR,
-            Self::Go => go::Backend::DESCRIPTOR,
-            Self::Openai => openai::Backend::DESCRIPTOR,
-            Self::Openrouter => openrouter::Backend::DESCRIPTOR,
-        }
+        ALL.iter().copied().find(|kind| kind.as_str() == value)
     }
     /// Returns the stable provider kind identifier.
     pub(crate) const fn as_str(self) -> &'static str {
@@ -175,12 +158,24 @@ impl ProviderKind {
         provider: &registry::Provider,
         permissions: &crate::server::settings::Permissions,
     ) -> Result<Vec<Model>, String> {
-        if matches!(self, Self::Antigravity) {
-            return antigravity::discover_permitted(state, provider, permissions).await;
+        match self {
+            Self::Antigravity => {
+                antigravity::Backend::discover_permitted(state, provider, permissions).await
+            }
+            Self::Codex => codex::Backend::discover_permitted(state, provider, permissions).await,
+            Self::Claude => claude::Backend::discover_permitted(state, provider, permissions).await,
+            Self::Cursor => cursor::Backend::discover_permitted(state, provider, permissions).await,
+            Self::Grok => grok::Backend::discover_permitted(state, provider, permissions).await,
+            Self::GrokBuild => {
+                grok::BuildBackend::discover_permitted(state, provider, permissions).await
+            }
+            Self::Zen => zen::Backend::discover_permitted(state, provider, permissions).await,
+            Self::Go => go::Backend::discover_permitted(state, provider, permissions).await,
+            Self::Openai => openai::Backend::discover_permitted(state, provider, permissions).await,
+            Self::Openrouter => {
+                openrouter::Backend::discover_permitted(state, provider, permissions).await
+            }
         }
-        let mut models = self.discover(state, provider).await?;
-        models.retain(|model| permissions.allows_model(&model.id));
-        Ok(models)
     }
 
     /// Returns the backend's quota capability, if supported.
@@ -249,7 +244,7 @@ impl QuotaCapability {
 
 /// Nests provider routers under their kind and instance identifier.
 pub(crate) fn router(settings: &SettingsStore) -> Router<AppState> {
-    ALL.into_iter().fold(Router::new(), |router, kind| {
+    ALL.iter().copied().fold(Router::new(), |router, kind| {
         router.nest(&format!("/{}/{{id}}", kind.as_str()), kind.router(settings))
     })
 }
@@ -264,7 +259,8 @@ pub(crate) fn is_provider_path(path: &str) -> bool {
 
 /// Combines dashboard routes exposed by provider backends.
 pub(crate) fn dashboard_router(state: &AppState) -> Router {
-    ALL.into_iter()
+    ALL.iter()
+        .copied()
         .fold(Router::new(), |router, kind| match kind {
             ProviderKind::Antigravity => {
                 router.merge(antigravity::Backend::dashboard_router(state.clone()))
@@ -286,6 +282,29 @@ pub(crate) fn dashboard_router(state: &AppState) -> Router {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provider_kind_listing_preserves_registration_order() {
+        let values: Vec<_> = PROVIDER_KINDS.iter().map(|kind| kind.value).collect();
+        assert_eq!(
+            values,
+            [
+                "agy",
+                "codex",
+                "claude",
+                "cursor",
+                "grok",
+                "grok-build",
+                "zen",
+                "go",
+                "openai",
+                "openrouter"
+            ]
+        );
+        for value in values {
+            assert_eq!(ProviderKind::from_str(value).unwrap().as_str(), value);
+        }
+    }
 
     /// Provider paths match complete path segments.
     #[test]

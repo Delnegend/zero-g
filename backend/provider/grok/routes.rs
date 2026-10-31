@@ -8,7 +8,6 @@ use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Router};
-use futures_util::StreamExt;
 use serde_json::Value;
 
 use crate::openai::{ChatCompletionRequest, Model};
@@ -252,20 +251,13 @@ async fn model_list(
             response.status()
         ));
     }
-    let mut bytes = Vec::new();
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|_| "Failed to read Grok model list")?;
-        if bytes.len().saturating_add(chunk.len()) > 10 * 1024 * 1024 {
-            return Err("Grok model list is too large".into());
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    let value: Value = serde_json::from_slice(&bytes).map_err(|_| "Invalid Grok model list")?;
-    if !value.get("data").is_some_and(Value::is_array) {
-        return Err("Invalid Grok model list".into());
-    }
-    Ok(value)
+    openai::parse_model_list(
+        response.bytes_stream(),
+        "Failed to read Grok model list",
+        "Grok model list is too large",
+        "Invalid Grok model list",
+    )
+    .await
 }
 
 /// Discover model metadata from the selected billing pool.
@@ -276,15 +268,7 @@ pub(super) async fn discover(
 ) -> Result<Vec<Model>, String> {
     let session = uuid::Uuid::new_v4().to_string();
     let value = model_list(state, provider, kind, &session).await?;
-    let models = value
-        .get("data")
-        .and_then(Value::as_array)
-        .ok_or("Invalid Grok model list")?;
-    Ok(models
-        .iter()
-        .filter_map(|model| serde_json::from_value::<Model>(model.clone()).ok())
-        .filter(|model| !model.id.is_empty())
-        .collect())
+    Ok(openai::models_from_list(&value))
 }
 
 /// Return upstream models filtered by virtual-key permissions.
