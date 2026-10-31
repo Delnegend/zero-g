@@ -20,6 +20,7 @@ frontend-build:
 
 lint:
     cd frontend && bun run oxlint src scripts
+    frontend/node_modules/.bin/oxlint -c frontend/.oxlintrc.json scripts
 
 # Regenerate the consolidated OpenAPI and dashboard client contracts
 api-generate:
@@ -61,11 +62,12 @@ check-dependencies:
 # Single gate CI verification
 check:
     just check-dependencies
-    bun fmt --check --no-script frontend
+    bun fmt --check --no-script frontend scripts
     just lint
     just frontend-build
     just api-check
     cd frontend && bun test src
+    bun test scripts
     cargo fmt --check
     cargo clippy --all-targets -- -D warnings
     cargo test
@@ -73,11 +75,12 @@ check:
 # Format all code
 fmt:
     cargo fmt
-    bun fmt --no-script frontend
+    bun fmt --no-script frontend scripts
 
 # Run tests
 test: frontend-build
     cd frontend && bun test src
+    bun test scripts
     cargo test
 
 # Build release binary

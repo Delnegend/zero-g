@@ -108,3 +108,16 @@ Run `zero-g` to start the server. Use the dashboard **Models → Providers** pag
 The API reference at `/redoc` and its OpenAPI document at `/api/openapi.json` require dashboard authentication. ReDoc's JavaScript is bundled with zero-g; it does not require a third-party CDN.
 
 The database contains sensitive full request and response bodies as well as settings and encrypted secrets. Restrict filesystem access, protect backups, and use TLS for dashboard access. Token counts are recorded only when the provider includes usage in its response.
+
+### Exporting provider credentials
+
+Stop zero-g before exporting so the database is not changing. From the project root, run:
+
+```bash
+bun run scripts/export-credentials.ts ~/zero-g-credentials.json
+```
+
+Bun reads `ZERO_G_LOG_DB` and `ZERO_G_ENCRYPTION_KEY` from the environment or the project's `.env`. The script opens the database read-only, verifies the encryption key, and writes provider API keys, OAuth credentials and auxiliary account secrets as JSON. OAuth credentials are JSON strings in the `value` field. Virtual keys cannot be exported because only their hashes are stored.
+
+The output contains **plaintext secrets**. The script creates a new file with owner-only permissions on POSIX systems and refuses to overwrite an existing file. Store it securely, avoid placing it in the repository or logs, and delete it when no longer needed.
+
