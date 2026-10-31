@@ -289,7 +289,17 @@ function ProviderModels({
 }) {
   return (
     <section className="@container min-w-0">
-      <h2 className="text-lg font-semibold">{provider.name}</h2>
+      <h2 className="text-lg font-semibold">
+        {provider.name}
+        {models.length > 0 && (
+          <>
+            {" "}
+            <span className="text-sm font-normal text-muted-foreground">
+              {models.length} {models.length === 1 ? "model" : "models"}
+            </span>
+          </>
+        )}
+      </h2>
       {provider.error && (
         <Alert variant="destructive" className="mt-3">
           <AlertDescription>{provider.error}</AlertDescription>

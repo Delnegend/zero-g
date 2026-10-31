@@ -1447,6 +1447,14 @@ test("model cards label supported input icons and retain unknown modalities", as
             },
           ],
         },
+        {
+          id: "empty",
+          name: "Empty provider",
+          kind: "agy",
+          base_url: "",
+          error: null,
+          models: [],
+        },
       ],
     })) as typeof fetch;
   const user = userEvent.setup();
@@ -1455,6 +1463,8 @@ test("model cards label supported input icons and retain unknown modalities", as
       <ModelCatalogPage />
     </TooltipProvider>,
   );
+  assert.ok(await screen.findByRole("heading", { name: "Example 1 model" }));
+  assert.ok(screen.getByRole("heading", { name: "Empty provider" }));
   for (const modality of ["text", "image", "audio", "video", "pdf"]) {
     assert.ok(await screen.findByRole("button", { name: `${modality} input` }));
   }
