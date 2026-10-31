@@ -398,6 +398,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "logs_only",
+            "in": "query",
+            "description": "Return recent logs and filter options without calculating dashboard aggregates; aggregate fields are empty",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -3194,7 +3203,8 @@
           "interval",
           "buckets",
           "filter_options",
-          "breakdown"
+          "breakdown",
+          "retention_cutoff"
         ],
         "properties": {
           "breakdown": {
@@ -3222,6 +3232,11 @@
               "$ref": "#/components/schemas/LogEntry"
             },
             "description": "Up to 200 recent log entries."
+          },
+          "retention_cutoff": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Earliest Unix second retained by the active log-store policy."
           },
           "summary": {
             "$ref": "#/components/schemas/ObservabilitySummary",

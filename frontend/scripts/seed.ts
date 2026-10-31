@@ -116,6 +116,18 @@ try {
     const insert = await tx.prepare(`INSERT INTO request_logs
       (created_at, provider, model, path, status, latency_ms, input_tokens, output_tokens, request_body, response_body, virtual_key_id, virtual_key_name, credential_id, credential_name)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const insertOption = await tx.prepare(`INSERT INTO log_filter_options
+      (id, kind, value, name, last_seen) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET last_seen = MAX(last_seen, excluded.last_seen)`);
+    const addOption = async (
+      kind: number,
+      value: string,
+      name: string,
+      timestamp: number,
+    ) => {
+      const id = `${kind}:${Buffer.byteLength(value, "utf8")}:${value}${name}`;
+      await insertOption.run(id, kind, value, name, timestamp);
+    };
     try {
       for (let i = 0; i < count; i++) {
         const provider = providers[i % providers.length];
@@ -170,9 +182,23 @@ try {
             : null,
           status === 200 ? `Example ${provider.label} credential` : null,
         );
+        const timestamp = now - i * 3600;
+        await addOption(0, providerIds.get(provider.name)!, "", timestamp);
+        await addOption(1, provider.model, "", timestamp);
+        await addOption(2, provider.path, "", timestamp);
+        if (key) await addOption(3, key.id, key.name, timestamp);
+        if (status === 200) {
+          await addOption(
+            4,
+            `seed-credential-${providerIds.get(provider.name)}`,
+            `Example ${provider.label} credential`,
+            timestamp,
+          );
+        }
       }
     } finally {
       await insert.close();
+      await insertOption.close();
     }
   });
   await seed();

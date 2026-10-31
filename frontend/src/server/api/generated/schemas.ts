@@ -1496,6 +1496,11 @@ export const ObservabilityResponse = zod
           .describe("Serialized request log returned by the dashboard."),
       )
       .describe("Up to 200 recent log entries."),
+    retention_cutoff: zod
+      .int()
+      .describe(
+        "Earliest Unix second retained by the active log-store policy.",
+      ),
     summary: zod
       .object({
         avg_latency_ms: zod.number().describe("Mean latency in milliseconds."),
@@ -1876,6 +1881,7 @@ export const GetObservabilityParams = zod.object({
   statuses: zod.string().optional(),
   virtual_key_ids: zod.string().optional(),
   credential_ids: zod.string().optional(),
+  logs_only: zod.boolean().optional(),
 });
 
 export type GetObservabilityParams = zod.input<typeof GetObservabilityParams>;

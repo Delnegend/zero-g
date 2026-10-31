@@ -1532,6 +1532,7 @@ test("search and inspect a request in LLM logs", async () => {
     assert.equal(parsed.searchParams.has("since"), false);
     return Response.json({
       interval: "hour",
+      retention_cutoff: 0,
       buckets: [],
       logs: [log, { ...log, id: 43, path: "/v1/decisions" }],
       filter_options: {
@@ -1611,6 +1612,7 @@ test("LLM log filters load matching requests and reset pagination", async () => 
     const visible = providers.includes("beta") ? [olderMatch] : logs;
     return Response.json({
       interval: "hour",
+      retention_cutoff: 0,
       buckets: [],
       logs: visible,
       filter_options: {
@@ -1671,6 +1673,7 @@ test("dashboard filters graphs and changes the time range without showing logs",
     requests.push(parsed);
     return Response.json({
       interval: "hour",
+      retention_cutoff: 0,
       buckets: [],
       logs: [],
       filter_options: {

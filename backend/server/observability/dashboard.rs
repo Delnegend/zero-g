@@ -13,6 +13,8 @@ pub(in crate::server) struct DashboardQuery {
     pub(super) since: Option<i64>,
     /// Inclusive upper timestamp.
     pub(super) until: Option<i64>,
+    /// Skip dashboard aggregates for the recent-logs view.
+    pub(super) logs_only: Option<bool>,
     /// Exact providers encoded as a JSON array.
     #[serde(default, deserialize_with = "deserialize_array")]
     pub(super) providers: Vec<String>,
@@ -50,7 +52,8 @@ fn deserialize_array<'de, D: serde::Deserializer<'de>>(
         ("paths" = Option<String>, Query, description = "JSON array of exact request paths; empty means all"),
         ("statuses" = Option<String>, Query, description = "JSON array of success (200–399) and/or error (400 and above); empty means all"),
         ("virtual_key_ids" = Option<String>, Query, description = "JSON array of exact virtual key IDs; empty means all"),
-        ("credential_ids" = Option<String>, Query, description = "JSON array of exact provider credential IDs; empty means all")),
+        ("credential_ids" = Option<String>, Query, description = "JSON array of exact provider credential IDs; empty means all"),
+        ("logs_only" = Option<bool>, Query, description = "Return recent logs and filter options without calculating dashboard aggregates; aggregate fields are empty")),
     responses((status = 200, body = ObservabilityResponse),
         (status = 400, description = "Invalid query"),
         (status = 500, description = "Log query failed")))]
@@ -269,6 +272,104 @@ mod tests {
             .await
             .unwrap();
         (path, store)
+    }
+
+    /// The logs view keeps full-range filter choices while limiting matching results.
+    #[tokio::test]
+    async fn logs_only_preserves_filters_bounds_and_recent_limit() {
+        let (path, store) = dimension_fixture().await;
+        store
+            .insert(LogEntry {
+                id: 0,
+                created_at: 100,
+                provider: "alpha".into(),
+                model: "m1".into(),
+                path: "/a".into(),
+                status: 400,
+                latency_ms: 1,
+                input_tokens: None,
+                output_tokens: None,
+                virtual_key_id: Some("key-a".into()),
+                virtual_key_name: Some("Historical key".into()),
+                credential_id: Some("cred-a".into()),
+                credential_name: Some("Historical credential".into()),
+                request_body: "identity match".into(),
+                response_body: String::new(),
+            })
+            .await
+            .unwrap();
+        let app = Router::new()
+            .route("/api/observability", get(dashboard))
+            .with_state(store.clone());
+        let fetch = |uri: String| {
+            let app = app.clone();
+            async move {
+                let response = app
+                    .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                serde_json::from_slice::<Value>(
+                    &to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+                )
+                .unwrap()
+            }
+        };
+        for filters in [
+            "",
+            "&providers=%5B%22alpha%22%5D&models=%5B%22m1%22%5D&paths=%5B%22%2Fa%22%5D&statuses=%5B%22error%22%5D&virtual_key_ids=%5B%22key-a%22%5D&credential_ids=%5B%22cred-a%22%5D",
+            "&statuses=%5B%22success%22%5D",
+            "&statuses=%5B%22error%22%5D",
+            "&statuses=%5B%22success%22%2C%22error%22%5D",
+        ] {
+            let dashboard = fetch(format!("/api/observability?since=100&until=103{filters}")).await;
+            let logs = fetch(format!(
+                "/api/observability?since=100&until=103&logs_only=true{filters}"
+            ))
+            .await;
+            assert_eq!(logs["logs"], dashboard["logs"]);
+            assert_eq!(logs["filter_options"], dashboard["filter_options"]);
+            assert_eq!(logs["summary"]["requests"], 0);
+            assert_eq!(logs["buckets"], json!([]));
+        }
+        let all = fetch("/api/observability?logs_only=true".into()).await;
+        assert_eq!(all["logs"].as_array().unwrap().len(), 200);
+        assert!(
+            all["filter_options"]["providers"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("outside"))
+        );
+        assert_eq!(
+            all["filter_options"]["virtual_keys"],
+            json!([{"id":"key-a","name":"Historical key"}])
+        );
+        let identity = fetch("/api/observability?logs_only=true&providers=%5B%22alpha%22%5D&models=%5B%22m1%22%5D&paths=%5B%22%2Fa%22%5D&statuses=%5B%22error%22%5D&virtual_key_ids=%5B%22key-a%22%5D&credential_ids=%5B%22cred-a%22%5D".into()).await;
+        assert_eq!(identity["logs"].as_array().unwrap().len(), 1);
+        assert_eq!(identity["logs"][0]["request_body"], "identity match");
+        let success = fetch(
+            "/api/observability?since=100&until=102&logs_only=true&statuses=%5B%22success%22%5D"
+                .into(),
+        )
+        .await;
+        assert_eq!(success["logs"].as_array().unwrap().len(), 1);
+        assert_eq!(success["logs"][0]["status"], 399);
+        let error = fetch(
+            "/api/observability?since=100&until=102&logs_only=true&statuses=%5B%22error%22%5D"
+                .into(),
+        )
+        .await;
+        assert_eq!(error["logs"].as_array().unwrap().len(), 2);
+        assert!(
+            error["logs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|log| log["status"] == 400)
+        );
+        drop(app);
+        drop(store);
+        std::fs::remove_file(path).unwrap();
     }
 
     /// Identity filters combine with other dimensions and include historical snapshots.

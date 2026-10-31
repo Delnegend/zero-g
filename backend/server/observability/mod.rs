@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::database::{Database, transaction_with_retry};
-use crate::storage::RequestLog;
+use crate::storage::{LogFilterOption, RequestLog};
 use chrono::{DateTime, Datelike, Months, NaiveDate, Utc};
 use serde::Serialize;
 
@@ -46,6 +46,10 @@ impl LogStore {
                 .delete()
                 .exec(&mut tx)
                 .await?;
+            LogFilterOption::filter(LogFilterOption::fields().last_seen().lt(cutoff))
+                .delete()
+                .exec(&mut tx)
+                .await?;
             tx.commit().await?;
             Ok(())
         })
@@ -74,7 +78,12 @@ impl LogStore {
             })
             .exec(&mut tx)
             .await?;
+            update_filter_options(&mut tx, &log).await?;
             RequestLog::filter(RequestLog::fields().created_at().lt(cutoff))
+                .delete()
+                .exec(&mut tx)
+                .await?;
+            LogFilterOption::filter(LogFilterOption::fields().last_seen().lt(cutoff))
                 .delete()
                 .exec(&mut tx)
                 .await?;
@@ -105,18 +114,35 @@ impl LogStore {
                 options_query = options_query.filter(RequestLog::fields().created_at().le(upper));
                 logs_query = logs_query.filter(RequestLog::fields().created_at().le(upper));
             }
-            let options = options_query
-                .select((
-                    RequestLog::fields().provider(),
-                    RequestLog::fields().model(),
-                    RequestLog::fields().path(),
-                    RequestLog::fields().virtual_key_id(),
-                    RequestLog::fields().virtual_key_name(),
-                    RequestLog::fields().credential_id(),
-                    RequestLog::fields().credential_name(),
-                ))
-                .exec(&mut tx)
-                .await?;
+            let options = if query.logs_only.unwrap_or(false) && since.is_none() && upper.is_none()
+            {
+                // The unbounded logs page reads retention-maintained dimensions.
+                OptionRows::Distinct(
+                    LogFilterOption::all()
+                        .select((
+                            LogFilterOption::fields().kind(),
+                            LogFilterOption::fields().value(),
+                            LogFilterOption::fields().name(),
+                        ))
+                        .exec(&mut tx)
+                        .await?,
+                )
+            } else {
+                OptionRows::Dashboard(
+                    options_query
+                        .select((
+                            RequestLog::fields().provider(),
+                            RequestLog::fields().model(),
+                            RequestLog::fields().path(),
+                            RequestLog::fields().virtual_key_id(),
+                            RequestLog::fields().virtual_key_name(),
+                            RequestLog::fields().credential_id(),
+                            RequestLog::fields().credential_name(),
+                        ))
+                        .exec(&mut tx)
+                        .await?,
+                )
+            };
             if !query.providers.is_empty() {
                 rows_query = rows_query.filter(
                     RequestLog::fields()
@@ -164,18 +190,22 @@ impl LogStore {
                     logs_query = logs_query.filter(RequestLog::fields().status().lt(400));
                 }
             }
-            let rows = rows_query
-                .select((
-                    RequestLog::fields().status(),
-                    RequestLog::fields().latency_ms(),
-                    RequestLog::fields().input_tokens(),
-                    RequestLog::fields().output_tokens(),
-                    RequestLog::fields().created_at(),
-                    RequestLog::fields().provider(),
-                    RequestLog::fields().model(),
-                ))
-                .exec(&mut tx)
-                .await?;
+            let rows = if query.logs_only.unwrap_or(false) {
+                Vec::new()
+            } else {
+                rows_query
+                    .select((
+                        RequestLog::fields().status(),
+                        RequestLog::fields().latency_ms(),
+                        RequestLog::fields().input_tokens(),
+                        RequestLog::fields().output_tokens(),
+                        RequestLog::fields().created_at(),
+                        RequestLog::fields().provider(),
+                        RequestLog::fields().model(),
+                    ))
+                    .exec(&mut tx)
+                    .await?
+            };
             let logs_query = if since.is_some() || until.is_some() {
                 logs_query.order_by((
                     RequestLog::fields().created_at().desc(),
@@ -190,7 +220,10 @@ impl LogStore {
         })
         .map_err(|e| e.to_string())?;
         let (summary, buckets, breakdown) = aggregate_rows(&rows, interval)?;
-        let filter_options = collect_filter_options(options);
+        let filter_options = match options {
+            OptionRows::Dashboard(rows) => collect_filter_options(rows),
+            OptionRows::Distinct(rows) => collect_distinct_options(rows)?,
+        };
         let logs = logs.into_iter().map(LogEntry::from).collect();
         Ok(ObservabilityResponse {
             summary,
@@ -199,8 +232,45 @@ impl LogStore {
             buckets,
             filter_options,
             breakdown,
+            retention_cutoff: now().saturating_sub(self.retention_days.saturating_mul(86400)),
         })
     }
+}
+
+/// Track the newest retained request for every option and identity-name snapshot.
+async fn update_filter_options(
+    tx: &mut toasty::Transaction<'_>,
+    log: &LogEntry,
+) -> toasty::Result<()> {
+    let options = [
+        (!log.provider.is_empty()).then_some((0_i64, log.provider.as_str(), "")),
+        (!log.model.is_empty()).then_some((1, log.model.as_str(), "")),
+        (!log.path.is_empty()).then_some((2, log.path.as_str(), "")),
+        log.virtual_key_id
+            .as_deref()
+            .zip(log.virtual_key_name.as_deref())
+            .map(|(id, name)| (3, id, name)),
+        log.credential_id
+            .as_deref()
+            .zip(log.credential_name.as_deref())
+            .map(|(id, name)| (4, id, name)),
+    ];
+    for (kind, value, name) in options.into_iter().flatten() {
+        let id = format!("{kind}:{}:{value}{name}", value.len());
+        let existing = LogFilterOption::filter_by_id(id.as_str())
+            .first()
+            .exec(tx)
+            .await?;
+        let last_seen = existing.map_or(log.created_at, |row| row.last_seen.max(log.created_at));
+        LogFilterOption::upsert_by_id(id.as_str())
+            .kind(kind)
+            .value(value)
+            .name(name)
+            .last_seen(last_seen)
+            .exec(tx)
+            .await?;
+    }
+    Ok(())
 }
 
 impl From<RequestLog> for LogEntry {
@@ -329,6 +399,48 @@ type FilterOptionRow = (
     Option<String>,
     Option<String>,
 );
+
+/// Dashboard rows or retained dimension snapshots for the logs view.
+enum OptionRows {
+    /// Individual rows used by the unchanged dashboard query.
+    Dashboard(Vec<FilterOptionRow>),
+    /// Retained dimension and identity-name snapshots.
+    Distinct(Vec<(i64, String, String)>),
+}
+
+/// Convert retained dimension snapshots into dashboard-compatible options.
+fn collect_distinct_options(rows: Vec<(i64, String, String)>) -> Result<FilterOptions, String> {
+    let mut options = Vec::with_capacity(rows.len());
+    for (kind, value, name) in rows {
+        let empty = String::new();
+        let row = match kind {
+            0 => (value, empty.clone(), empty, None, None, None, None),
+            1 => (empty.clone(), value, empty, None, None, None, None),
+            2 => (empty.clone(), empty, value, None, None, None, None),
+            3 => (
+                empty.clone(),
+                empty.clone(),
+                empty,
+                Some(value),
+                Some(name),
+                None,
+                None,
+            ),
+            4 => (
+                empty.clone(),
+                empty.clone(),
+                empty,
+                None,
+                None,
+                Some(value),
+                Some(name),
+            ),
+            _ => return Err("Invalid retained filter option".into()),
+        };
+        options.push(row);
+    }
+    Ok(collect_filter_options(options))
+}
 
 /// Collect sorted nonempty dimension options from the date range.
 fn collect_filter_options(options: Vec<FilterOptionRow>) -> FilterOptions {
@@ -585,6 +697,8 @@ struct ObservabilityResponse {
     filter_options: FilterOptions,
     /// Counts by provider and model after filtering.
     breakdown: Breakdown,
+    /// Earliest Unix second retained by the active log-store policy.
+    retention_cutoff: i64,
 }
 
 /// Request observability dashboard operation.
@@ -618,9 +732,9 @@ fn now() -> i64 {
 mod tests {
     use super::*;
 
-    /// Opening an older database preserves logs and leaves their identities unknown.
+    /// Existing request identities and dimension options survive migration.
     #[tokio::test]
-    async fn migrates_existing_logs_without_identities() {
+    async fn migrates_existing_log_filter_options() {
         let path =
             std::env::temp_dir().join(format!("zero-g-old-log-test-{}.db", uuid::Uuid::new_v4()));
         let mut db = toasty::Db::builder()
@@ -630,7 +744,8 @@ mod tests {
                 crate::storage::Secret,
                 crate::storage::VirtualKey,
                 crate::storage::ProviderRecord,
-                crate::storage::ProviderCredential
+                crate::storage::ProviderCredential,
+                crate::storage::LogFilterOption
             ))
             .connect(&format!("turso:{}", path.display()))
             .await
@@ -639,6 +754,7 @@ mod tests {
             include_str!("../../../toasty/migrations/0000_initial.sql"),
             include_str!("../../../toasty/migrations/0001_add_providers.sql"),
             include_str!("../../../toasty/migrations/0002_provider_credentials.sql"),
+            include_str!("../../../toasty/migrations/0003_request_log_identities.sql"),
         ] {
             for statement in migration.split("-- #[toasty::breakpoint]") {
                 toasty::sql::statement(statement.trim())
@@ -656,6 +772,10 @@ mod tests {
                 7_352_461_067_189_203_411_i64,
                 "0002_provider_credentials.sql",
             ),
+            (
+                9_001_098_191_863_351_684_i64,
+                "0003_request_log_identities.sql",
+            ),
         ] {
             toasty::sql::statement("INSERT INTO __toasty_migrations VALUES (?1, ?2, '2026-01-01')")
                 .bind(id)
@@ -666,21 +786,118 @@ mod tests {
         }
         toasty::sql::statement("INSERT INTO request_logs (created_at, provider, model, path, status, latency_ms, request_body, response_body) VALUES (?1, 'p', 'm', '/v1', 200, 1, 'old request', 'old response')")
             .bind(now()).exec(&mut db).await.unwrap();
+        toasty::sql::statement("INSERT INTO request_logs (created_at, provider, model, path, status, latency_ms, request_body, response_body, virtual_key_id, virtual_key_name) VALUES (?1, 'historical', 'old-model', '/old', 200, 1, '', '', 'old-key', 'Old key')")
+            .bind(now()).exec(&mut db).await.unwrap();
         drop(db);
         let store = LogStore::new(Database::open(path.to_str().unwrap()).await.unwrap());
         let result =
             serde_json::to_value(store.dashboard(&DashboardQuery::default()).await.unwrap())
                 .unwrap();
-        assert_eq!(result["summary"]["requests"], 1);
-        assert_eq!(result["logs"][0]["request_body"], "old request");
+        assert_eq!(result["summary"]["requests"], 2);
+        assert_eq!(result["logs"][1]["request_body"], "old request");
         for field in [
             "virtual_key_id",
             "virtual_key_name",
             "credential_id",
             "credential_name",
         ] {
-            assert!(result["logs"][0][field].is_null());
+            assert!(result["logs"][1][field].is_null());
         }
+        let logs = serde_json::to_value(
+            store
+                .dashboard(&DashboardQuery {
+                    logs_only: Some(true),
+                    ..Default::default()
+                })
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(logs["filter_options"], result["filter_options"]);
+        assert_eq!(
+            logs["filter_options"]["virtual_keys"],
+            serde_json::json!([{"id": "old-key", "name": "Old key"}])
+        );
+        drop(store);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    /// Dashboard reports the active policy, not a pending settings change.
+    #[tokio::test]
+    async fn dashboard_retention_uses_active_store_policy() {
+        let path =
+            std::env::temp_dir().join(format!("zero-g-retention-test-{}.db", uuid::Uuid::new_v4()));
+        let mut store = LogStore::new(Database::open(path.to_str().unwrap()).await.unwrap());
+        store.set_retention(1).await.unwrap();
+        transaction_with_retry!(store.database, |mut tx| {
+            crate::storage::Setting::upsert_by_name("log_retention_days")
+                .value("30".to_string())
+                .exec(&mut tx)
+                .await?;
+            tx.commit().await?;
+            Ok(())
+        })
+        .unwrap();
+        let before = now();
+        let result = store.dashboard(&DashboardQuery::default()).await.unwrap();
+        let after = now();
+        assert!(result.retention_cutoff >= before.saturating_sub(86400));
+        assert!(result.retention_cutoff <= after.saturating_sub(86400));
+        drop(store);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    /// Expiration removes only snapshots whose last matching request was pruned.
+    #[tokio::test]
+    async fn retained_filter_options_follow_renames_and_pruning() {
+        let path =
+            std::env::temp_dir().join(format!("zero-g-options-test-{}.db", uuid::Uuid::new_v4()));
+        let mut store = LogStore::new(Database::open(path.to_str().unwrap()).await.unwrap());
+        store.set_retention(30).await.unwrap();
+        let entry = |days: i64, name: &str, provider: &str| LogEntry {
+            id: 0,
+            created_at: now().saturating_sub(days.saturating_mul(86400)),
+            provider: provider.into(),
+            model: "model".into(),
+            path: "/v1".into(),
+            status: 200,
+            latency_ms: 1,
+            input_tokens: None,
+            output_tokens: None,
+            request_body: String::new(),
+            response_body: String::new(),
+            virtual_key_id: Some("key".into()),
+            virtual_key_name: Some(name.into()),
+            credential_id: None,
+            credential_name: None,
+        };
+        store.insert(entry(5, "Z name", "active")).await.unwrap();
+        store.insert(entry(20, "A name", "expired")).await.unwrap();
+        store.insert(entry(25, "Z name", "active")).await.unwrap();
+        let query = DashboardQuery {
+            logs_only: Some(true),
+            ..Default::default()
+        };
+        let before = serde_json::to_value(store.dashboard(&query).await.unwrap()).unwrap();
+        assert_eq!(
+            before["filter_options"]["virtual_keys"],
+            serde_json::json!([{"id":"key","name":"A name"}])
+        );
+        store.set_retention(10).await.unwrap();
+        let after = serde_json::to_value(store.dashboard(&query).await.unwrap()).unwrap();
+        assert_eq!(after["logs"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            after["filter_options"]["providers"],
+            serde_json::json!(["active"])
+        );
+        assert_eq!(
+            after["filter_options"]["virtual_keys"],
+            serde_json::json!([{"id":"key","name":"Z name"}])
+        );
+        let dashboard =
+            serde_json::to_value(store.dashboard(&DashboardQuery::default()).await.unwrap())
+                .unwrap();
+        assert_eq!(after["filter_options"], dashboard["filter_options"]);
         drop(store);
         std::fs::remove_file(path).unwrap();
     }
