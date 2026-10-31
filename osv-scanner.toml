@@ -34,3 +34,11 @@ ecosystem = "npm"
 vulnerability.ignore = true
 effectiveUntil = 2026-11-28
 reason = "GHSA-gcqx-w48m-w2h4 affects shadcn development tooling, not the built dashboard."
+
+# Review by 2026-11-14. This advisory names minimatch 10.2.6 with optimization
+# level >= 2. The locked 10.x caller uses the default level 1; 5.x lacks the
+# affected preprocessing. Reassess these call paths when dependencies change.
+[[IgnoredVulns]]
+id = "GHSA-g3hv-75wg-m249"
+ignoreUntil = 2026-11-14
+reason = "Current minimatch callers do not use the vulnerable preprocessing; 5.x lacks it."

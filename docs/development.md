@@ -64,6 +64,8 @@ Both `just test` and `just check` discover frontend tests under `frontend/src/` 
 
 `osv-scanner.toml` contains temporary, version-specific OIDC and shadcn tooling dependency exceptions through 2026-11-28. Each suppresses all OSV findings for that exact package version, not only the named advisory; review raw findings and dependency usage before renewing. `deepmerge` is used by shadcn's development tool and is not included in the built dashboard.
 
+OSV advisory `GHSA-g3hv-75wg-m249` is ignored until 2026-11-14: the current `minimatch` 5.x version lacks the affected preprocessing, and the 10.x caller uses optimization level 1, not the affected level 2. This exception covers that advisory for all versions, so recheck callers and remove it when a compatible fix is available.
+
 Rust follows the [Namtao strict Clippy configuration](https://www.namtao.com/rust/#strict-lints): pedantic and nursery lints, plus explicit panic, indexing, arithmetic, conversion, and process-exit checks. `clippy.toml` permits the guide's test-only exceptions. Visibility follows actual usage: keep items private when possible and expose them only to the modules that need them. The `redundant_pub_crate` lint is disabled because it recommends broader visibility in binary crates; individual exceptions document cohesive long functions or JSON object insertion.
 
 Clippy also requires documentation comments on private Rust items, including fields and variants. Describe their purpose or constraints with `///`; `just check` treats missing documentation as an error.
