@@ -12,6 +12,9 @@ use crate::provider::common::request_identity::RequestIdentity;
 
 use super::{LogEntry, LogStore, now};
 
+/// Maximum response bytes retained for a single log entry.
+const RESPONSE_CAPTURE_LIMIT: usize = 256 * 1024;
+
 /// Capture POST request and response bodies for asynchronous logging.
 pub(in crate::server) async fn capture(
     State(store): State<LogStore>,
@@ -24,30 +27,68 @@ pub(in crate::server) async fn capture(
     let start = Instant::now();
     let path = req.uri().path().to_owned();
     let (mut parts, body) = req.into_parts();
-    let identity = RequestIdentity::default();
+    let identity = parts
+        .extensions
+        .get::<RequestIdentity>()
+        .cloned()
+        .unwrap_or_default();
     parts.extensions.insert(identity.clone());
     let Ok(body) = to_bytes(body, crate::server::inference::INFERENCE_BODY_LIMIT).await else {
-        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            axum::Json(crate::server::error_body(
+                "Request body too large",
+                "invalid_request_error",
+                Some("body_too_large"),
+            )),
+        )
+            .into_response();
     };
-    let request_body = String::from_utf8_lossy(&body).into_owned();
-    let namespaced_model = serde_json::from_slice::<Value>(&body)
-        .ok()
-        .and_then(|v| v.get("model").and_then(Value::as_str).map(str::to_owned))
-        .unwrap_or_default();
-    let (provider, model) = if let Some((provider, model)) = namespaced_model.split_once('/') {
-        (provider.to_owned(), model.to_owned())
-    } else {
-        (String::new(), namespaced_model)
-    };
-    let response = next.run(Request::from_parts(parts, Body::from(body))).await;
+    // Defer extracting attacker-controlled content until authentication has succeeded.
+    let response = next
+        .run(Request::from_parts(parts, Body::from(body.clone())))
+        .await;
     let identity = identity.snapshot();
+    let authenticated = identity.virtual_key_id.is_some();
+    let (request_body, provider, model) = if authenticated {
+        let request_body = String::from_utf8_lossy(&body).into_owned();
+        let namespaced_model = serde_json::from_slice::<Value>(&body)
+            .ok()
+            .and_then(|v| v.get("model").and_then(Value::as_str).map(str::to_owned))
+            .unwrap_or_default();
+        let (provider, model) = if let Some((provider, model)) = namespaced_model.split_once('/') {
+            (provider.to_owned(), model.to_owned())
+        } else {
+            (String::new(), namespaced_model)
+        };
+        (request_body, provider, model)
+    } else {
+        (String::new(), String::new(), String::new())
+    };
     let status = i64::from(response.status().as_u16());
     let (parts, body) = response.into_parts();
     let stream = FinalizeStream {
         inner: Box::pin(body.into_data_stream()),
-        finish: Some(Box::new(move |bytes, completed| {
-            let response_body = String::from_utf8_lossy(&bytes).into_owned();
-            let (input_tokens, output_tokens) = usage(&response_body);
+        finish: Some(Box::new(move |bytes, completed, stream_usage| {
+            // Anonymous responses can contain reflected request data as well.
+            let response_body = if authenticated {
+                let mut text = String::from_utf8_lossy(&bytes).into_owned();
+                if text.len() > RESPONSE_CAPTURE_LIMIT {
+                    let mut end = RESPONSE_CAPTURE_LIMIT;
+                    while !text.is_char_boundary(end) {
+                        end = end.saturating_sub(1);
+                    }
+                    text.truncate(end);
+                }
+                text
+            } else {
+                String::new()
+            };
+            let body_usage = usage(&response_body);
+            let (input_tokens, output_tokens) = (
+                stream_usage.0.or(body_usage.0),
+                stream_usage.1.or(body_usage.1),
+            );
             let log = LogEntry {
                 id: 0,
                 created_at: now(),
@@ -72,12 +113,15 @@ pub(in crate::server) async fn capture(
             });
         })),
         captured: Vec::new(),
+        capture_body: authenticated,
+        stream_usage: StreamUsage::default(),
+        failed: false,
     };
     Response::from_parts(parts, Body::from_stream(stream))
 }
 
 /// Callback receiving captured bytes and whether the response completed.
-type Completion = Box<dyn FnOnce(Vec<u8>, bool) + Send>;
+type Completion = Box<dyn FnOnce(Vec<u8>, bool, (Option<i64>, Option<i64>)) + Send>;
 
 /// Response stream that records bytes and finalizes on completion or drop.
 struct FinalizeStream<S> {
@@ -87,6 +131,12 @@ struct FinalizeStream<S> {
     finish: Option<Completion>,
     /// Response bytes observed so far.
     captured: Vec<u8>,
+    /// Only retain response content for authenticated requests.
+    capture_body: bool,
+    /// Bounded parser for usage events beyond the retained body prefix.
+    stream_usage: StreamUsage,
+    /// A stream error makes the response incomplete even if EOF follows.
+    failed: bool,
 }
 impl<S, E> futures_util::Stream for FinalizeStream<S>
 where
@@ -99,10 +149,19 @@ where
     ) -> std::task::Poll<Option<Self::Item>> {
         let result = self.inner.as_mut().poll_next(cx);
         match &result {
-            std::task::Poll::Ready(Some(Ok(bytes))) => self.captured.extend_from_slice(bytes),
+            std::task::Poll::Ready(Some(Ok(bytes))) if self.capture_body => {
+                let remaining = RESPONSE_CAPTURE_LIMIT.saturating_sub(self.captured.len());
+                if let Some(prefix) = bytes.get(..bytes.len().min(remaining)) {
+                    self.captured.extend_from_slice(prefix);
+                }
+                self.stream_usage.push(bytes);
+            }
+            std::task::Poll::Ready(Some(Err(_))) => self.failed = true,
             std::task::Poll::Ready(None) => {
                 if let Some(finish) = self.finish.take() {
-                    finish(std::mem::take(&mut self.captured), true);
+                    let completed = !self.failed;
+                    let stream_usage = self.stream_usage.finish();
+                    finish(std::mem::take(&mut self.captured), completed, stream_usage);
                 }
             }
             _ => {}
@@ -113,8 +172,61 @@ where
 impl<S> Drop for FinalizeStream<S> {
     fn drop(&mut self) {
         if let Some(finish) = self.finish.take() {
-            finish(std::mem::take(&mut self.captured), false);
+            let stream_usage = self.stream_usage.finish();
+            finish(std::mem::take(&mut self.captured), false, stream_usage);
         }
+    }
+}
+
+/// Parse complete SSE data lines while limiting memory for oversized events.
+#[derive(Default)]
+struct StreamUsage {
+    /// Bytes accumulated for the current SSE line.
+    line: Vec<u8>,
+    /// Whether the current line exceeded the capture limit.
+    oversized: bool,
+    /// Most recently observed input and output token counts.
+    counts: (Option<i64>, Option<i64>),
+}
+
+impl StreamUsage {
+    /// Accumulate complete lines across response chunks.
+    fn push(&mut self, bytes: &[u8]) {
+        for part in bytes.split_inclusive(|byte| *byte == b'\n') {
+            let content = part.strip_suffix(b"\n").unwrap_or(part);
+            let newline = content.len() != part.len();
+            if !self.oversized {
+                if content.len() > RESPONSE_CAPTURE_LIMIT.saturating_sub(self.line.len()) {
+                    self.line.clear();
+                    self.oversized = true;
+                } else {
+                    self.line.extend_from_slice(content);
+                }
+            }
+            if newline {
+                self.finish_line();
+            }
+        }
+    }
+
+    /// Extract usage from the current line and reset its buffer.
+    fn finish_line(&mut self) {
+        if !self.oversized
+            && self.line.starts_with(b"data:")
+            && let Ok(line) = std::str::from_utf8(&self.line)
+        {
+            let counts = usage(line);
+            self.counts.0 = counts.0.or(self.counts.0);
+            self.counts.1 = counts.1.or(self.counts.1);
+        }
+        self.line.clear();
+        self.oversized = false;
+    }
+
+    /// Process the final unterminated line and return observed counts.
+    fn finish(&mut self) -> (Option<i64>, Option<i64>) {
+        self.finish_line();
+        self.counts
     }
 }
 
@@ -198,6 +310,16 @@ mod tests {
                     }
                 }),
             )
+            .route_layer(middleware::from_fn(
+                |request: Request, next: Next| async move {
+                    request
+                        .extensions()
+                        .get::<RequestIdentity>()
+                        .unwrap()
+                        .set_virtual_key("test", "test");
+                    next.run(request).await
+                },
+            ))
             .route_layer(middleware::from_fn_with_state(store.clone(), capture))
             .route("/api/observability", get(dashboard))
             .with_state(store.clone());
@@ -354,6 +476,8 @@ mod tests {
             let id = log.path.trim_start_matches('/');
             if id == "anonymous" {
                 assert!(log.virtual_key_id.is_none());
+                assert_eq!(log.request_body, "");
+                assert_eq!(log.response_body, "");
                 assert!(log.credential_id.is_none());
             } else {
                 assert_eq!(log.virtual_key_id.as_deref(), Some(id));
@@ -372,6 +496,144 @@ mod tests {
                 }
             }
         }
+        drop(app);
+        drop(store);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    /// Captures are bounded without affecting forwarded chunks, errors or anonymous requests.
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn capture_bounds_streams_and_redacts_anonymous_bodies() {
+        let path =
+            std::env::temp_dir().join(format!("zero-g-capture-limit-{}.db", uuid::Uuid::new_v4()));
+        let store = LogStore::new(Database::open(path.to_str().unwrap()).await.unwrap());
+        let app = Router::new()
+            .route("/{kind}", post(
+                |axum::extract::Path(kind): axum::extract::Path<String>,
+                 axum::Extension(identity): axum::Extension<RequestIdentity>| async move {
+                    if kind != "anonymous" {
+                        identity.set_virtual_key("id", "name");
+                    }
+                    if kind == "anonymous" {
+                        let first = futures_util::stream::once(async {
+                            Ok::<_, std::io::Error>(Bytes::from_static(b"reflected secret"))
+                        });
+                        return (StatusCode::UNAUTHORIZED, Body::from_stream(first.chain(futures_util::stream::pending()))).into_response();
+                    }
+                    if kind == "error" {
+                        let chunks = vec![
+                            Ok(Bytes::from_static(b"partial")),
+                            Err(std::io::Error::other("upstream failed")),
+                        ];
+                        return Body::from_stream(futures_util::stream::iter(chunks)).into_response();
+                    }
+                    let mut first = vec![b'a'; RESPONSE_CAPTURE_LIMIT - 1];
+                    first.extend_from_slice("€".as_bytes());
+                    let chunks = vec![
+                        Ok::<_, std::io::Error>(Bytes::from(first)),
+                        Ok(Bytes::from_static(b"\ndata: {\"usage\":{\"input_")),
+                        Ok(Bytes::from_static(b"tokens\":9,\"output_tokens\":4}}\n\n")),
+                    ];
+                    Body::from_stream(futures_util::stream::iter(chunks)).into_response()
+                }
+            ))
+            .route_layer(middleware::from_fn_with_state(store.clone(), capture))
+            .with_state(store.clone());
+        let request = |kind| {
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/{kind}"))
+                .body(Body::from(
+                    r#"{"model":"evil/model","secret":"attacker payload"}"#,
+                ))
+                .unwrap()
+        };
+
+        let response = app.clone().oneshot(request("large")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let forwarded = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(
+            &forwarded[..RESPONSE_CAPTURE_LIMIT - 1],
+            vec![b'a'; RESPONSE_CAPTURE_LIMIT - 1]
+        );
+        assert!(
+            forwarded.ends_with(b"data: {\"usage\":{\"input_tokens\":9,\"output_tokens\":4}}\n\n")
+        );
+        assert_eq!(
+            &forwarded[RESPONSE_CAPTURE_LIMIT - 1..RESPONSE_CAPTURE_LIMIT + 2],
+            "€".as_bytes()
+        );
+
+        let response = app.clone().oneshot(request("anonymous")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let mut body = response.into_body().into_data_stream();
+        assert_eq!(body.next().await.unwrap().unwrap(), "reflected secret");
+        drop(body);
+
+        let response = app.clone().oneshot(request("error")).await.unwrap();
+        let mut body = response.into_body().into_data_stream();
+        assert_eq!(body.next().await.unwrap().unwrap(), "partial");
+        assert!(body.next().await.unwrap().is_err());
+        assert!(body.next().await.is_none());
+        let identity = RequestIdentity::default();
+        identity.set_virtual_key("id", "name");
+        let oversized = Request::builder()
+            .method(Method::POST)
+            .uri("/large")
+            .extension(identity)
+            .body(Body::from(vec![
+                b'x';
+                crate::server::inference::INFERENCE_BODY_LIMIT
+                    + 1
+            ]))
+            .unwrap();
+        let response = app.clone().oneshot(oversized).await.unwrap();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        let response_body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let error: Value = serde_json::from_slice(&response_body).unwrap();
+        assert_eq!(error["error"]["message"], "Request body too large");
+        assert_eq!(error["error"]["type"], "invalid_request_error");
+        assert_eq!(error["error"]["code"], "body_too_large");
+
+        drop(body);
+
+        let logs = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let logs = store
+                    .dashboard(&super::super::DashboardQuery::default())
+                    .await
+                    .unwrap()
+                    .logs;
+                if logs.len() == 3 {
+                    break logs;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let large = logs.iter().find(|log| log.path == "/large").unwrap();
+        assert_eq!(large.status, 200);
+        assert!(large.response_body.len() <= RESPONSE_CAPTURE_LIMIT);
+        assert!(
+            large
+                .response_body
+                .starts_with(&"a".repeat(RESPONSE_CAPTURE_LIMIT - 1))
+        );
+        assert_eq!(large.input_tokens, Some(9));
+        assert_eq!(large.output_tokens, Some(4));
+        let anonymous = logs.iter().find(|log| log.path == "/anonymous").unwrap();
+        assert_eq!(anonymous.status, 499);
+        assert_eq!(anonymous.request_body, "");
+        assert_eq!(anonymous.response_body, "");
+        assert_eq!(anonymous.provider, "");
+        assert_eq!(anonymous.model, "");
+        let error = logs.iter().find(|log| log.path == "/error").unwrap();
+        assert_eq!(error.status, 499);
+        assert_eq!(error.response_body, "partial");
+        assert!(error.input_tokens.is_none());
+        assert!(error.output_tokens.is_none());
         drop(app);
         drop(store);
         std::fs::remove_file(path).unwrap();
