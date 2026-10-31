@@ -91,6 +91,11 @@ Codex rejects `max_tokens` and `max_completion_tokens` in Chat Completions and
 the requested limit. Other upstream Codex errors retain their HTTP status after
 credential failover.
 
+Translated providers reject request options they cannot honor instead of silently
+dropping them. This includes structured output formats, stop sequences, unsupported
+choice counts and Responses conversation references. Send the full conversation
+when a provider does not support a previous-response reference.
+
 ## Notes
 
 - The provider key must be a valid `zero-g` virtual key; restrict it to the
