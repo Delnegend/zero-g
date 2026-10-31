@@ -113,10 +113,15 @@ impl CodexClient {
         let upstream = self.send_request(creds, payload, session_id).await?;
 
         let model = req.model.clone();
+        let include_usage = req
+            .stream_options
+            .as_ref()
+            .and_then(|options| options.include_usage)
+            .unwrap_or(false);
         let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(100);
 
         tokio::spawn(async move {
-            pump_chat_chunks(tx, upstream, model).await;
+            pump_chat_chunks(tx, upstream, model, include_usage).await;
         });
 
         Ok(Sse::new(ReceiverStream::new(rx))
@@ -442,6 +447,19 @@ async fn pump_responses_events(
     }
 }
 
+/// Serializes ordinary chunks with the required null usage field when requested.
+fn serialize_chat_chunk(
+    chunk: &ChatCompletionChunk,
+    include_usage: bool,
+) -> Result<String, serde_json::Error> {
+    let mut data = serde_json::to_string(chunk)?;
+    if include_usage && chunk.usage.is_none() {
+        data.pop();
+        data.push_str(",\"usage\":null}");
+    }
+    Ok(data)
+}
+
 /// Converts upstream events into streaming chat completion chunks.
 // Streaming events share ordering and tool-call state throughout this loop.
 #[allow(clippy::too_many_lines)]
@@ -449,6 +467,7 @@ async fn pump_chat_chunks(
     tx: mpsc::Sender<Result<Event, Infallible>>,
     upstream: reqwest::Response,
     model: String,
+    include_usage: bool,
 ) {
     let chunk_id = format!("chatcmpl-{}", uuid::Uuid::new_v4().simple());
     let now = SystemTime::now()
@@ -458,6 +477,7 @@ async fn pump_chat_chunks(
     let mut decoder = SseLineDecoder::default();
     let mut tool_calls: Vec<PendingToolCall> = Vec::new();
     let mut has_emitted_finish = false;
+    let mut usage = None;
 
     while let Some(item) = byte_stream.next().await {
         match item {
@@ -481,7 +501,7 @@ async fn pump_chat_chunks(
                                 }],
                                 usage: None,
                             };
-                            if let Ok(data) = serde_json::to_string(&chunk)
+                            if let Ok(data) = serialize_chat_chunk(&chunk, include_usage)
                                 && tx.send(Ok(Event::default().data(data))).await.is_err()
                             {
                                 return;
@@ -503,7 +523,7 @@ async fn pump_chat_chunks(
                                 }],
                                 usage: None,
                             };
-                            if let Ok(data) = serde_json::to_string(&chunk)
+                            if let Ok(data) = serialize_chat_chunk(&chunk, include_usage)
                                 && tx.send(Ok(Event::default().data(data))).await.is_err()
                             {
                                 return;
@@ -546,7 +566,7 @@ async fn pump_chat_chunks(
                                 }],
                                 usage: None,
                             };
-                            if let Ok(data) = serde_json::to_string(&chunk)
+                            if let Ok(data) = serialize_chat_chunk(&chunk, include_usage)
                                 && tx.send(Ok(Event::default().data(data))).await.is_err()
                             {
                                 return;
@@ -588,7 +608,7 @@ async fn pump_chat_chunks(
                                 }],
                                 usage: None,
                             };
-                            if let Ok(data) = serde_json::to_string(&chunk)
+                            if let Ok(data) = serialize_chat_chunk(&chunk, include_usage)
                                 && tx.send(Ok(Event::default().data(data))).await.is_err()
                             {
                                 return;
@@ -639,7 +659,7 @@ async fn pump_chat_chunks(
                                 }],
                                 usage: None,
                             };
-                            if let Ok(data) = serde_json::to_string(&chunk)
+                            if let Ok(data) = serialize_chat_chunk(&chunk, include_usage)
                                 && tx.send(Ok(Event::default().data(data))).await.is_err()
                             {
                                 return;
@@ -672,13 +692,13 @@ async fn pump_chat_chunks(
                                 }],
                                 usage: None,
                             };
-                            if let Ok(data) = serde_json::to_string(&chunk)
+                            if let Ok(data) = serialize_chat_chunk(&chunk, include_usage)
                                 && tx.send(Ok(Event::default().data(data))).await.is_err()
                             {
                                 return;
                             }
                         }
-                        CodexParsedEvent::Usage(_) => {}
+                        CodexParsedEvent::Usage(value) => usage = Some(value),
                     }
                 }
             }
@@ -696,6 +716,22 @@ async fn pump_chat_chunks(
             )))
             .await;
         return;
+    }
+
+    if include_usage {
+        let chunk = ChatCompletionChunk {
+            id: chunk_id,
+            object: "chat.completion.chunk".to_string(),
+            created: now,
+            model,
+            choices: Vec::new(),
+            usage,
+        };
+        if let Ok(data) = serialize_chat_chunk(&chunk, true)
+            && tx.send(Ok(Event::default().data(data))).await.is_err()
+        {
+            return;
+        }
     }
 
     let _ = tx.send(Ok(Event::default().data("[DONE]"))).await;
@@ -960,7 +996,7 @@ impl SseLineDecoder {
                 | "response.failed"
                 | "error",
             ) => {
-                if let Some(usage_obj) = val.pointer("/response/usage") {
+                if let Some(usage_obj) = val.pointer("/response/usage").and_then(Value::as_object) {
                     let prompt_tokens = usage_obj
                         .get("input_tokens")
                         .and_then(Value::as_u64)
@@ -1223,6 +1259,92 @@ mod tests {
             .await
             .unwrap();
         String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn chat_stream_includes_usage_only_when_requested() {
+        let sse = concat!(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":5,\"total_tokens\":17}}}\n\n"
+        );
+        for include_usage in [None, Some(false), Some(true)] {
+            let (client, _requests) = fake_client(sse).await;
+            let mut request = chat_request();
+            request.stream_options =
+                include_usage.map(|include_usage| crate::openai::StreamOptions {
+                    include_usage: Some(include_usage),
+                });
+            let body = stream_body(
+                client
+                    .stream_chat(&credentials(), &request, "test")
+                    .await
+                    .unwrap(),
+            )
+            .await;
+            let events: Vec<&str> = body
+                .lines()
+                .filter_map(|line| line.strip_prefix("data: "))
+                .collect();
+            assert_eq!(events.last(), Some(&"[DONE]"));
+            let chunks: Vec<Value> = events[..events.len() - 1]
+                .iter()
+                .map(|data| serde_json::from_str(data).unwrap())
+                .collect();
+            let usage_chunks: Vec<&Value> = chunks
+                .iter()
+                .filter(|chunk| chunk.get("usage").is_some_and(|usage| !usage.is_null()))
+                .collect();
+            if include_usage == Some(true) {
+                assert_eq!(usage_chunks.len(), 1);
+                let usage = usage_chunks[0];
+                assert_eq!(usage["choices"], serde_json::json!([]));
+                assert_eq!(
+                    usage["usage"],
+                    serde_json::json!({"prompt_tokens":12,"completion_tokens":5,"total_tokens":17})
+                );
+                assert_eq!(chunks.last(), Some(usage));
+                assert_eq!(
+                    chunks[chunks.len() - 2]["choices"][0]["finish_reason"],
+                    "stop"
+                );
+                assert!(
+                    chunks[..chunks.len() - 1]
+                        .iter()
+                        .all(|chunk| chunk.get("usage") == Some(&Value::Null))
+                );
+            } else {
+                assert_eq!(usage_chunks, Vec::<&Value>::new());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_upstream_usage_is_not_fabricated() {
+        for sse in [
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":null}}\n\n",
+        ] {
+            let (client, _requests) = fake_client(sse).await;
+            let mut request = chat_request();
+            request.stream_options = Some(crate::openai::StreamOptions {
+                include_usage: Some(true),
+            });
+            let body = stream_body(
+                client
+                    .stream_chat(&credentials(), &request, "test")
+                    .await
+                    .unwrap(),
+            )
+            .await;
+            let events: Vec<&str> = body
+                .lines()
+                .filter_map(|line| line.strip_prefix("data: "))
+                .collect();
+            assert_eq!(events.last(), Some(&"[DONE]"));
+            let last: Value = serde_json::from_str(events[events.len() - 2]).unwrap();
+            assert_eq!(last["choices"], serde_json::json!([]));
+            assert_eq!(last.get("usage"), Some(&Value::Null));
+        }
     }
 
     /// Missing or truncated terminal events never produce successful completion.
