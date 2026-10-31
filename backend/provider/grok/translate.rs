@@ -254,6 +254,14 @@ pub(super) fn responses_to_chat(response: &Value, model: &str) -> Result<Value, 
     Ok(result)
 }
 
+/// Maximum size of an upstream SSE line or assembled data payload.
+const MAX_SSE_BYTES: usize = 1024 * 1024;
+
+/// Event name and data of a complete upstream SSE frame.
+type SseFrame = (Option<String>, String);
+/// Complete frames and, on failure, the subsequent decoding error.
+type SseDecodeResult = Result<Vec<SseFrame>, (Vec<SseFrame>, &'static str)>;
+
 /// Incrementally decode SSE frames across arbitrary byte boundaries.
 #[derive(Default)]
 struct Decoder {
@@ -261,33 +269,53 @@ struct Decoder {
     buffer: Vec<u8>,
     /// Current SSE event name.
     event: Option<String>,
-    /// Current frame's data lines.
-    data: Vec<String>,
+    /// Joined data lines, including their separating newlines.
+    data: Option<String>,
 }
 impl Decoder {
     /// Return complete event frames from the supplied bytes.
-    fn push(&mut self, bytes: &[u8]) -> Vec<(Option<String>, String)> {
-        self.buffer.extend_from_slice(bytes);
+    fn push(&mut self, bytes: &[u8]) -> SseDecodeResult {
         let mut frames = Vec::new();
-        while let Some(pos) = self.buffer.iter().position(|b| *b == b'\n') {
-            let bytes: Vec<u8> = self.buffer.drain(..=pos).collect();
-            let line = String::from_utf8_lossy(&bytes);
-            let line = line.trim_end_matches(['\r', '\n']);
+        for part in bytes.split_inclusive(|byte| *byte == b'\n') {
+            let line_part = part.strip_suffix(b"\n");
+            let complete = line_part.is_some();
+            let line_part = line_part.unwrap_or(part);
+            if line_part.len() > MAX_SSE_BYTES.saturating_sub(self.buffer.len()) {
+                return Err((frames, "Grok SSE line exceeds size limit"));
+            }
+            self.buffer.extend_from_slice(line_part);
+            if !complete {
+                continue;
+            }
+            let line = String::from_utf8_lossy(&self.buffer);
+            let line = line.trim_end_matches('\r');
             if line.is_empty() {
-                if self.data.is_empty() {
-                    self.event = None;
+                if let Some(data) = self.data.take() {
+                    frames.push((self.event.take(), data));
                 } else {
-                    frames.push((self.event.take(), self.data.join("\n")));
-                    self.data.clear();
+                    self.event = None;
                 }
             } else if let Some(value) = line.strip_prefix("event:") {
                 self.event = Some(value.strip_prefix(' ').unwrap_or(value).to_owned());
             } else if let Some(value) = line.strip_prefix("data:") {
-                self.data
-                    .push(value.strip_prefix(' ').unwrap_or(value).to_owned());
+                let value = value.strip_prefix(' ').unwrap_or(value);
+                let len = self
+                    .data
+                    .as_ref()
+                    .map_or(0, |previous| previous.len().saturating_add(1));
+                if len > MAX_SSE_BYTES || value.len() > MAX_SSE_BYTES.saturating_sub(len) {
+                    return Err((frames, "Grok SSE event data exceeds size limit"));
+                }
+                if let Some(previous) = &mut self.data {
+                    previous.push('\n');
+                    previous.push_str(value);
+                } else {
+                    self.data = Some(value.to_owned());
+                }
             }
+            self.buffer.clear();
         }
-        frames
+        Ok(frames)
     }
 }
 
@@ -506,7 +534,11 @@ pub(super) fn stream_to_chat(
                     break;
                 }
             };
-            for (name, data) in decoder.push(&bytes) {
+            let (frames, decode_error) = match decoder.push(&bytes) {
+                Ok(frames) => (frames, None),
+                Err((frames, error)) => (frames, Some(error)),
+            };
+            for (name, data) in frames {
                 if data == "[DONE]" {
                     continue;
                 }
@@ -537,6 +569,10 @@ pub(super) fn stream_to_chat(
                 if state.finished {
                     break 'reading;
                 }
+            }
+            if let Some(message) = decode_error {
+                error = Some(message.to_owned());
+                break;
             }
         }
         if !state.finished && error.is_none() {
@@ -623,6 +659,55 @@ mod tests {
         assert_eq!(chat["usage"]["total_tokens"], 5);
     }
 
+    #[test]
+    fn split_multiline_sse_event_is_decoded() {
+        let mut decoder = Decoder::default();
+        assert_eq!(
+            decoder
+                .push(b"event: response.created\ndata: {\"type\":\"response.created\",\nda")
+                .unwrap(),
+            Vec::new()
+        );
+        let frames = decoder
+            .push(b"ta: \"response\":{\"id\":\"r\",\"created_at\":42}}\n\n")
+            .unwrap();
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].0.as_deref(), Some("response.created"));
+        let event: Value = serde_json::from_str(&frames[0].1).unwrap();
+        assert_eq!(event["response"]["id"], "r");
+    }
+
+    #[test]
+    fn complete_events_precede_size_errors_regardless_of_chunking() {
+        let frame = b"data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\",\"created_at\":1}}\n\n";
+        for suffix in [
+            "x".repeat(MAX_SSE_BYTES + 1),
+            format!(
+                "data: {}\ndata: {}\n",
+                "x".repeat(MAX_SSE_BYTES / 2),
+                "y".repeat(MAX_SSE_BYTES / 2)
+            ),
+        ] {
+            for split in [false, true] {
+                let mut decoder = Decoder::default();
+                let mut input = Vec::new();
+                if split {
+                    assert_eq!(decoder.push(frame).unwrap().len(), 1);
+                } else {
+                    input.extend_from_slice(frame);
+                }
+                input.extend_from_slice(suffix.as_bytes());
+                let (frames, error) = decoder.push(&input).unwrap_err();
+                assert!(error.contains("size limit"));
+                assert_eq!(frames.len(), usize::from(!split));
+                if !split {
+                    let event: Value = serde_json::from_str(&frames[0].1).unwrap();
+                    assert_eq!(event["response"]["id"], "r");
+                }
+            }
+        }
+    }
+
     /// Split SSE frames and completed argument suffixes are decoded correctly.
     #[test]
     fn stream_decodes_split_frames_and_tool_argument_suffixes() {
@@ -630,11 +715,13 @@ mod tests {
         assert_eq!(
             decoder
                 .push(b"event: response.created\r\ndata: {\"type\":\"response.")
+                .unwrap()
                 .len(),
             0
         );
-        let frames =
-            decoder.push(b"created\",\"response\":{\"id\":\"r\",\"created_at\":42}}\r\n\r\n");
+        let frames = decoder
+            .push(b"created\",\"response\":{\"id\":\"r\",\"created_at\":42}}\r\n\r\n")
+            .unwrap();
         let mut state = ChatStream {
             id: String::new(),
             created: 0,
@@ -714,6 +801,15 @@ mod tests {
             }))
             .route("/truncated", get(|| async {
                 "data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\",\"created_at\":1}}\n\n"
+            }))
+            .route("/oversized-line", get(|| async {
+                format!("data: {{\"type\":\"response.created\",\"response\":{{\"id\":\"r\",\"created_at\":1}}}}\n\n{}", "x".repeat(MAX_SSE_BYTES + 1))
+            }))
+            .route("/oversized-event", get(|| async {
+                format!("data: {{\"type\":\"response.created\",\"response\":{{\"id\":\"r\",\"created_at\":1}}}}\n\ndata: {}\ndata: {}\n\n", "x".repeat(MAX_SSE_BYTES / 2), "y".repeat(MAX_SSE_BYTES / 2))
+            }))
+            .route("/terminal-before-oversized", get(|| async {
+                format!("data: {{\"type\":\"response.created\",\"response\":{{\"id\":\"r\",\"created_at\":1}}}}\n\ndata: {{\"type\":\"response.completed\",\"response\":{{\"status\":\"completed\"}}}}\n\n{}", "x".repeat(MAX_SSE_BYTES + 1))
             }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -758,6 +854,37 @@ mod tests {
         assert!(text.contains("event: error"));
         assert!(text.contains("without a terminal response"));
         assert!(!text.contains("[DONE]"));
+        for (path, expected) in [
+            ("oversized-line", "line exceeds size limit"),
+            ("oversized-event", "event data exceeds size limit"),
+        ] {
+            let upstream = reqwest::get(format!("http://{addr}/{path}")).await.unwrap();
+            let body = axum::body::to_bytes(
+                stream_to_chat(upstream, "grok".into(), false).into_body(),
+                1024 * 1024,
+            )
+            .await
+            .unwrap();
+            let text = std::str::from_utf8(&body).unwrap();
+            assert!(text.contains("event: error") && text.contains(expected));
+            assert!(
+                text.find("\"role\":\"assistant\"").unwrap() < text.find("event: error").unwrap()
+            );
+            assert!(!text.contains("[DONE]"));
+        }
+        let upstream = reqwest::get(format!("http://{addr}/terminal-before-oversized"))
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(
+            stream_to_chat(upstream, "grok".into(), false).into_body(),
+            1024 * 1024,
+        )
+        .await
+        .unwrap();
+        let text = std::str::from_utf8(&body).unwrap();
+        assert!(text.contains("assistant") && text.contains("\"finish_reason\":\"stop\""));
+        assert!(text.contains("[DONE]"));
+        assert!(!text.contains("event: error"));
         server.abort();
     }
 

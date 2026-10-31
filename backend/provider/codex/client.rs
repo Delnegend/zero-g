@@ -151,7 +151,10 @@ impl CodexClient {
 
         while let Some(item) = byte_stream.next().await {
             let chunk = item.map_err(|e| format!("Stream read error: {e}"))?;
-            let events = decoder.push_chunk(&chunk);
+            let (events, decode_error) = match decoder.push_chunk(&chunk) {
+                Ok(events) => (events, None),
+                Err((events, error)) => (events, Some(error)),
+            };
             for ev in events {
                 match ev {
                     CodexParsedEvent::TextDelta(t) => text_acc.push_str(&t),
@@ -171,6 +174,9 @@ impl CodexClient {
                     }
                     CodexParsedEvent::Usage(u) => usage_acc = u,
                 }
+            }
+            if let Some(error) = decode_error {
+                return Err(error.into());
             }
         }
         let mut finish_reason =
@@ -270,7 +276,10 @@ impl CodexClient {
 
         while let Some(item) = byte_stream.next().await {
             let chunk = item.map_err(|e| format!("Stream read error: {e}"))?;
-            let events = decoder.push_chunk(&chunk);
+            let (events, decode_error) = match decoder.push_chunk(&chunk) {
+                Ok(events) => (events, None),
+                Err((events, error)) => (events, Some(error)),
+            };
             for ev in events {
                 match ev {
                     CodexParsedEvent::TextDelta(text) => output_text.push_str(&text),
@@ -316,6 +325,9 @@ impl CodexClient {
                     }
                     _ => {}
                 }
+            }
+            if let Some(error) = decode_error {
+                return Err(error.into());
             }
         }
         Err("Codex stream ended without a terminal response".into())
@@ -397,7 +409,10 @@ async fn pump_responses_events(
     while let Some(item) = byte_stream.next().await {
         match item {
             Ok(bytes) => {
-                let raw_events = decoder.push_chunk(&bytes);
+                let (raw_events, decode_error) = match decoder.push_chunk(&bytes) {
+                    Ok(events) => (events, None),
+                    Err((events, error)) => (events, Some(error)),
+                };
                 for (event_name, data) in raw_events {
                     let Ok(mut value) = serde_json::from_str::<Value>(&data) else {
                         if data == "[DONE]" {
@@ -434,6 +449,15 @@ async fn pump_responses_events(
                     if tx.send(Ok(sse_ev)).await.is_err() {
                         return;
                     }
+                }
+                if let Some(message) = decode_error {
+                    let _ = tx
+                        .send(Ok(Event::default().event("error").data(
+                            serde_json::json!({"type":"error","error":{"message":message}})
+                                .to_string(),
+                        )))
+                        .await;
+                    return;
                 }
             }
             Err(e) => {
@@ -482,7 +506,10 @@ async fn pump_chat_chunks(
     while let Some(item) = byte_stream.next().await {
         match item {
             Ok(bytes) => {
-                let events = decoder.push_chunk(&bytes);
+                let (events, decode_error) = match decoder.push_chunk(&bytes) {
+                    Ok(events) => (events, None),
+                    Err((events, error)) => (events, Some(error)),
+                };
                 for ev in events {
                     match ev {
                         CodexParsedEvent::TextDelta(delta) => {
@@ -701,6 +728,14 @@ async fn pump_chat_chunks(
                         CodexParsedEvent::Usage(value) => usage = Some(value),
                     }
                 }
+                if let Some(message) = decode_error {
+                    let _ = tx
+                        .send(Ok(Event::default().event("error").data(
+                            serde_json::json!({"error":{"message":message}}).to_string(),
+                        )))
+                        .await;
+                    return;
+                }
             }
             Err(e) => {
                 error!("Error reading Codex byte stream: {e}");
@@ -881,15 +916,25 @@ struct SseLineDecoder {
 
 impl SseLineDecoder {
     /// Buffers a byte chunk and parses any complete SSE data lines.
-    fn push_chunk(&mut self, chunk: &[u8]) -> Vec<CodexParsedEvent> {
+    fn push_chunk(
+        &mut self,
+        chunk: &[u8],
+    ) -> Result<Vec<CodexParsedEvent>, (Vec<CodexParsedEvent>, &'static str)> {
         let mut out = Vec::new();
-        for (name, data) in self.raw.push_chunk(chunk) {
+        let (frames, error) = match self.raw.push_chunk(chunk) {
+            Ok(frames) => (frames, None),
+            Err((frames, error)) => (frames, Some(error)),
+        };
+        for (name, data) in frames {
             self.current_event_name = name;
             if let Ok(value) = serde_json::from_str::<Value>(&data) {
                 self.parse_json_event(&value, &mut out);
             }
         }
-        out
+        match error {
+            Some(error) => Err((out, error)),
+            None => Ok(out),
+        }
     }
 
     /// Appends recognized events from one JSON payload.
@@ -1043,49 +1088,69 @@ impl SseLineDecoder {
     }
 }
 
+/// Maximum size of an upstream SSE line or assembled data payload.
+const MAX_SSE_BYTES: usize = 1024 * 1024;
+
+/// Event name and data of a complete upstream SSE frame.
+type SseFrame = (Option<String>, String);
+/// Complete frames and, on failure, the subsequent decoding error.
+type SseDecodeResult = Result<Vec<SseFrame>, (Vec<SseFrame>, &'static str)>;
+
 /// Incrementally decodes SSE lines without interpreting their JSON payloads.
 #[derive(Default)]
 struct SseRawLineDecoder {
-    /// Bytes not yet consumed as complete lines.
+    /// Bytes not yet consumed as a complete line.
     buffer: Vec<u8>,
     /// Event name associated with the current SSE data lines.
     current_event: Option<String>,
-    /// Data lines in the current event.
-    data: Vec<String>,
+    /// Joined data lines, including their separating newlines.
+    data: Option<String>,
 }
 
 impl SseRawLineDecoder {
     /// Buffers a byte chunk and returns complete event-name and data pairs.
-    fn push_chunk(&mut self, chunk: &[u8]) -> Vec<(Option<String>, String)> {
-        self.buffer.extend_from_slice(chunk);
+    fn push_chunk(&mut self, chunk: &[u8]) -> SseDecodeResult {
         let mut out = Vec::new();
-
-        while let Some(pos) = self.buffer.iter().position(|b| *b == b'\n') {
-            let line_bytes: Vec<u8> = self.buffer.drain(..=pos).collect();
-            let line = String::from_utf8_lossy(&line_bytes);
-            let line = line.trim_end();
-
+        for part in chunk.split_inclusive(|byte| *byte == b'\n') {
+            let line_part = part.strip_suffix(b"\n");
+            let complete = line_part.is_some();
+            let line_part = line_part.unwrap_or(part);
+            if line_part.len() > MAX_SSE_BYTES.saturating_sub(self.buffer.len()) {
+                return Err((out, "Codex SSE line exceeds size limit"));
+            }
+            self.buffer.extend_from_slice(line_part);
+            if !complete {
+                continue;
+            }
+            let line = String::from_utf8_lossy(&self.buffer);
+            let line = line.trim_end_matches('\r');
             if line.is_empty() {
-                if self.data.is_empty() {
-                    self.current_event = None;
+                if let Some(data) = self.data.take() {
+                    out.push((self.current_event.take(), data));
                 } else {
-                    out.push((self.current_event.take(), self.data.join("\n")));
-                    self.data.clear();
+                    self.current_event = None;
                 }
-                continue;
-            }
-
-            if let Some(ev) = line.strip_prefix("event:") {
+            } else if let Some(ev) = line.strip_prefix("event:") {
                 self.current_event = Some(ev.strip_prefix(' ').unwrap_or(ev).to_string());
-                continue;
+            } else if let Some(data) = line.strip_prefix("data:") {
+                let data = data.strip_prefix(' ').unwrap_or(data);
+                let len = self
+                    .data
+                    .as_ref()
+                    .map_or(0, |previous| previous.len().saturating_add(1));
+                if data.len() > MAX_SSE_BYTES.saturating_sub(len) || len > MAX_SSE_BYTES {
+                    return Err((out, "Codex SSE event data exceeds size limit"));
+                }
+                if let Some(previous) = &mut self.data {
+                    previous.push('\n');
+                    previous.push_str(data);
+                } else {
+                    self.data = Some(data.to_string());
+                }
             }
-
-            if let Some(data) = line.strip_prefix("data:") {
-                self.data
-                    .push(data.strip_prefix(' ').unwrap_or(data).to_string());
-            }
+            self.buffer.clear();
         }
-        out
+        Ok(out)
     }
 }
 
@@ -1099,7 +1164,7 @@ mod tests {
     fn collect(sse: &str) -> Vec<PendingToolCall> {
         let mut decoder = SseLineDecoder::default();
         let mut calls = Vec::new();
-        for ev in decoder.push_chunk(sse.as_bytes()) {
+        for ev in decoder.push_chunk(sse.as_bytes()).unwrap() {
             apply_tool_event(&mut calls, ev);
         }
         calls
@@ -1205,18 +1270,20 @@ mod tests {
     }
     /// Starts an isolated upstream and captures requests made by the real client.
     async fn fake_client(
-        sse: &'static str,
+        sse: impl Into<String>,
     ) -> (
         CodexClient,
         tokio::sync::mpsc::Receiver<(axum::http::HeaderMap, Value)>,
     ) {
         use axum::{Json, Router, routing::post};
+        let sse = sse.into();
         let (tx, rx) = tokio::sync::mpsc::channel(8);
         let app = Router::new().route(
             "/codex/responses",
             post(
                 move |headers: axum::http::HeaderMap, Json(body): Json<Value>| {
                     let tx = tx.clone();
+                    let sse = sse.clone();
                     async move {
                         tx.send((headers, body)).await.unwrap();
                         ([("content-type", "text/event-stream")], sse)
@@ -1259,6 +1326,122 @@ mod tests {
             .await
             .unwrap();
         String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn oversized_sse_is_reported_by_all_consumers() {
+        let cases = [
+            ("x".repeat(MAX_SSE_BYTES + 1), "line exceeds size limit"),
+            (
+                format!(
+                    "data: {}\ndata: {}\n\n",
+                    "x".repeat(MAX_SSE_BYTES / 2),
+                    "y".repeat(MAX_SSE_BYTES / 2)
+                ),
+                "event data exceeds size limit",
+            ),
+        ];
+        let responses: ResponseCreateRequest =
+            serde_json::from_value(serde_json::json!({"model":"test","input":"hello"})).unwrap();
+        for (sse, expected) in cases {
+            let sse = format!(
+                "data: {{\"type\":\"response.output_text.delta\",\"delta\":\"before\"}}\n\n{sse}"
+            );
+            let (client, _requests) = fake_client(sse).await;
+            let chat_error = client
+                .complete_chat_non_streaming(&credentials(), &chat_request(), "test")
+                .await
+                .unwrap_err();
+            assert!(chat_error.message.contains(expected));
+            let response_error = client
+                .complete_responses_non_streaming(&credentials(), &responses, "test")
+                .await
+                .unwrap_err();
+            assert!(response_error.message.contains(expected));
+            let body = stream_body(
+                client
+                    .stream_chat(&credentials(), &chat_request(), "test")
+                    .await
+                    .unwrap(),
+            )
+            .await;
+            assert!(body.contains("event: error") && body.contains(expected));
+            assert!(body.find("before").unwrap() < body.find("event: error").unwrap());
+            assert!(!body.contains("[DONE]"));
+            let body = stream_body(
+                client
+                    .stream_responses(&credentials(), &responses, "test")
+                    .await
+                    .unwrap(),
+            )
+            .await;
+            assert!(body.contains("event: error") && body.contains(expected));
+            assert!(body.find("before").unwrap() < body.find("event: error").unwrap());
+        }
+    }
+
+    #[test]
+    fn split_multiline_sse_event_is_decoded() {
+        let mut decoder = SseLineDecoder::default();
+        assert!(
+            decoder
+                .push_chunk(b"data: {\"type\":\"response.output_text.delta\",\nda")
+                .unwrap()
+                .is_empty()
+        );
+        let events = decoder.push_chunk(b"ta: \"delta\":\"hello\"}\n\n").unwrap();
+        assert!(matches!(&events[..], [CodexParsedEvent::TextDelta(text)] if text == "hello"));
+    }
+
+    #[test]
+    fn complete_events_precede_size_errors_regardless_of_chunking() {
+        let frame = b"data: {\"type\":\"response.output_text.delta\",\"delta\":\"before\"}\n\n";
+        for suffix in [
+            "x".repeat(MAX_SSE_BYTES + 1),
+            format!(
+                "data: {}\ndata: {}\n",
+                "x".repeat(MAX_SSE_BYTES / 2),
+                "y".repeat(MAX_SSE_BYTES / 2)
+            ),
+        ] {
+            for split in [false, true] {
+                let mut decoder = SseLineDecoder::default();
+                let mut input = Vec::new();
+                if split {
+                    assert!(
+                        matches!(&decoder.push_chunk(frame).unwrap()[..], [CodexParsedEvent::TextDelta(text)] if text == "before")
+                    );
+                } else {
+                    input.extend_from_slice(frame);
+                }
+                input.extend_from_slice(suffix.as_bytes());
+                let (events, error) = decoder.push_chunk(&input).unwrap_err();
+                assert!(error.contains("size limit"));
+                if split {
+                    assert!(events.is_empty());
+                } else {
+                    assert!(
+                        matches!(&events[..], [CodexParsedEvent::TextDelta(text)] if text == "before")
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn responses_terminal_before_oversized_data_remains_successful() {
+        let sse = format!(
+            "data: {{\"type\":\"response.completed\",\"response\":{{\"status\":\"completed\",\"output\":[]}}}}\n\n{}",
+            "x".repeat(MAX_SSE_BYTES + 1)
+        );
+        let (client, _requests) = fake_client(sse).await;
+        let request =
+            serde_json::from_value(serde_json::json!({"model":"test","input":"hello"})).unwrap();
+        let response = client
+            .complete_responses_non_streaming(&credentials(), &request, "test")
+            .await
+            .unwrap();
+        assert_eq!(response["status"], "completed");
     }
 
     #[tokio::test]
