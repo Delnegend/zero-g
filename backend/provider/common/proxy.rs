@@ -129,28 +129,105 @@ pub(crate) const fn settings_error() -> ProxyError {
     )
 }
 
-/// Requires a nonempty model in the request and checks key permissions.
+/// Checks every model the upstream can select against key permissions.
 pub(crate) fn check_model(body: &[u8], permissions: &Permissions) -> Result<(), ProxyError> {
-    let value = serde_json::from_slice::<Value>(body).ok();
-    let model = value
-        .as_ref()
-        .and_then(|value| value.get("model"))
-        .and_then(Value::as_str);
-    let Some(model) = model.filter(|model| !model.is_empty()) else {
-        return Err(error(
+    // Reject duplicate selection fields and track case variants: some upstream
+    // JSON decoders treat these as aliases even though serde does not.
+    #[derive(Default)]
+    struct Selection {
+        model: Option<Value>,
+        models: Option<Value>,
+        case_alias: bool,
+    }
+    impl<'de> serde::Deserialize<'de> for Selection {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct Visitor;
+            impl<'de> serde::de::Visitor<'de> for Visitor {
+                type Value = Selection;
+
+                fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    formatter.write_str("a request object")
+                }
+
+                fn visit_map<A: serde::de::MapAccess<'de>>(
+                    self,
+                    mut map: A,
+                ) -> Result<Selection, A::Error> {
+                    let mut selection = Selection::default();
+                    while let Some(key) = map.next_key::<String>()? {
+                        let slot = match key.as_str() {
+                            "model" => Some(&mut selection.model),
+                            "models" => Some(&mut selection.models),
+                            _ => None,
+                        };
+                        if let Some(slot) = slot {
+                            if slot.is_some() {
+                                return Err(serde::de::Error::custom(
+                                    "duplicate model selection field",
+                                ));
+                            }
+                            *slot = Some(map.next_value()?);
+                        } else {
+                            selection.case_alias |=
+                                key.chars().flat_map(char::to_uppercase).eq("MODEL".chars())
+                                    || key
+                                        .chars()
+                                        .flat_map(char::to_uppercase)
+                                        .eq("MODELS".chars());
+                            map.next_value::<serde::de::IgnoredAny>()?;
+                        }
+                    }
+                    Ok(selection)
+                }
+            }
+            deserializer.deserialize_map(Visitor)
+        }
+    }
+    const fn invalid() -> ProxyError {
+        error(
             StatusCode::BAD_REQUEST,
-            "A model is required",
+            "A valid model or models list is required",
             "invalid_request_error",
             "invalid_model",
-        ));
-    };
-    if !permissions.allows_model(model) {
-        return Err(error(
-            StatusCode::FORBIDDEN,
-            "Model is not allowed for this virtual key",
-            "permission_error",
-            "model_not_allowed",
-        ));
+        )
+    }
+    fn check(model: &Value, permissions: &Permissions) -> Result<(), ProxyError> {
+        let model = model
+            .as_str()
+            .filter(|model| !model.is_empty())
+            .ok_or_else(invalid)?;
+        if !permissions.allows_model(model) {
+            return Err(error(
+                StatusCode::FORBIDDEN,
+                "Model is not allowed for this virtual key",
+                "permission_error",
+                "model_not_allowed",
+            ));
+        }
+        Ok(())
+    }
+
+    let selection: Selection = serde_json::from_slice(body).map_err(|_| invalid())?;
+    if !permissions.models.is_empty() && selection.case_alias {
+        return Err(invalid());
+    }
+    if let Some(model) = &selection.model {
+        check(model, permissions)?;
+    }
+    if let Some(models) = &selection.models {
+        // An unrestricted key with a valid primary model need not interpret
+        // provider-specific fallback formats.
+        if !permissions.models.is_empty() || selection.model.is_none() {
+            let models = models
+                .as_array()
+                .filter(|models| !models.is_empty())
+                .ok_or_else(invalid)?;
+            for model in models {
+                check(model, permissions)?;
+            }
+        }
+    } else if selection.model.is_none() {
+        return Err(invalid());
     }
     Ok(())
 }

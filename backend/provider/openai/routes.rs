@@ -247,6 +247,65 @@ mod tests {
     }
 
     #[test]
+    fn fallback_selection_checks_every_model_and_rejects_ambiguous_input() {
+        let restricted = Permissions {
+            providers: vec![],
+            models: vec!["vendor/allowed".into(), "vendor/second".into()],
+        };
+        let unrestricted = Permissions {
+            providers: vec![],
+            models: vec![],
+        };
+        for body in [
+            r#"{"model":"vendor/allowed","models":["vendor/allowed","vendor/second"]}"#,
+            r#"{"models":["vendor/allowed","vendor/second"]}"#,
+        ] {
+            assert!(check_model(body.as_bytes(), &restricted).is_ok());
+        }
+        for body in [
+            r#"{"model":"vendor/allowed","models":["vendor/allowed","vendor/denied"]}"#,
+            r#"{"models":["vendor/denied","vendor/allowed"]}"#,
+            r#"{"model":"vendor/denied","models":["vendor/allowed"]}"#,
+        ] {
+            assert_eq!(
+                check_model(body.as_bytes(), &restricted)
+                    .unwrap_err()
+                    .into_response()
+                    .status(),
+                StatusCode::FORBIDDEN
+            );
+            assert!(check_model(body.as_bytes(), &unrestricted).is_ok());
+        }
+        for body in [
+            r#"{"model":"vendor/allowed","models":[]}"#,
+            r#"{"model":"vendor/allowed","models":null}"#,
+            r#"{"model":"vendor/allowed","models":"vendor/allowed"}"#,
+            r#"{"model":"vendor/allowed","models":["vendor/allowed",null]}"#,
+            r#"{"models":[""]}"#,
+            r#"{"model":null,"models":["vendor/allowed"]}"#,
+            r#"{"model":"vendor/allowed","model":"vendor/denied"}"#,
+            r#"{"model":"vendor/allowed","models":["vendor/allowed"],"models":["vendor/denied"]}"#,
+            r#"{"model":"vendor/allowed","Model":"vendor/denied"}"#,
+            r#"{"model":"vendor/allowed","modelſ":["vendor/denied"]}"#,
+        ] {
+            assert_eq!(
+                check_model(body.as_bytes(), &restricted)
+                    .unwrap_err()
+                    .into_response()
+                    .status(),
+                StatusCode::BAD_REQUEST
+            );
+        }
+        assert!(
+            check_model(
+                br#"{"model":"any","models":{"provider_specific":true}}"#,
+                &unrestricted
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
     fn model_listing_preserves_metadata_and_filters_unknown_models() {
         let permissions = Permissions {
             providers: vec![],
@@ -350,12 +409,29 @@ mod tests {
         .exec(&mut db)
         .await
         .unwrap();
+        let unrestricted_token = "unrestricted-key";
+        toasty::create!(VirtualKey {
+            id: "unrestricted".to_string(),
+            name: "unrestricted".to_string(),
+            key_hash: digest::digest(&digest::SHA256, unrestricted_token.as_bytes())
+                .as_ref()
+                .to_vec(),
+            providers: "[\"openrouter\"]".to_string(),
+            models: "[]".to_string(),
+            created_at: 0,
+            expires_at: None,
+            revoked_at: None
+        })
+        .exec(&mut db)
+        .await
+        .unwrap();
         let state = AppState {
             providers: crate::provider::Providers::new(),
             settings: store.clone(),
             logs: LogStore::new(database),
             dashboard_auth: dashboard_auth_config::test_auth().await,
         };
+        let public_gateway = crate::server::create_router(state.clone());
         let gateway = Router::new()
             .nest(
                 "/openrouter/{id}",
@@ -424,6 +500,72 @@ mod tests {
             assert_eq!(path, format!("/v1/{endpoint}"));
             assert_eq!(headers[header::AUTHORIZATION], "Bearer upstream-key");
             assert_eq!(body["model"], "vendor/nested-model");
+        }
+        for endpoint in ["chat/completions", "responses"] {
+            for (bearer, payload, expected) in [
+                (
+                    token,
+                    json!({"model":"vendor/nested-model","models":["vendor/denied"]}),
+                    StatusCode::FORBIDDEN,
+                ),
+                (
+                    token,
+                    json!({"model":"vendor/nested-model","models":[null]}),
+                    StatusCode::BAD_REQUEST,
+                ),
+                (
+                    token,
+                    json!({"models":["vendor/nested-model"]}),
+                    StatusCode::OK,
+                ),
+                (
+                    unrestricted_token,
+                    json!({"model":"vendor/nested-model","models":["vendor/denied"]}),
+                    StatusCode::OK,
+                ),
+            ] {
+                let request = Request::builder()
+                    .method("POST")
+                    .uri(format!("/openrouter/openrouter/v1/{endpoint}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {bearer}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .unwrap();
+                let response = gateway.clone().oneshot(request).await.unwrap();
+                assert_eq!(response.status(), expected);
+                if expected == StatusCode::OK {
+                    let (path, _, body) = rx.recv().await.unwrap();
+                    assert_eq!(path, format!("/v1/{endpoint}"));
+                    assert_eq!(body, payload);
+                } else {
+                    assert!(rx.try_recv().is_err());
+                }
+            }
+        }
+        for endpoint in ["chat/completions", "responses"] {
+            for payload in [
+                json!({"model":"openrouter/vendor/nested-model","Model":"vendor/denied"}),
+                json!({"model":"openrouter/vendor/nested-model","Models":["vendor/denied"]}),
+                json!({"model":"openrouter/vendor/nested-model","modelſ":["vendor/denied"]}),
+            ] {
+                let request = Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/{endpoint}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .unwrap();
+                assert_eq!(
+                    public_gateway
+                        .clone()
+                        .oneshot(request)
+                        .await
+                        .unwrap()
+                        .status(),
+                    StatusCode::BAD_REQUEST
+                );
+                assert!(rx.try_recv().is_err());
+            }
         }
         upstream_task.abort();
     }
