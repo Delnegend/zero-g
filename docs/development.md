@@ -8,6 +8,8 @@
 
 Install frontend dependencies with `(cd frontend && bun install --frozen-lockfile)`. Build the frontend with `just frontend-build` before invoking `cargo build` directly; its files are embedded into the binary. `just build`, `just test`, and `just check` build it automatically.
 
+The Antigravity OAuth client values in `backend/provider/oauth-clients.toml` are base64-encoded and decoded during the build. They are shared public-client values; base64 is not encryption and does not make them secret.
+
 Frontend dependency updates use Bun's 14-day minimum release age configured in `frontend/bunfig.toml`; the dependency workflow runs them from `frontend`.
 
 The development container provides Bun 1.4.4 from the official Bun image. Its post-install hook installs the locked frontend dependencies and builds the frontend; it does not download or execute an installer script.
