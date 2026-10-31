@@ -131,7 +131,7 @@ struct CatalogPricing {
     /// Cache read price.
     #[schema(required = true)]
     cache_read: Option<f64>,
-    /// Pricing source: models.dev, datasheet, or antigravity-reference.
+    /// Source and interpretation of the displayed prices.
     source: String,
 }
 
@@ -338,6 +338,16 @@ fn reference_price<'a>(sheet: &'a Value, id: &str) -> Option<&'a Value> {
     })
 }
 
+/// Match an exact Claude model ID against Anthropic-owned API reference data.
+fn claude_reference<'a>(sheet: &'a Value, id: &str) -> Option<&'a Value> {
+    [id.to_owned(), format!("anthropic/{id}")]
+        .into_iter()
+        .find_map(|key| {
+            let entry = sheet.get(&key).filter(|entry| entry.is_object())?;
+            (entry.get("provider").and_then(Value::as_str) == Some("anthropic")).then_some(entry)
+        })
+}
+
 /// Convert a pricing record to USD per million tokens.
 fn normalize_pricing(kind: &str, price: &Value) -> CatalogPricing {
     let zen = kind == "zen";
@@ -377,12 +387,67 @@ fn normalize_pricing(kind: &str, price: &Value) -> CatalogPricing {
     }
 }
 
+/// Select provider prices first, then an appropriately scoped datasheet record.
+fn catalog_pricing(
+    provider: &CachedProvider,
+    model: &Model,
+    data: &super::model_setting::ModelData,
+    supplied: Option<crate::provider::common::catalog::CatalogPrices>,
+) -> (Option<CatalogPricing>, Option<Value>) {
+    if let Some(price) = supplied {
+        return (
+            Some(CatalogPricing {
+                input: price.input,
+                output: price.output,
+                cache_write: price.cache_write,
+                cache_read: price.cache_read,
+                source: price.source.to_owned(),
+            }),
+            Some(price.raw),
+        );
+    }
+    let (price, reference) = if provider.kind == "zen" {
+        (
+            model
+                .extra
+                .get("zen_metadata")
+                .and_then(|value| value.get("cost"))
+                .filter(|value| value.is_object()),
+            false,
+        )
+    } else if let Some(price) = lookup(&data.pricing, provider, &model.id) {
+        (Some(price), false)
+    } else if provider.kind == "agy" {
+        (reference_price(&data.pricing, &model.id), false)
+    } else if provider.kind == "claude" {
+        (claude_reference(&data.pricing, &model.id), true)
+    } else {
+        (None, false)
+    };
+    (
+        price.map(|value| {
+            let mut price = normalize_pricing(&provider.kind, value);
+            if reference {
+                "claude-reference".clone_into(&mut price.source);
+            }
+            price
+        }),
+        price.cloned(),
+    )
+}
+
 /// Normalize one model using filtered datasheets.
 fn normalize_model(
     provider: &CachedProvider,
-    model: Model,
+    mut model: Model,
     data: &super::model_setting::ModelData,
 ) -> CatalogModel {
+    let info = match provider.kind.as_str() {
+        "zen" | "go" => crate::provider::zen::catalog::catalog_info(&model, &provider.kind),
+        "claude" => crate::provider::claude::catalog_info(&model),
+        "openrouter" => crate::provider::openrouter::catalog_info(&model),
+        _ => crate::provider::common::catalog::CatalogInfo::default(),
+    };
     let zen = (provider.kind == "zen")
         .then(|| {
             model
@@ -391,17 +456,7 @@ fn normalize_model(
                 .filter(|value| value.is_object())
         })
         .flatten();
-    let price = if provider.kind == "zen" {
-        zen.and_then(|value| value.get("cost"))
-            .filter(|value| value.is_object())
-    } else {
-        lookup(&data.pricing, provider, &model.id).or_else(|| {
-            (provider.kind == "agy")
-                .then(|| reference_price(&data.pricing, &model.id))
-                .flatten()
-        })
-    };
-    let pricing = price.map(|value| normalize_pricing(&provider.kind, value));
+    let (pricing, raw_pricing) = catalog_pricing(provider, &model, data, info.pricing);
     let display_name = model
         .name
         .as_ref()
@@ -422,23 +477,53 @@ fn normalize_model(
     let metadata = zen
         .and_then(|value| ZenMetadata::deserialize(value).ok())
         .unwrap_or_default();
-    let reasoning = metadata.reasoning;
-    let tool_call = metadata.tool_call;
-    let input_modalities = if provider.kind == "agy" {
-        crate::provider::antigravity::models::input_modalities(&model.extra)
-    } else {
-        metadata
-            .modalities
-            .map(|modalities| modalities.input)
-            .unwrap_or_default()
-    };
+    let reference = (provider.kind == "claude")
+        .then(|| claude_reference(&data.parameters, &model.id))
+        .flatten()
+        .map(crate::provider::claude::catalog_reference)
+        .unwrap_or_default();
+    let reasoning = info
+        .reasoning
+        .or(reference.reasoning)
+        .or(metadata.reasoning);
+    let tool_call = info
+        .tool_call
+        .or(reference.tool_call)
+        .or(metadata.tool_call);
+    let input_modalities = info
+        .input_modalities
+        .or(reference.input_modalities)
+        .unwrap_or_else(|| {
+            if provider.kind == "agy" {
+                crate::provider::antigravity::models::input_modalities(&model.extra)
+            } else {
+                metadata
+                    .modalities
+                    .map(|modalities| modalities.input)
+                    .unwrap_or_default()
+            }
+        });
     let reasoning_efforts = model
         .supported_reasoning_efforts
         .clone()
+        .or(info.reasoning_efforts)
         .unwrap_or_default();
-    let raw_pricing = price.cloned();
-    let parameters = lookup(&data.parameters, provider, &model.id).cloned();
+    let parameters = lookup(&data.parameters, provider, &model.id)
+        .or_else(|| {
+            (provider.kind == "claude")
+                .then(|| claude_reference(&data.parameters, &model.id))
+                .flatten()
+        })
+        .cloned();
     let provider_metadata = zen.cloned();
+    model.context_window = model
+        .context_window
+        .or(info.context_window)
+        .or(reference.context_window);
+    model.max_output_tokens = model
+        .max_output_tokens
+        .or(info.max_output_tokens)
+        .or(reference.max_output_tokens);
     CatalogModel {
         model,
         display_name,
@@ -545,6 +630,55 @@ mod tests {
             pricing,
             parameters,
         }
+    }
+
+    /// Reference prices and capabilities apply only to exact Anthropic-owned models.
+    #[tokio::test]
+    async fn claude_catalog_uses_exact_reference_data_without_overriding_live_fields() {
+        let store = store().await;
+        Setting::upsert_by_name("model_pricing_datasheet")
+            .value(json!({
+                "anthropic/claude-example": {"provider":"anthropic","input_cost_per_token":0.000_001,"output_cost_per_token":0.000_005},
+                "claude-other": {"provider":"bedrock","input_cost_per_token":0.000_099}
+            }).to_string())
+            .exec(&mut (*store.database.db).clone())
+            .await.unwrap();
+        Setting::upsert_by_name("model_parameters_datasheet")
+            .value(json!({
+                "anthropic/claude-example": {"provider":"anthropic","mode":"chat","max_input_tokens":200_000,"max_output_tokens":64000,"supports_reasoning":true,"supports_function_calling":true,"supports_vision":true,"supports_pdf_input":true},
+                "claude-other": {"provider":"bedrock","max_input_tokens":123}
+            }).to_string())
+            .exec(&mut (*store.database.db).clone())
+            .await.unwrap();
+        let mut provider = sample_provider("claude", "claude");
+        provider.models = vec![
+            serde_json::from_value(json!({"id":"claude-example","max_input_tokens":100_000,"capabilities":{"thinking":{"supported":false}}})).unwrap(),
+            serde_json::from_value(json!({"id":"claude-other"})).unwrap(),
+        ];
+        let result = serde_json::to_value(
+            normalize_catalog(
+                &store,
+                CachedCatalog {
+                    providers: vec![provider],
+                },
+            )
+            .await,
+        )
+        .unwrap();
+        let models = &result["providers"][0]["models"];
+        assert_eq!(models[0]["model"]["context_window"], 100_000);
+        assert_eq!(models[0]["model"]["max_output_tokens"], 64000);
+        assert_eq!(models[0]["reasoning"], false);
+        assert_eq!(models[0]["tool_call"], true);
+        assert_eq!(
+            models[0]["input_modalities"],
+            json!(["text", "image", "pdf"])
+        );
+        assert_eq!(models[0]["pricing"]["input"], 1.0);
+        assert_eq!(models[0]["pricing"]["output"], 5.0);
+        assert_eq!(models[0]["pricing"]["source"], "claude-reference");
+        assert_eq!(models[1]["pricing"], Value::Null);
+        assert_eq!(models[1]["model"].get("context_window"), None);
     }
 
     #[test]

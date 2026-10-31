@@ -75,7 +75,11 @@ Input types use icons for text, images, audio, video and PDFs; hover over an ico
 
 Antigravity input icons reflect the model's advertised capabilities, including enabled MIME types. Actual media support depends on the selected model and upstream service.
 
-Zen's model IDs come from OpenCode; matching prices and capabilities come from the community-maintained [Models.dev](https://models.dev) catalog, which OpenCode also uses. Metadata is cached in memory for one hour. If it is unavailable or a model ID has no exact match, the model remains listed and its missing details show as unknown. Prices are informational; tiers and actual billing may differ.
+OpenCode Zen and Go supply their own model limits, capabilities and base token prices. Their prices can differ for the same model; Go's rates count against its subscription allowance and can have time-based multipliers. Zen may fill missing details from the community-maintained [Models.dev](https://models.dev) catalog, cached for one hour. Missing information remains unknown.
+
+OpenRouter supplies model descriptions, limits, input types, supported parameters and base token prices. Actual prices can vary with provider routing, pricing overrides and non-token charges.
+
+Claude model details come from the authenticated Anthropic model list, supplemented by exact Anthropic-owned records in the configured datasheets. Anthropic API prices are reference prices, not Claude subscription charges. PDF support shown in the catalog describes the model; Zero-G currently forwards only text and images to Claude.
 
 For Antigravity, matching Gemini and Claude API prices from the configured datasheet are shown as a reference, not as Antigravity charges. Matching includes Gemini preview entries and Claude thinking variants when their base model is available. Prices can differ from the actual plan or credit overage costs; models without a matching price show a dash.
 

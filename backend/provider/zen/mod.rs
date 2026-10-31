@@ -1,3 +1,6 @@
+/// Dashboard metadata from `OpenCode` model records.
+pub(crate) mod catalog;
+
 /// HTTP routes for Zen models and chat completions.
 pub(crate) mod routes;
 

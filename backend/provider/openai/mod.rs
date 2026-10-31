@@ -18,6 +18,11 @@ pub(crate) struct Backend;
 pub(crate) trait ModelEndpoint {
     /// Request the upstream model list using the supplied credential.
     async fn request(provider: &Provider, key: &str) -> Result<reqwest::Response, &'static str>;
+
+    /// Decode provider-specific model metadata from a validated model list.
+    fn models_from_list(value: &Value) -> Vec<crate::openai::Model> {
+        models_from_list(value)
+    }
 }
 
 impl ModelEndpoint for Backend {
@@ -38,11 +43,6 @@ impl ModelEndpoint for Backend {
 /// Maximum accepted model discovery response size.
 const MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
 
-/// Discover models using the provider's available credentials.
-pub(crate) async fn discover<E: ModelEndpoint>(
-    store: &SettingsStore,
-    provider: &Provider,
-) -> Result<Vec<crate::openai::Model>, String> {
 /// Read and validate an OpenAI-shaped model-list envelope without discarding its metadata.
 pub(crate) async fn parse_model_list<S, E>(
     stream: S,
@@ -81,6 +81,11 @@ pub(crate) fn models_from_list(value: &Value) -> Vec<crate::openai::Model> {
         .collect()
 }
 
+/// Discover models using the provider's available credentials.
+pub(crate) async fn discover<E: ModelEndpoint>(
+    store: &SettingsStore,
+    provider: &Provider,
+) -> Result<Vec<crate::openai::Model>, String> {
     let credentials = crate::provider::credentials::list(store, &provider.id).await?;
     let mut response = None;
     for credential in credentials {
@@ -110,7 +115,7 @@ pub(crate) fn models_from_list(value: &Value) -> Vec<crate::openai::Model> {
         "Invalid provider model list",
     )
     .await?;
-    Ok(models_from_list(&value))
+    Ok(E::models_from_list(&value))
 }
 
 /// Shared client used for OpenAI-compatible upstream requests.
@@ -259,11 +264,6 @@ mod tests {
         Arc<Mutex<Option<mpsc::UnboundedReceiver<Result<Bytes, std::io::Error>>>>>;
 
     #[tokio::test]
-    #[allow(clippy::too_many_lines)]
-    async fn forwards_protocol_auth_errors_and_streams() {
-        let (seen_tx, mut seen_rx) = mpsc::unbounded_channel();
-        let (stream_tx, stream_rx) = mpsc::unbounded_channel::<Result<Bytes, std::io::Error>>();
-    #[tokio::test]
     async fn model_list_enforces_boundaries_and_provider_errors() {
         for (read_error, size_error, invalid_error) in [
             (
@@ -358,6 +358,11 @@ mod tests {
         assert_eq!(models[0].extra["custom"], true);
     }
 
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn forwards_protocol_auth_errors_and_streams() {
+        let (seen_tx, mut seen_rx) = mpsc::unbounded_channel();
+        let (stream_tx, stream_rx) = mpsc::unbounded_channel::<Result<Bytes, std::io::Error>>();
         let stream_rx = Arc::new(Mutex::new(Some(stream_rx)));
         let app = Router::new()
             .route(

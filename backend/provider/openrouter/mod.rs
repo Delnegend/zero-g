@@ -38,6 +38,88 @@ impl openai::ModelEndpoint for Backend {
         )
         .await
     }
+
+    fn models_from_list(value: &Value) -> Vec<crate::openai::Model> {
+        value
+            .get("data")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| {
+                let mut entry = entry.clone();
+                if let Some(fields) = entry.as_object_mut()
+                    && fields.get("reasoning").is_some_and(Value::is_object)
+                    && let Some(reasoning) = fields.remove("reasoning")
+                {
+                    fields.insert("openrouter_reasoning".into(), reasoning);
+                }
+                serde_json::from_value::<crate::openai::Model>(entry).ok()
+            })
+            .filter(|model| !model.id.is_empty())
+            .collect()
+    }
+}
+
+/// Extract catalog metadata from an `OpenRouter` discovery record.
+pub(crate) fn catalog_info(model: &crate::openai::Model) -> common::catalog::CatalogInfo {
+    use common::catalog::{CatalogInfo, CatalogPrices};
+
+    fn strings(value: &Value) -> Option<Vec<String>> {
+        value
+            .as_array()?
+            .iter()
+            .map(|v| v.as_str().map(str::to_owned))
+            .collect()
+    }
+
+    fn price(value: Option<&Value>) -> Option<f64> {
+        let per_token = value?.as_str()?.parse::<f64>().ok()?;
+        let per_million = per_token * 1_000_000.0;
+        (per_token >= 0.0 && per_million.is_finite()).then_some(per_million)
+    }
+
+    let extra = &model.extra;
+    let parameters = extra.get("supported_parameters").and_then(strings);
+    let reasoning = extra.get("openrouter_reasoning").and_then(Value::as_object);
+    let pricing = extra
+        .get("pricing")
+        .filter(|value| value.is_object())
+        .map(|raw| CatalogPrices {
+            input: price(raw.get("prompt")),
+            output: price(raw.get("completion")),
+            cache_read: price(raw.get("input_cache_read")),
+            cache_write: price(raw.get("input_cache_write")),
+            source: "openrouter",
+            raw: raw.clone(),
+        });
+    CatalogInfo {
+        context_window: extra.get("context_length").and_then(Value::as_u64),
+        max_output_tokens: extra
+            .get("top_provider")
+            .and_then(|value| value.get("max_completion_tokens"))
+            .and_then(Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok()),
+        reasoning: model.reasoning.or_else(|| {
+            (reasoning.is_some()
+                || parameters.as_ref().is_some_and(|parameters| {
+                    parameters.iter().any(|parameter| {
+                        parameter == "reasoning" || parameter == "include_reasoning"
+                    })
+                }))
+            .then_some(true)
+        }),
+        tool_call: parameters
+            .as_ref()
+            .map(|parameters| parameters.iter().any(|parameter| parameter == "tools")),
+        input_modalities: extra
+            .get("architecture")
+            .and_then(|value| value.get("input_modalities"))
+            .and_then(strings),
+        reasoning_efforts: reasoning
+            .and_then(|value| value.get("supported_efforts"))
+            .and_then(strings),
+        pricing,
+    }
 }
 
 impl common::Provider for Backend {
@@ -263,10 +345,93 @@ impl common::QuotaProvider for Backend {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::storage::{ProviderCredential, ProviderRecord};
     use crate::{database::Database, provider::common::QuotaProvider};
     use axum::{body::Body, http::Request};
     use serde_json::json;
     use tower::ServiceExt;
+
+    #[test]
+    fn discovery_preserves_openrouter_reasoning_and_catalog_metadata() {
+        use crate::provider::openai::ModelEndpoint;
+
+        let reasoning = json!({
+            "default_effort": "medium", "default_enabled": false,
+            "mandatory": false, "supported_efforts": ["high", "medium", "low"]
+        });
+        let pricing = json!({
+            "prompt": "0.000002", "completion": "0.000004",
+            "input_cache_read": "0.0000002", "input_cache_write": "0",
+            "overrides": [{"min_prompt_tokens": 100_000, "prompt": "0.000001"}]
+        });
+        let list = json!({"data": [{
+            "id": "vendor/nested/model:free",
+            "context_length": 131_072,
+            "top_provider": {"max_completion_tokens": 8192},
+            "architecture": {"input_modalities": ["text", "image"]},
+            "supported_parameters": ["tools", "reasoning"],
+            "reasoning": reasoning,
+            "pricing": pricing,
+            "permission": [{"id": "permission-id"}],
+            "other": {"preserved": true}
+        }]});
+        let models = Backend::models_from_list(&list);
+        assert_eq!(models.len(), 1);
+        let model = &models[0];
+        assert_eq!(model.id, "vendor/nested/model:free");
+        assert_eq!(model.extra["openrouter_reasoning"], reasoning);
+        assert_eq!(model.extra["other"], json!({"preserved": true}));
+        assert_eq!(model.extra["permission"], json!([{"id": "permission-id"}]));
+        let info = catalog_info(model);
+        assert_eq!(info.context_window, Some(131_072));
+        assert_eq!(info.max_output_tokens, Some(8192));
+        assert_eq!(info.reasoning, Some(true));
+        assert_eq!(info.tool_call, Some(true));
+        assert_eq!(info.input_modalities.unwrap(), ["text", "image"]);
+        assert_eq!(info.reasoning_efforts.unwrap(), ["high", "medium", "low"]);
+        let prices = info.pricing.unwrap();
+        assert_eq!(prices.input, Some(2.0));
+        assert_eq!(prices.output, Some(4.0));
+        assert!((prices.cache_read.unwrap() - 0.2).abs() < 1e-12);
+        assert_eq!(prices.cache_write, Some(0.0));
+        assert_eq!(prices.source, "openrouter");
+        assert_eq!(prices.raw, pricing);
+    }
+
+    #[test]
+    fn missing_and_malformed_catalog_values_are_not_invented() {
+        use crate::provider::openai::ModelEndpoint;
+
+        let models = Backend::models_from_list(&json!({"data": [
+            {"id": "missing"},
+            {"id": "invalid", "reasoning": false, "supported_parameters": [],
+             "architecture": {"input_modalities": ["text", 1]},
+             "context_length": -1, "top_provider": {"max_completion_tokens": 4_294_967_296_u64},
+             "pricing": {"prompt": "-1", "completion": "NaN",
+                         "input_cache_read": "1e308", "input_cache_write": 0}},
+            {"id": "zero", "pricing": {"prompt": "0", "completion": "bad"}},
+            {"id": "reasoning-param", "supported_parameters": ["reasoning"]}
+        ]}));
+        let missing = catalog_info(&models[0]);
+        assert!(missing.reasoning.is_none());
+        assert!(missing.tool_call.is_none());
+        assert!(missing.pricing.is_none());
+        let invalid = catalog_info(&models[1]);
+        assert_eq!(invalid.reasoning, Some(false));
+        assert_eq!(invalid.tool_call, Some(false));
+        assert!(invalid.context_window.is_none());
+        assert!(invalid.max_output_tokens.is_none());
+        assert!(invalid.input_modalities.is_none());
+        let prices = invalid.pricing.unwrap();
+        assert!(prices.input.is_none());
+        assert!(prices.output.is_none());
+        assert!(prices.cache_read.is_none());
+        assert!(prices.cache_write.is_none());
+        let zero = catalog_info(&models[2]).pricing.unwrap();
+        assert_eq!(zero.input, Some(0.0));
+        assert!(zero.output.is_none());
+        assert_eq!(catalog_info(&models[3]).reasoning, Some(true));
+    }
 
     #[test]
     fn credits_require_both_finite_numbers_and_compute_balance() {
@@ -345,7 +510,6 @@ mod tests {
         let request = |provider: &str, credential: &str, origin: &str| {
             Request::builder()
                 .method("PUT")
-    use crate::storage::{ProviderCredential, ProviderRecord};
                 .uri(format!(
                     "/api/providers/{provider}/credentials/{credential}/openrouter/management-key"
                 ))

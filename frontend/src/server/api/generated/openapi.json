@@ -1988,7 +1988,7 @@
           },
           "source": {
             "type": "string",
-            "description": "Pricing source: models.dev, datasheet, or antigravity-reference."
+            "description": "Source and interpretation of the displayed prices."
           }
         }
       },

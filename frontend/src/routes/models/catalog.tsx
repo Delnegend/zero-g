@@ -107,6 +107,18 @@ function ModelCard({
   const title = model.display_name;
   const efforts = model.reasoning_efforts;
   const description = model.description;
+  const pricingNote =
+    model.pricing?.source === "antigravity-reference"
+      ? "These reference API prices come from the configured pricing datasheet and are informational only. They are not Antigravity charges; actual costs depend on your plan and any credit overages."
+      : model.pricing?.source === "claude-reference"
+        ? "These are Anthropic API reference prices from the configured datasheet, not Claude subscription charges. Actual costs depend on your plan."
+        : model.pricing?.source === "opencode-go"
+          ? "These base rates count toward your OpenCode Go subscription allowance. Conditions such as time-of-day multipliers can change the effective rate; see pricing details."
+          : model.pricing?.source === "opencode-zen"
+            ? "These are OpenCode Zen base rates. Conditional pricing and other charges may apply; see pricing details."
+            : model.pricing?.source === "openrouter"
+              ? "These are OpenRouter base token prices. Provider routing, pricing overrides, and other charges can change the actual cost; see pricing details."
+              : null;
   const capabilities = [
     ...(typeof model.reasoning === "boolean"
       ? [["Reasoning support", model.reasoning ? "Yes" : "No"]]
@@ -178,23 +190,21 @@ function ModelCard({
           >
             <dt className="flex min-w-0 items-center gap-1 text-muted-foreground">
               {label}
-              {model.pricing?.source === "antigravity-reference" &&
-                label === "Input price / 1M tokens" && (
-                  <Popover>
-                    <PopoverTrigger
-                      aria-label="About Antigravity reference pricing"
-                      className="rounded-sm hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2"
-                    >
-                      <Info className="size-3.5" />
-                    </PopoverTrigger>
-                    <PopoverContent>
-                      These reference API prices come from the configured
-                      pricing datasheet and are informational only. They are not
-                      Antigravity charges; actual costs depend on your plan and
-                      any credit overages.
-                    </PopoverContent>
-                  </Popover>
-                )}
+              {pricingNote && label === "Input price / 1M tokens" && (
+                <Popover>
+                  <PopoverTrigger
+                    aria-label={
+                      model.pricing?.source === "antigravity-reference"
+                        ? "About Antigravity reference pricing"
+                        : "About model pricing"
+                    }
+                    className="rounded-sm hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2"
+                  >
+                    <Info className="size-3.5" />
+                  </PopoverTrigger>
+                  <PopoverContent>{pricingNote}</PopoverContent>
+                </Popover>
+              )}
             </dt>
             <dd className="min-w-16 flex-1 text-right">
               {label === "Model ID" ? (
@@ -224,6 +234,21 @@ function ModelCard({
                       These types are advertised by Antigravity. Zero-G forwards
                       inline audio, video, and PDF data to compatible models;
                       external URLs and uploaded file IDs are not supported.
+                    </PopoverContent>
+                  </Popover>
+                )}
+              {provider.kind === "claude" &&
+                model.input_modalities.includes("pdf") && (
+                  <Popover>
+                    <PopoverTrigger
+                      aria-label="About Claude input support"
+                      className="rounded-sm hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2"
+                    >
+                      <Info className="size-3.5" />
+                    </PopoverTrigger>
+                    <PopoverContent>
+                      Anthropic advertises PDF input for this model, but Zero-G
+                      currently forwards only text and images to Claude.
                     </PopoverContent>
                   </Popover>
                 )}

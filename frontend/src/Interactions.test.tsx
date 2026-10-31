@@ -1477,3 +1477,55 @@ test("model cards label supported input icons and retain unknown modalities", as
     await screen.findByText(/forwards inline audio, video, and PDF data/i),
   );
 });
+
+test("catalog explains reference pricing and Claude PDF limitations", async () => {
+  globalThis.fetch = (async () =>
+    Response.json({
+      datasheets_error: null,
+      providers: [
+        {
+          id: "claude",
+          name: "Claude Code",
+          kind: "claude",
+          base_url: "",
+          error: null,
+          models: [
+            {
+              model: { id: "claude-example", context_window: 200_000 },
+              display_name: "Claude Example",
+              description: null,
+              reasoning_efforts: [],
+              reasoning: true,
+              tool_call: true,
+              input_modalities: ["text", "image", "pdf"],
+              pricing: {
+                input: 1,
+                output: 5,
+                cache_write: null,
+                cache_read: null,
+                source: "claude-reference",
+              },
+              raw_pricing: null,
+              parameters: null,
+              provider_metadata: null,
+            },
+          ],
+        },
+      ],
+    })) as typeof fetch;
+  const user = userEvent.setup();
+  mount(
+    <TooltipProvider>
+      <ModelCatalogPage />
+    </TooltipProvider>,
+  );
+  assert.ok(await screen.findByText("200,000"));
+  assert.ok(screen.getByText("$1"));
+  await user.click(screen.getByRole("button", { name: "About model pricing" }));
+  assert.ok(await screen.findByText(/not Claude subscription charges/i));
+  await user.keyboard("{Escape}");
+  await user.click(
+    screen.getByRole("button", { name: "About Claude input support" }),
+  );
+  assert.ok(await screen.findByText(/only text and images to Claude/i));
+});

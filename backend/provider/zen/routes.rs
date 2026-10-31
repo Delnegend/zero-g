@@ -140,10 +140,21 @@ fn enrich_models(value: &mut Value, metadata: &Metadata) {
             ),
         ];
         for (key, field) in fields {
-            if entry.get(key).is_none_or(Value::is_null)
-                && let Some(field) = field
-            {
-                entry.insert(key.to_string(), field.clone());
+            if entry.get(key).is_none_or(Value::is_null) {
+                let official = match key {
+                    "context_window" => entry
+                        .get("limit")
+                        .and_then(|limit| limit.get("context"))
+                        .filter(|value| value.as_u64().is_some()),
+                    "max_output_tokens" => entry
+                        .get("limit")
+                        .and_then(|limit| limit.get("output"))
+                        .filter(|value| value.as_u64().is_some_and(|n| u32::try_from(n).is_ok())),
+                    _ => None,
+                };
+                if let Some(value) = official.or(field).cloned() {
+                    entry.insert(key.to_string(), value);
+                }
             }
         }
         entry.insert("zen_metadata".into(), info.clone());
@@ -426,6 +437,17 @@ mod tests {
         assert_eq!(list["data"][2], json!({"id":"unknown"}));
         assert_eq!(list["data"][3], json!({"id":"PAID"}));
         assert_eq!(list["data"].as_array().unwrap().len(), 4);
+    }
+
+    /// Official `OpenCode` limits take priority over community metadata.
+    #[test]
+    fn official_model_limits_override_community_limits() {
+        let mut models =
+            json!({"data":[{"id":"model","limit":{"context":200_000,"output":32_000}}]});
+        let community = json!({"model":{"limit":{"context":100_000,"output":16_000}}});
+        enrich_models(&mut models, community.as_object().unwrap());
+        assert_eq!(models["data"][0]["context_window"], 200_000);
+        assert_eq!(models["data"][0]["max_output_tokens"], 32_000);
     }
 
     #[tokio::test]

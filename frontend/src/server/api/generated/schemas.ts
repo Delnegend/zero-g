@@ -151,9 +151,7 @@ export const CatalogPricing = zod
     output: zod.number().nullable().describe("Output price."),
     source: zod
       .string()
-      .describe(
-        "Pricing source: models.dev, datasheet, or antigravity-reference.",
-      ),
+      .describe("Source and interpretation of the displayed prices."),
   })
   .describe("Normalized prices in USD per million tokens.");
 
@@ -231,9 +229,7 @@ export const CatalogModel = zod
           output: zod.number().nullable().describe("Output price."),
           source: zod
             .string()
-            .describe(
-              "Pricing source: models.dev, datasheet, or antigravity-reference.",
-            ),
+            .describe("Source and interpretation of the displayed prices."),
         })
         .describe("Prices in USD per million tokens."),
     ]),
@@ -356,7 +352,7 @@ export const CatalogProvider = zod
                   source: zod
                     .string()
                     .describe(
-                      "Pricing source: models.dev, datasheet, or antigravity-reference.",
+                      "Source and interpretation of the displayed prices.",
                     ),
                 })
                 .describe("Prices in USD per million tokens."),
@@ -1028,7 +1024,7 @@ export const ModelCatalog = zod
                           source: zod
                             .string()
                             .describe(
-                              "Pricing source: models.dev, datasheet, or antigravity-reference.",
+                              "Source and interpretation of the displayed prices.",
                             ),
                         })
                         .describe("Prices in USD per million tokens."),

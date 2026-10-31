@@ -176,6 +176,12 @@ impl CatalogModels {
                         .insert(format!("anthropic/{base}"), "anthropic");
                 }
             }
+            if kind == "claude" {
+                result.reference_keys.insert(id.to_owned(), "anthropic");
+                result
+                    .reference_keys
+                    .insert(format!("anthropic/{id}"), "anthropic");
+            }
             for name in [provider_id, kind] {
                 result
                     .provider_models

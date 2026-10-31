@@ -1,3 +1,5 @@
+/// Normalized model metadata shared with the dashboard catalog.
+pub(crate) mod catalog;
 /// Shared upstream error classification.
 pub(crate) mod errors;
 /// Helpers for OpenAI-compatible proxy responses and permissions.
@@ -21,8 +23,6 @@ pub(crate) trait Provider {
         state: &AppState,
         provider: &registry::Provider,
     ) -> Result<Vec<Model>, String>;
-}
-
 
     /// Discovers models allowed by the virtual key.
     async fn discover_permitted(
@@ -34,6 +34,8 @@ pub(crate) trait Provider {
         models.retain(|model| permissions.allows_model(&model.id));
         Ok(models)
     }
+}
+
 /// Provider backend capable of reporting credential quota.
 pub(crate) trait QuotaProvider {
     /// Fetches quota for the named provider and credential.

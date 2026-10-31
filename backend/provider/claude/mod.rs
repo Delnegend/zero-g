@@ -7,6 +7,7 @@ mod client;
 pub(crate) mod dashboard_login;
 /// Account model discovery.
 mod models;
+pub(crate) use models::{catalog_info, catalog_reference};
 /// `OpenAI` to Anthropic request translation.
 mod payload;
 /// Subscription quota discovery.
