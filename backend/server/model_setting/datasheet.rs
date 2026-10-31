@@ -148,7 +148,7 @@ pub(in crate::server) struct CatalogModels {
     ids: HashSet<String>,
     /// Pairs of provider identifier or kind and model identifier.
     provider_models: HashSet<(String, String)>,
-    /// Datasheet keys for Antigravity's reference API prices and their owners.
+    /// Datasheet keys for provider API references and their owners.
     reference_keys: HashMap<String, &'static str>,
 }
 
@@ -181,6 +181,11 @@ impl CatalogModels {
                 result
                     .reference_keys
                     .insert(format!("anthropic/{id}"), "anthropic");
+            }
+            if kind == "codex" {
+                result
+                    .reference_keys
+                    .insert(format!("openai/{id}"), "openai");
             }
             for name in [provider_id, kind] {
                 result

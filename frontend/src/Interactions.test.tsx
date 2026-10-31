@@ -1844,7 +1844,7 @@ test("model cards label supported input icons and retain unknown modalities", as
   );
 });
 
-test("catalog explains reference pricing and Claude PDF limitations", async () => {
+test("catalog explains subscription reference pricing and Claude PDF limitations", async () => {
   globalThis.fetch = (async () =>
     Response.json({
       datasheets_error: null,
@@ -1877,6 +1877,34 @@ test("catalog explains reference pricing and Claude PDF limitations", async () =
             },
           ],
         },
+        {
+          id: "codex",
+          name: "OpenAI Codex",
+          kind: "codex",
+          base_url: "",
+          error: null,
+          models: [
+            {
+              model: { id: "gpt-5.3-codex" },
+              display_name: "GPT-5.3-Codex",
+              description: null,
+              reasoning_efforts: [],
+              reasoning: null,
+              tool_call: null,
+              input_modalities: ["text", "image"],
+              pricing: {
+                input: 1.75,
+                output: 14,
+                cache_write: null,
+                cache_read: 0.175,
+                source: "codex-reference",
+              },
+              raw_pricing: null,
+              parameters: null,
+              provider_metadata: null,
+            },
+          ],
+        },
       ],
     })) as typeof fetch;
   const user = userEvent.setup();
@@ -1887,8 +1915,27 @@ test("catalog explains reference pricing and Claude PDF limitations", async () =
   );
   assert.ok(await screen.findByText("200,000"));
   assert.ok(screen.getByText("$1"));
-  await user.click(screen.getByRole("button", { name: "About model pricing" }));
+  const claudeCard = screen
+    .getByRole("heading", { name: "Claude Example" })
+    .closest('[data-slot="card"]');
+  assert.ok(claudeCard);
+  await user.click(
+    within(claudeCard as HTMLElement).getByRole("button", {
+      name: "About model pricing",
+    }),
+  );
   assert.ok(await screen.findByText(/not Claude subscription charges/i));
+  await user.keyboard("{Escape}");
+  const codexCard = screen
+    .getByRole("heading", { name: "GPT-5.3-Codex" })
+    .closest('[data-slot="card"]');
+  assert.ok(codexCard);
+  await user.click(
+    within(codexCard as HTMLElement).getByRole("button", {
+      name: "About model pricing",
+    }),
+  );
+  assert.ok(await screen.findByText(/not Codex subscription charges/i));
   await user.keyboard("{Escape}");
   await user.click(
     screen.getByRole("button", { name: "About Claude input support" }),

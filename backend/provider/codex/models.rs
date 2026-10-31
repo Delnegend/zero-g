@@ -51,6 +51,31 @@ struct CodexReasoningLevel {
     extra: HashMap<String, Value>,
 }
 
+/// Extract modalities explicitly advertised by Codex.
+pub(crate) fn catalog_info(model: &Model) -> crate::provider::common::catalog::CatalogInfo {
+    crate::provider::common::catalog::CatalogInfo {
+        input_modalities: modalities(model.extra.get("input_modalities")),
+        ..Default::default()
+    }
+}
+
+/// Extract modalities from the matching `OpenAI` API reference record.
+pub(crate) fn catalog_reference(value: &Value) -> crate::provider::common::catalog::CatalogInfo {
+    crate::provider::common::catalog::CatalogInfo {
+        input_modalities: modalities(value.get("supported_modalities")),
+        ..Default::default()
+    }
+}
+
+/// Accept only a complete array of modality names.
+fn modalities(value: Option<&Value>) -> Option<Vec<String>> {
+    value?
+        .as_array()?
+        .iter()
+        .map(|item| item.as_str().map(str::to_owned))
+        .collect()
+}
+
 /// Fetches the normalized model list using the supplied credentials.
 pub(crate) async fn fetch_codex_models(
     creds: &CodexCredentials,

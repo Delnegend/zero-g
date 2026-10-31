@@ -149,13 +149,15 @@ function ModelCard({
       ? "These reference API prices come from the configured pricing datasheet and are informational only. They are not Antigravity charges; actual costs depend on your plan and any credit overages."
       : model.pricing?.source === "claude-reference"
         ? "These are Anthropic API reference prices from the configured datasheet, not Claude subscription charges. Actual costs depend on your plan."
-        : model.pricing?.source === "opencode-go"
-          ? "These base rates count toward your OpenCode Go subscription allowance. Conditions such as time-of-day multipliers can change the effective rate; see pricing details."
-          : model.pricing?.source === "opencode-zen"
-            ? "These are OpenCode Zen base rates. Conditional pricing and other charges may apply; see pricing details."
-            : model.pricing?.source === "openrouter"
-              ? "These are OpenRouter base token prices. Provider routing, pricing overrides, and other charges can change the actual cost; see pricing details."
-              : null;
+        : model.pricing?.source === "codex-reference"
+          ? "These are OpenAI API reference prices from the configured datasheet, not Codex subscription charges. Actual costs depend on your plan."
+          : model.pricing?.source === "opencode-go"
+            ? "These base rates count toward your OpenCode Go subscription allowance. Conditions such as time-of-day multipliers can change the effective rate; see pricing details."
+            : model.pricing?.source === "opencode-zen"
+              ? "These are OpenCode Zen base rates. Conditional pricing and other charges may apply; see pricing details."
+              : model.pricing?.source === "openrouter"
+                ? "These are OpenRouter base token prices. Provider routing, pricing overrides, and other charges can change the actual cost; see pricing details."
+                : null;
   const capabilities = [
     ...(typeof model.reasoning === "boolean"
       ? [["Reasoning support", model.reasoning ? "Yes" : "No"]]

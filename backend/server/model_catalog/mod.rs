@@ -338,14 +338,13 @@ fn reference_price<'a>(sheet: &'a Value, id: &str) -> Option<&'a Value> {
     })
 }
 
-/// Match an exact Claude model ID against Anthropic-owned API reference data.
-fn claude_reference<'a>(sheet: &'a Value, id: &str) -> Option<&'a Value> {
-    [id.to_owned(), format!("anthropic/{id}")]
-        .into_iter()
-        .find_map(|key| {
-            let entry = sheet.get(&key).filter(|entry| entry.is_object())?;
-            (entry.get("provider").and_then(Value::as_str) == Some("anthropic")).then_some(entry)
-        })
+/// Match an exact model ID against the specified API provider's reference data.
+fn api_reference<'a>(sheet: &'a Value, owner: &str, id: &str) -> Option<&'a Value> {
+    let find = |key: &str| {
+        let entry = sheet.get(key).filter(|entry| entry.is_object())?;
+        (entry.get("provider").and_then(Value::as_str) == Some(owner)).then_some(entry)
+    };
+    find(id).or_else(|| find(&format!("{owner}/{id}")))
 }
 
 /// Convert a pricing record to USD per million tokens.
@@ -420,7 +419,9 @@ fn catalog_pricing(
     } else if provider.kind == "agy" {
         (reference_price(&data.pricing, &model.id), false)
     } else if provider.kind == "claude" {
-        (claude_reference(&data.pricing, &model.id), true)
+        (api_reference(&data.pricing, "anthropic", &model.id), true)
+    } else if provider.kind == "codex" {
+        (api_reference(&data.pricing, "openai", &model.id), true)
     } else {
         (None, false)
     };
@@ -428,12 +429,35 @@ fn catalog_pricing(
         price.map(|value| {
             let mut price = normalize_pricing(&provider.kind, value);
             if reference {
-                "claude-reference".clone_into(&mut price.source);
+                price.source = format!("{}-reference", provider.kind);
             }
             price
         }),
         price.cloned(),
     )
+}
+
+/// Extract provider-specific reference details from matching datasheet records.
+fn catalog_reference(
+    provider: &CachedProvider,
+    model: &Model,
+    data: &super::model_setting::ModelData,
+) -> crate::provider::common::catalog::CatalogInfo {
+    match provider.kind.as_str() {
+        "claude" => api_reference(&data.parameters, "anthropic", &model.id)
+            .map(crate::provider::claude::catalog_reference),
+        "codex" => [
+            lookup(&data.parameters, provider, &model.id),
+            api_reference(&data.parameters, "openai", &model.id),
+            api_reference(&data.pricing, "openai", &model.id),
+        ]
+        .into_iter()
+        .flatten()
+        .map(crate::provider::codex::models::catalog_reference)
+        .find(|reference| reference.input_modalities.is_some()),
+        _ => None,
+    }
+    .unwrap_or_default()
 }
 
 /// Normalize one model using filtered datasheets.
@@ -445,6 +469,7 @@ fn normalize_model(
     let info = match provider.kind.as_str() {
         "zen" | "go" => crate::provider::zen::catalog::catalog_info(&model, &provider.kind),
         "claude" => crate::provider::claude::catalog_info(&model),
+        "codex" => crate::provider::codex::models::catalog_info(&model),
         "openrouter" => crate::provider::openrouter::catalog_info(&model),
         _ => crate::provider::common::catalog::CatalogInfo::default(),
     };
@@ -477,11 +502,7 @@ fn normalize_model(
     let metadata = zen
         .and_then(|value| ZenMetadata::deserialize(value).ok())
         .unwrap_or_default();
-    let reference = (provider.kind == "claude")
-        .then(|| claude_reference(&data.parameters, &model.id))
-        .flatten()
-        .map(crate::provider::claude::catalog_reference)
-        .unwrap_or_default();
+    let reference = catalog_reference(provider, &model, data);
     let reasoning = info
         .reasoning
         .or(reference.reasoning)
@@ -509,10 +530,10 @@ fn normalize_model(
         .or(info.reasoning_efforts)
         .unwrap_or_default();
     let parameters = lookup(&data.parameters, provider, &model.id)
-        .or_else(|| {
-            (provider.kind == "claude")
-                .then(|| claude_reference(&data.parameters, &model.id))
-                .flatten()
+        .or_else(|| match provider.kind.as_str() {
+            "claude" => api_reference(&data.parameters, "anthropic", &model.id),
+            "codex" => api_reference(&data.parameters, "openai", &model.id),
+            _ => None,
         })
         .cloned();
     let provider_metadata = zen.cloned();
@@ -679,6 +700,58 @@ mod tests {
         assert_eq!(models[0]["pricing"]["source"], "claude-reference");
         assert_eq!(models[1]["pricing"], Value::Null);
         assert_eq!(models[1]["model"].get("context_window"), None);
+    }
+
+    /// Codex uses live input types and exact `OpenAI` API references without mixing providers.
+    #[tokio::test]
+    async fn codex_catalog_uses_live_modalities_and_exact_openai_reference_prices() {
+        let store = store().await;
+        Setting::upsert_by_name("model_pricing_datasheet")
+            .value(json!({
+                "openai/gpt-5.3-codex": {"provider":"openai","input_cost_per_token":0.000_001_75,"output_cost_per_token":0.000_014,"cache_read_input_token_cost":0.000_000_175},
+                "gpt-5.4": {"provider":"openai","input_cost_per_token":0.000_002_5,"output_cost_per_token":0.000_015},
+                "gpt-5.5": {"provider":"openai","input_cost_per_token":0.000_005,"supported_modalities":["text","image"]},
+                "gpt-impostor": {"provider":"other","input_cost_per_token":0.000_099}
+            }).to_string())
+            .exec(&mut (*store.database.db).clone()).await.unwrap();
+        Setting::upsert_by_name("model_parameters_datasheet")
+            .value(json!({
+                "openai/gpt-5.3-codex": {"provider":"openai","supported_modalities":["text","image"]},
+                "gpt-5.5": {"provider":"openai","mode":"chat"},
+                "gpt-5.4": {"provider":"openai","supported_modalities":["text","image"]},
+                "gpt-impostor": {"provider":"other","supported_modalities":["audio"]}
+            }).to_string())
+            .exec(&mut (*store.database.db).clone()).await.unwrap();
+        let mut provider = sample_provider("codex", "codex");
+        provider.models = vec![
+            serde_json::from_value(json!({"id":"gpt-5.3-codex","input_modalities":["text"]}))
+                .unwrap(),
+            serde_json::from_value(json!({"id":"gpt-5.4"})).unwrap(),
+            serde_json::from_value(json!({"id":"gpt-5.5"})).unwrap(),
+            serde_json::from_value(json!({"id":"gpt-impostor"})).unwrap(),
+        ];
+        let result = serde_json::to_value(
+            normalize_catalog(
+                &store,
+                CachedCatalog {
+                    providers: vec![provider],
+                },
+            )
+            .await,
+        )
+        .unwrap();
+        let models = &result["providers"][0]["models"];
+        assert_eq!(models[0]["input_modalities"], json!(["text"]));
+        assert_eq!(models[0]["pricing"]["input"], 1.75);
+        assert_eq!(models[0]["pricing"]["output"], 14.0);
+        assert_eq!(models[0]["pricing"]["cache_read"], 0.175);
+        assert_eq!(models[0]["pricing"]["source"], "codex-reference");
+        assert_eq!(models[1]["input_modalities"], json!(["text", "image"]));
+        assert_eq!(models[1]["pricing"]["input"], 2.5);
+        assert_eq!(models[2]["input_modalities"], json!(["text", "image"]));
+        assert_eq!(models[2]["pricing"]["input"], 5.0);
+        assert_eq!(models[3]["input_modalities"], json!([]));
+        assert_eq!(models[3]["pricing"], Value::Null);
     }
 
     #[test]
