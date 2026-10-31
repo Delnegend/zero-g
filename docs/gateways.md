@@ -79,12 +79,17 @@ the base URL is the zero-g origin. Use the provider-prefixed model IDs from
 }
 ```
 
-Codex and Antigravity translated Chat Completions streams emit `data: [DONE]`
-on success and report an error without a success marker if they end without a
-terminal response. Antigravity emits a final usage chunk when requested with
-`stream_options.include_usage` and usage is available; Codex does not emit
-streaming usage. Go, Zen and custom OpenAI-compatible providers forward
-upstream streams. Their termination and usage reporting depend on the upstream.
+Codex, Cursor and Antigravity translated Chat Completions streams emit a final
+usage chunk when requested with `stream_options.include_usage` and usage is
+available. Codex and Antigravity emit `data: [DONE]` on success and report an
+error without a success marker if they end without a terminal response. Go, Zen
+and custom OpenAI-compatible providers forward upstream streams; their
+termination and usage reporting depend on the upstream.
+
+Codex rejects `max_tokens` and `max_completion_tokens` in Chat Completions and
+`max_output_tokens` in Responses with a 400 error, rather than silently ignoring
+the requested limit. Other upstream Codex errors retain their HTTP status after
+credential failover.
 
 ## Notes
 
