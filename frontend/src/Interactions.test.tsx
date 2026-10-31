@@ -396,27 +396,29 @@ test("provider deletion stays unavailable until all credentials are removed", as
   let deleted = false;
   const user = userEvent.setup();
   mount(
-    <ProviderCard
-      provider={{
-        id: "alpha",
-        name: "Alpha",
-        kind: "openai",
-        base_url: "https://example.test",
-      }}
-      kind={{
-        value: "openai",
-        label: "OpenAI",
-        api_key: true,
-        oauth: false,
-        fixed_id: null,
-        fixed_name: null,
-      }}
-      onEdit={() => {}}
-      onDelete={() => {
-        deleted = true;
-      }}
-      deleting={false}
-    />,
+    <TooltipProvider>
+      <ProviderCard
+        provider={{
+          id: "alpha",
+          name: "Alpha",
+          kind: "openai",
+          base_url: "https://example.test",
+        }}
+        kind={{
+          value: "openai",
+          label: "OpenAI",
+          api_key: true,
+          oauth: false,
+          fixed_id: null,
+          fixed_name: null,
+        }}
+        onEdit={() => {}}
+        onDelete={() => {
+          deleted = true;
+        }}
+        deleting={false}
+      />
+    </TooltipProvider>,
   );
   const deleteProvider = screen.getByRole("button", {
     name: "Delete Alpha",
@@ -436,8 +438,12 @@ test("provider deletion stays unavailable until all credentials are removed", as
       ],
     }),
   );
-  await screen.findByText(
-    "Remove all credentials before deleting this provider.",
+  await screen.findByText("Disabled");
+  await user.hover(screen.getByLabelText("Why Alpha cannot be deleted"));
+  assert.ok(
+    await screen.findByText(
+      "Remove all credentials before deleting this provider.",
+    ),
   );
   assert.equal(deleteProvider.disabled, true);
   await user.click(screen.getByRole("button", { name: "Delete Disabled" }));

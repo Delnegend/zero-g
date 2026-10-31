@@ -3,6 +3,11 @@ import { Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   credentialsOptions,
   type Provider,
   type ProviderKind,
@@ -60,26 +65,42 @@ export function ProviderCard({
                       <Pencil />
                     </Button>
                   )}
-                <Button
-                  variant="destructive"
-                  size="icon"
-                  aria-label={
-                    deleting
-                      ? `Deleting ${provider.name}`
-                      : `Delete ${provider.name}`
-                  }
-                  disabled={busy || deleting || cannotDelete}
-                  onClick={onDelete}
-                >
-                  <Trash2 />
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={<span />}
+                    tabIndex={hasCredentials ? 0 : -1}
+                    aria-label={
+                      hasCredentials
+                        ? `Why ${provider.name} cannot be deleted`
+                        : undefined
+                    }
+                    className="inline-flex rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                  >
+                    <Button
+                      variant="destructive"
+                      size="icon"
+                      aria-label={
+                        deleting
+                          ? `Deleting ${provider.name}`
+                          : `Delete ${provider.name}`
+                      }
+                      disabled={busy || deleting || cannotDelete}
+                      className={
+                        hasCredentials ? "pointer-events-none" : undefined
+                      }
+                      onClick={onDelete}
+                    >
+                      <Trash2 />
+                    </Button>
+                  </TooltipTrigger>
+                  {hasCredentials && (
+                    <TooltipContent>
+                      Remove all credentials before deleting this provider.
+                    </TooltipContent>
+                  )}
+                </Tooltip>
               </div>
             </div>
-            {hasCredentials && (
-              <p className="mt-3 text-sm text-muted-foreground">
-                Remove all credentials before deleting this provider.
-              </p>
-            )}
             <Credentials
               provider={provider}
               kind={kind}
