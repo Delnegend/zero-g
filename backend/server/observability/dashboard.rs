@@ -15,6 +15,8 @@ pub(in crate::server) struct DashboardQuery {
     pub(super) until: Option<i64>,
     /// Skip dashboard aggregates for the recent-logs view.
     pub(super) logs_only: Option<bool>,
+    /// Skip fetching recent request logs for aggregate-only dashboard views.
+    pub(super) aggregates_only: Option<bool>,
     /// Exact providers encoded as a JSON array.
     #[serde(default, deserialize_with = "deserialize_array")]
     pub(super) providers: Vec<String>,
@@ -53,7 +55,8 @@ fn deserialize_array<'de, D: serde::Deserializer<'de>>(
         ("statuses" = Option<String>, Query, description = "JSON array of success (200–399) and/or error (400 and above); empty means all"),
         ("virtual_key_ids" = Option<String>, Query, description = "JSON array of exact virtual key IDs; empty means all"),
         ("credential_ids" = Option<String>, Query, description = "JSON array of exact provider credential IDs; empty means all"),
-        ("logs_only" = Option<bool>, Query, description = "Return recent logs and filter options without calculating dashboard aggregates; aggregate fields are empty")),
+        ("logs_only" = Option<bool>, Query, description = "Return recent logs and filter options without calculating dashboard aggregates; aggregate fields are empty"),
+        ("aggregates_only" = Option<bool>, Query, description = "Return aggregates and filter options without fetching request logs; logs is empty")),
     responses((status = 200, body = ObservabilityResponse),
         (status = 400, description = "Invalid query"),
         (status = 500, description = "Log query failed")))]
@@ -114,6 +117,33 @@ mod tests {
         assert!(bounded.get("daily").is_none());
         assert_eq!(bounded["logs"].as_array().unwrap().len(), 1);
         assert_eq!(bounded["logs"][0]["request_body"], "boundary");
+        let response = app
+            .clone()
+            .oneshot(request(
+                "/api/observability?since=-86400&until=-86400&aggregates_only=true",
+            ))
+            .await
+            .unwrap();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let aggregate: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(aggregate["summary"], bounded["summary"]);
+        assert_eq!(aggregate["buckets"], bounded["buckets"]);
+        assert_eq!(aggregate["filter_options"], bounded["filter_options"]);
+        assert_eq!(aggregate["logs"], json!([]));
+        assert!(!String::from_utf8_lossy(&body).contains("boundary"));
+        assert!(!String::from_utf8_lossy(&body).contains("response"));
+
+        let response = app
+            .clone()
+            .oneshot(request(
+                "/api/observability?since=-86400&until=-86400&logs_only=true",
+            ))
+            .await
+            .unwrap();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let logs: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(logs["logs"][0]["request_body"], "boundary");
+        assert_eq!(logs["logs"][0]["response_body"], "response");
 
         let response = app
             .clone()
@@ -174,7 +204,7 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("zero-g-log-test-{}.db", uuid::Uuid::new_v4()));
         let database = Database::open(path.to_str().unwrap()).await.unwrap();
-        let mut store = LogStore::new(database);
+        let store = LogStore::new(database);
         store.set_retention(i64::MAX).await.unwrap();
         let entry = |created_at, status, body: String| LogEntry {
             id: 0,
@@ -220,7 +250,7 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("zero-g-log-test-{}.db", uuid::Uuid::new_v4()));
         let database = Database::open(path.to_str().unwrap()).await.unwrap();
-        let mut store = LogStore::new(database);
+        let store = LogStore::new(database);
         store.set_retention(i64::MAX).await.unwrap();
         let entry = |created_at,
                      provider: &str,
@@ -687,6 +717,109 @@ mod tests {
         );
         drop(app);
         drop(store);
+        std::fs::remove_file(path).unwrap();
+    }
+    /// Settings updates immediately affect existing capture and dashboard clones.
+    #[tokio::test]
+    async fn saved_retention_applies_to_existing_clones() {
+        let path =
+            std::env::temp_dir().join(format!("zero-g-live-retention-{}.db", uuid::Uuid::new_v4()));
+        let database = Database::open(path.to_str().unwrap()).await.unwrap();
+        let settings = crate::server::settings::SettingsStore::new(
+            database.clone(),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )
+        .await
+        .unwrap();
+        let store = LogStore::new(database);
+        let capture = store.clone();
+        let app = Router::new()
+            .route(
+                "/api/observability",
+                get(dashboard).with_state(store.clone()),
+            )
+            .route(
+                "/api/settings",
+                axum::routing::put(crate::server::settings::put_settings)
+                    .with_state((settings.clone(), store.clone())),
+            );
+        let entry = || LogEntry {
+            id: 0,
+            created_at: now() - 10 * 86400,
+            provider: "provider".into(),
+            model: "model".into(),
+            path: "/v1".into(),
+            status: 200,
+            latency_ms: 1,
+            input_tokens: None,
+            output_tokens: None,
+            request_body: "request".into(),
+            response_body: "response".into(),
+            virtual_key_id: None,
+            virtual_key_name: None,
+            credential_id: None,
+            credential_name: None,
+        };
+        capture.insert(entry()).await.unwrap();
+        let put = |days| {
+            Request::builder()
+                .method("PUT")
+                .uri("/api/settings")
+                .header("content-type", "application/json")
+                .body(Body::from(format!(r#"{{"log_retention_days":{days}}}"#)))
+                .unwrap()
+        };
+        let request = || {
+            Request::builder()
+                .uri("/api/observability?logs_only=true")
+                .body(Body::empty())
+                .unwrap()
+        };
+        let response = app.clone().oneshot(put(1)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let saved: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(saved["log_retention_days"], 1);
+        let response = app.clone().oneshot(request()).await.unwrap();
+        let body: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(body["logs"], json!([]));
+        assert!(body["retention_cutoff"].as_i64().unwrap() >= now() - 86401);
+
+        assert_eq!(
+            app.clone().oneshot(put(20)).await.unwrap().status(),
+            StatusCode::OK
+        );
+        capture.insert(entry()).await.unwrap();
+        let response = app.clone().oneshot(request()).await.unwrap();
+        let body: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(body["logs"][0]["request_body"], "request");
+        assert_eq!(body["logs"][0]["response_body"], "response");
+        toasty::sql::statement("DROP TABLE log_filter_options")
+            .exec(&mut (*store.database.db).clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            app.clone().oneshot(put(1)).await.unwrap().status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
+            settings
+                .setting_get("log_retention_days")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("20")
+        );
+        assert_eq!(*capture.retention_days.read().await, 20);
+        drop(app);
+        drop(capture);
+        drop(store);
+        drop(settings);
         std::fs::remove_file(path).unwrap();
     }
 }

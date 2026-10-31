@@ -1,10 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::database::{Database, transaction_with_retry};
 use crate::storage::{LogFilterOption, RequestLog};
 use chrono::{DateTime, Datelike, Months, NaiveDate, Utc};
 use serde::Serialize;
+use tokio::sync::RwLock;
 
 /// Request capture middleware.
 mod capture;
@@ -21,27 +23,38 @@ pub(crate) struct LogStore {
     /// Database holding request records.
     database: Database,
     /// Number of days of records to retain.
-    retention_days: i64,
+    retention_days: Arc<RwLock<i64>>,
 }
 impl LogStore {
     /// Create a log store with the default 30-day retention.
-    pub(crate) const fn new(database: Database) -> Self {
+    pub(crate) fn new(database: Database) -> Self {
         Self {
             database,
-            retention_days: 30,
+            retention_days: Arc::new(RwLock::new(30)),
         }
     }
 
-    /// Update retention and immediately prune expired records.
-    pub(crate) async fn set_retention(&mut self, retention_days: i64) -> Result<(), String> {
-        self.retention_days = retention_days;
-        self.prune().await
+    /// Apply startup retention and immediately prune expired records.
+    pub(crate) async fn set_retention(&self, retention_days: i64) -> Result<(), String> {
+        self.update_retention(retention_days, false).await
     }
 
-    /// Delete records older than the retention cutoff.
-    async fn prune(&self) -> Result<(), String> {
-        let cutoff = now().saturating_sub(self.retention_days.saturating_mul(86400));
+    /// Save and apply retention atomically with pruning.
+    pub(crate) async fn save_retention(&self, retention_days: i64) -> Result<(), String> {
+        self.update_retention(retention_days, true).await
+    }
+
+    /// Serialize policy changes with insertions so old cutoffs cannot prune new data.
+    async fn update_retention(&self, retention_days: i64, save: bool) -> Result<(), String> {
+        let mut active = self.retention_days.write().await;
+        let cutoff = now().saturating_sub(retention_days.saturating_mul(86400));
         transaction_with_retry!(self.database, |mut tx| {
+            if save {
+                crate::storage::Setting::upsert_by_name("log_retention_days")
+                    .value(retention_days.to_string())
+                    .exec(&mut tx)
+                    .await?;
+            }
             RequestLog::filter(RequestLog::fields().created_at().lt(cutoff))
                 .delete()
                 .exec(&mut tx)
@@ -53,13 +66,17 @@ impl LogStore {
             tx.commit().await?;
             Ok(())
         })
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+        *active = retention_days;
+        drop(active);
+        Ok(())
     }
 
     /// Store a request record and prune expired records transactionally.
     async fn insert(&self, log: LogEntry) -> Result<(), String> {
-        let cutoff = now().saturating_sub(self.retention_days.saturating_mul(86400));
-        transaction_with_retry!(self.database, |mut tx| {
+        let active = self.retention_days.read().await;
+        let cutoff = now().saturating_sub(active.saturating_mul(86400));
+        let result = transaction_with_retry!(self.database, |mut tx| {
             toasty::create!(RequestLog {
                 created_at: log.created_at,
                 provider: log.provider.clone(),
@@ -90,7 +107,9 @@ impl LogStore {
             tx.commit().await?;
             Ok(())
         })
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string());
+        drop(active);
+        result
     }
 
     /// Aggregate request statistics and recent logs for the requested range.
@@ -99,6 +118,8 @@ impl LogStore {
         let since = query.since;
         let until = query.until;
         let upper = until.or_else(|| since.map(|_| now()));
+        let active = self.retention_days.read().await;
+        let retention_days = *active;
         let interval = interval(since, upper)?;
         let (options, rows, logs) = transaction_with_retry!(self.database, |mut tx| {
             let mut rows_query = RequestLog::all();
@@ -206,19 +227,24 @@ impl LogStore {
                     .exec(&mut tx)
                     .await?
             };
-            let logs_query = if since.is_some() || until.is_some() {
-                logs_query.order_by((
-                    RequestLog::fields().created_at().desc(),
-                    RequestLog::fields().id().desc(),
-                ))
+            let logs = if query.aggregates_only.unwrap_or(false) {
+                Vec::new()
             } else {
-                logs_query.order_by(RequestLog::fields().id().desc())
+                let logs_query = if since.is_some() || until.is_some() {
+                    logs_query.order_by((
+                        RequestLog::fields().created_at().desc(),
+                        RequestLog::fields().id().desc(),
+                    ))
+                } else {
+                    logs_query.order_by(RequestLog::fields().id().desc())
+                };
+                logs_query.limit(200).exec(&mut tx).await?
             };
-            let logs = logs_query.limit(200).exec(&mut tx).await?;
             tx.commit().await?;
             Ok((options, rows, logs))
         })
         .map_err(|e| e.to_string())?;
+        drop(active);
         let (summary, buckets, breakdown) = aggregate_rows(&rows, interval)?;
         let filter_options = match options {
             OptionRows::Dashboard(rows) => collect_filter_options(rows),
@@ -232,7 +258,7 @@ impl LogStore {
             buckets,
             filter_options,
             breakdown,
-            retention_cutoff: now().saturating_sub(self.retention_days.saturating_mul(86400)),
+            retention_cutoff: now().saturating_sub(retention_days.saturating_mul(86400)),
         })
     }
 }
@@ -827,7 +853,7 @@ mod tests {
     async fn dashboard_retention_uses_active_store_policy() {
         let path =
             std::env::temp_dir().join(format!("zero-g-retention-test-{}.db", uuid::Uuid::new_v4()));
-        let mut store = LogStore::new(Database::open(path.to_str().unwrap()).await.unwrap());
+        let store = LogStore::new(Database::open(path.to_str().unwrap()).await.unwrap());
         store.set_retention(1).await.unwrap();
         transaction_with_retry!(store.database, |mut tx| {
             crate::storage::Setting::upsert_by_name("log_retention_days")
@@ -852,7 +878,7 @@ mod tests {
     async fn retained_filter_options_follow_renames_and_pruning() {
         let path =
             std::env::temp_dir().join(format!("zero-g-options-test-{}.db", uuid::Uuid::new_v4()));
-        let mut store = LogStore::new(Database::open(path.to_str().unwrap()).await.unwrap());
+        let store = LogStore::new(Database::open(path.to_str().unwrap()).await.unwrap());
         store.set_retention(30).await.unwrap();
         let entry = |days: i64, name: &str, provider: &str| LogEntry {
             id: 0,
@@ -908,7 +934,7 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("zero-g-log-test-{}.db", uuid::Uuid::new_v4()));
         let database = Database::open(path.to_str().unwrap()).await.unwrap();
-        let mut store = LogStore::new(database);
+        let store = LogStore::new(database);
         store.set_retention(30).await.unwrap();
         let entry = |created_at| LogEntry {
             id: 0,

@@ -103,7 +103,7 @@ async fn open_stores() -> Result<(SettingsStore, LogStore), String> {
     let key = std::env::var("ZERO_G_ENCRYPTION_KEY")
         .map_err(|_| "ZERO_G_ENCRYPTION_KEY is required".to_string())?;
     let database = Database::open(&path).await?;
-    let mut logs = LogStore::new(database.clone());
+    let logs = LogStore::new(database.clone());
     let settings = SettingsStore::new(database, &key).await?;
     let retention = settings
         .setting_get("log_retention_days")

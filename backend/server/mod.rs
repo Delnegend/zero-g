@@ -65,8 +65,11 @@ pub(crate) fn create_router(state: AppState) -> Router {
         .route(
             "/api/settings",
             get(settings::get_settings)
-                .put(settings::put_settings)
-                .with_state(state.settings.clone()),
+                .with_state(state.settings.clone())
+                .merge(
+                    axum::routing::put(settings::put_settings)
+                        .with_state((state.settings.clone(), state.logs.clone())),
+                ),
         )
         .route(
             "/api/keys",

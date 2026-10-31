@@ -72,11 +72,13 @@ export function observabilityQueryOptions(
           ...filters,
           since: currentSince,
           until: currentUntil,
+          aggregates_only: true,
         }),
         getObservability(signal, {
           ...filters,
           since: previousSince,
           until: previousUntil,
+          aggregates_only: true,
         }).catch((error: unknown) => {
           if (signal.aborted) throw error;
           return null;
@@ -114,12 +116,14 @@ export function getObservability(
     since?: number;
     until?: number;
     logs_only?: boolean;
+    aggregates_only?: boolean;
   } & ObservabilityFilterValues,
 ) {
   const params = range && {
     since: range.since,
     until: range.until,
     logs_only: range.logs_only,
+    aggregates_only: range.aggregates_only,
     providers: range.providers?.length
       ? JSON.stringify(range.providers)
       : undefined,

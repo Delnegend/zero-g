@@ -1882,6 +1882,7 @@ export const GetObservabilityParams = zod.object({
   virtual_key_ids: zod.string().optional(),
   credential_ids: zod.string().optional(),
   logs_only: zod.boolean().optional(),
+  aggregates_only: zod.boolean().optional(),
 });
 
 export type GetObservabilityParams = zod.input<typeof GetObservabilityParams>;

@@ -1,6 +1,5 @@
 use super::{SettingsResponse, SettingsStore, UpdateSettings, get_settings, internal_error};
-use crate::database::transaction_with_retry;
-use crate::storage::Setting;
+use crate::server::observability::LogStore;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
@@ -18,7 +17,7 @@ use axum::response::{IntoResponse, Json, Response};
     )
 )]
 pub(crate) async fn put_settings(
-    State(store): State<SettingsStore>,
+    State((store, logs)): State<(SettingsStore, LogStore)>,
     Json(input): Json<UpdateSettings>,
 ) -> Response {
     if input
@@ -27,18 +26,10 @@ pub(crate) async fn put_settings(
     {
         return (StatusCode::BAD_REQUEST, "Invalid log retention").into_response();
     }
-    let result = transaction_with_retry!(store.database, |mut tx| {
-        if let Some(days) = input.log_retention_days {
-            Setting::upsert_by_name("log_retention_days")
-                .value(days.to_string())
-                .exec(&mut tx)
-                .await?;
-        }
-        tx.commit().await?;
-        Ok(())
-    });
-    if let Err(err) = result {
-        return internal_error(&err.to_string());
+    if let Some(days) = input.log_retention_days
+        && let Err(err) = logs.save_retention(i64::from(days)).await
+    {
+        return internal_error(&err);
     }
     get_settings(State(store)).await
 }

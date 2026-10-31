@@ -407,6 +407,15 @@
             "schema": {
               "type": "boolean"
             }
+          },
+          {
+            "name": "aggregates_only",
+            "in": "query",
+            "description": "Return aggregates and filter options without fetching request logs; logs is empty",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {

@@ -80,6 +80,7 @@ test("dashboard sends adjacent inclusive ranges with identical filters and refre
     ],
   );
   for (const call of calls) {
+    assert.equal(call.searchParams.get("aggregates_only"), "true");
     for (const [key, value] of Object.entries(filters)) {
       assert.deepEqual(JSON.parse(call.searchParams.get(key)!), value);
     }
@@ -208,6 +209,7 @@ test("logs-only queries issue one unbounded request and no comparison", async ()
   assert.deepEqual(result, response);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].searchParams.get("logs_only"), "true");
+  assert.equal(calls[0].searchParams.get("aggregates_only"), null);
   assert.equal(calls[0].searchParams.get("since"), null);
   assert.equal(calls[0].searchParams.get("until"), null);
   assert.deepEqual(JSON.parse(calls[0].searchParams.get("models")!), ["model"]);
