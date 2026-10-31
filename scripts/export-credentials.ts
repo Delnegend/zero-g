@@ -26,7 +26,14 @@ if (!path || path === ":memory:") {
 function decrypt(name: string, data: Uint8Array): string {
   if (data.length < 28) throw new Error("Invalid encrypted secret");
   try {
-    const decipher = createDecipheriv("aes-256-gcm", key, data.subarray(0, 12));
+    const decipher = createDecipheriv(
+      "aes-256-gcm",
+      key,
+      data.subarray(0, 12),
+      {
+        authTagLength: 16,
+      },
+    );
     decipher.setAAD(Buffer.from(name));
     decipher.setAuthTag(data.subarray(-16));
     return Buffer.concat([

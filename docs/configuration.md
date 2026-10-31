@@ -145,5 +145,7 @@ bun run scripts/export-credentials.ts ~/zero-g-credentials.json
 
 Bun reads `ZERO_G_LOG_DB` and `ZERO_G_ENCRYPTION_KEY` from the environment or the project's `.env`. The script opens the database read-only, verifies the encryption key, and writes provider API keys, OAuth credentials and auxiliary account secrets as JSON. OAuth credentials are JSON strings in the `value` field. Virtual keys cannot be exported because only their hashes are stored.
 
+Encrypted entries must have a valid 16-byte authentication tag; truncated or altered entries are rejected without writing an export.
+
 The output contains **plaintext secrets**. The script creates a new file with owner-only permissions on POSIX systems and refuses to overwrite an existing file. Store it securely, avoid placing it in the repository or logs, and delete it when no longer needed.
 

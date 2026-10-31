@@ -105,6 +105,18 @@ test("exports provider secrets and rejects wrong keys, corruption, and existing 
     const corruptOutput = join(dir, "corrupt.json");
     assert.notEqual(run(key.toString("base64"), corruptOutput).exitCode, 0);
     assert.throws(() => statSync(corruptOutput));
+
+    const truncatedDb = new Database(dbPath);
+    truncatedDb
+      .prepare("UPDATE secrets SET value = ? WHERE name = ?")
+      .run(
+        seal(key, "credential.one.api_key", "test-api-key").subarray(0, -4),
+        "credential.one.api_key",
+      );
+    truncatedDb.close();
+    const truncatedOutput = join(dir, "truncated.json");
+    assert.notEqual(run(key.toString("base64"), truncatedOutput).exitCode, 0);
+    assert.throws(() => statSync(truncatedOutput));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
