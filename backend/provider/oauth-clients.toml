@@ -1,7 +1,8 @@
 # Public OAuth application credentials published by oh-my-pi.
 [antigravity]
 client_id = "MTA3MTAwNjA2MDU5MS10bWhzc2luMmgyMWxjcmUyMzV2dG9sb2poNGc0MDNlcC5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbQ=="
-client_secret = "R09DU1BYLUs1OEZXUjQ4NkxkTEoxbUxCOHNYQzR6NnFEQWY="
+# nosemgrep: generic.secrets.security.detected-generic-secret.detected-generic-secret
+client_secret = "R09DU1BYLUs1OEZXUjQ4NkxkTEoxbUxCOHNYQzR6NnFEQWY=" # gitleaks:allow -- publicly published OAuth client credential
 
 [codex]
 client_id = "app_EMoamEEZ73f0CkXaXp7hrann"

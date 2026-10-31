@@ -1,2 +1,12 @@
 [extend]
 useDefault = true
+
+# The original commit contains the publicly published Antigravity OAuth client
+# credential; restrict this historical exception to its rule, commit, and file.
+[[rules]]
+id = "generic-api-key"
+
+  [[rules.allowlists]]
+  condition = "AND"
+  commits = ["94c389d53fce2c8e239f7fbe9e12484038731af3"]
+  paths = ['^backend/provider/oauth-clients\.toml$']
