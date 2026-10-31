@@ -9,6 +9,24 @@ Both `/v1/chat/completions` and `/v1/responses` are exposed so the gateway can
 use direct pass-through in either direction. `/v1/models` is also exposed for
 model discovery.
 
+OpenRouter Decisions models use a different request format and cannot be called
+through Chat Completions or Responses. Send them directly to `POST /v1/decisions`
+with a Zero-G virtual key and a provider-qualified model ID:
+
+```bash
+curl http://127.0.0.1:8080/v1/decisions \
+  -H "Authorization: Bearer $ZERO_G_VIRTUAL_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"openrouter/cloudflare/clef","state":"A red square","questions":{"is_red":{"type":"noul","instructions":"Is it red?"}}}'
+```
+
+Zero-G forwards the Decisions payload to OpenRouter's `/api/alpha/decisions`.
+Other provider kinds do not support this endpoint. Model and provider restrictions
+on the virtual key still apply. Multimodal parts and other request fields pass
+through unchanged, within Zero-G's 20,000,000-byte request limit. Consult the
+[OpenRouter Decisions API](https://openrouter.ai/docs/guides/community/multimodal-decisions)
+for supported input formats and model-specific limits.
+
 ## LiteLLM
 
 Configure each model as an `openai/` deployment with `zero-g` as the API base:
