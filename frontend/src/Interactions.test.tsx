@@ -103,14 +103,16 @@ Object.defineProperty(window, "cancelAnimationFrame", {
 const { act, render, screen, within, cleanup, waitFor } =
   await import("@testing-library/react");
 const userEvent = (await import("@testing-library/user-event")).default;
-const { Management } = await import("./Management");
-const { ObservabilityPage } = await import("./App");
+const { SettingsPage } = await import("./routes/settings");
+const { KeysPage } = await import("./routes/keys");
+const { ObservabilityPage } = await import("./routes/index");
 const { Credentials } = await import("./components/providers/Credentials");
 const { CredentialUsage } = await import("./components/CredentialUsage");
 const { ProviderCard } = await import("./components/providers/ProviderCard");
-const { ProvidersPage } = await import("./ProvidersPage");
+const { ProvidersPage } = await import("./routes/models/providers");
 const { ProviderForm } = await import("./components/providers/ProviderForm");
-const { ModelCatalogPage, ModelSettingsPage } = await import("./Models");
+const { ModelCatalogPage } = await import("./routes/models/catalog");
+const { ModelSettingsPage } = await import("./routes/models/settings");
 const { TooltipProvider } = await import("./components/ui/tooltip");
 const originalFetch = globalThis.fetch;
 
@@ -219,7 +221,7 @@ test("settings save log retention without provider OAuth settings", async () => 
     return Response.json(settings);
   }) as typeof fetch;
   const user = userEvent.setup();
-  mount(<Management page="settings" />);
+  mount(<SettingsPage />);
   await screen.findByDisplayValue("30");
   assert.equal(screen.queryByLabelText(/Google OAuth/), null);
   await user.click(screen.getByRole("button", { name: "Save settings" }));
@@ -240,7 +242,7 @@ test("edits made during a delayed settings save survive the response", async () 
     return Response.json({ log_retention_days: 40 });
   }) as typeof fetch;
   const user = userEvent.setup();
-  mount(<Management page="settings" />);
+  mount(<SettingsPage />);
   const retention = await screen.findByLabelText("Log retention (days)");
   await user.clear(retention);
   await user.type(retention, "35");
@@ -1316,7 +1318,7 @@ test("create a restricted key, dismiss its one-time token, and revoke it", async
     throw new Error(`Unexpected request: ${path}`);
   }) as typeof fetch;
   const user = userEvent.setup();
-  mount(<Management page="keys" />);
+  mount(<KeysPage />);
   await screen.findByText("No keys created yet.");
   await user.click(screen.getByRole("button", { name: "Create key" }));
   const dialog = await screen.findByRole("dialog");

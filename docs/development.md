@@ -27,8 +27,8 @@ Vite runs the experimental Oxc React Compiler for development and production bui
 Dashboard pages use the shared skeleton components in `frontend/src/components/Loading.tsx` for initial data loads. The dashboard keeps the previous results visible and shows **Updating** while a refresh or new time range loads, preventing layout shifts.
 Dashboard and catalog refresh controls share `frontend/src/components/RefreshButton.tsx`, including their disabled and updating states.
 The root tooltip provider opens shadcn tooltips without delay. Model descriptions show a tooltip only when clipped to three lines; long tooltip text scrolls within the popup.
-Dashboard routes and their page titles live in `frontend/src/routes/`, mirroring their URLs. The TanStack Router Vite plugin generates `frontend/src/routeTree.gen.ts` during development and builds; commit the generated file when changing routes and do not edit it manually.
-Provider management keeps its page in `frontend/src/ProvidersPage.tsx` and its form, credential list and provider card components in `frontend/src/components/providers/`. The add-provider dialog keeps its initial kind choices until it closes, so a refresh after saving cannot replace the selected label.
+Dashboard routes, page layouts and titles live in `frontend/src/routes/`, mirroring their URLs. Shared components remain outside the routes directory. The TanStack Router Vite plugin generates `frontend/src/routeTree.gen.ts` during development and builds; commit the generated file when changing routes and do not edit it manually.
+Provider management keeps its page in `frontend/src/routes/models/providers.tsx` and its form, credential list and provider card components in `frontend/src/components/providers/`. The add-provider dialog keeps its initial kind choices until it closes, so a refresh after saving cannot replace the selected label.
 The requests chart uses TanStack Charts' motion renderer and theme-aware tooltip tokens; motion respects the browser's reduced-motion preference.
 The request log table uses TanStack Table v9 with explicit filtering, sorting and pagination features.
 
