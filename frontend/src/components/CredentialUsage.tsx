@@ -29,7 +29,7 @@ function ResetTime({ reset }: { reset: Date }) {
     .join(" ");
   return (
     <Tooltip>
-      <TooltipTrigger className="text-left text-muted-foreground underline decoration-dotted underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2">
+      <TooltipTrigger className="whitespace-nowrap text-left text-muted-foreground underline decoration-dotted underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2">
         {minutes > 0 ? `Resets in ${relative}` : "Reset due"}
       </TooltipTrigger>
       <TooltipContent>{reset.toLocaleString()}</TooltipContent>
@@ -46,25 +46,23 @@ function WindowUsage({ window }: { window: QuotaWindow }) {
     window.reset_at === null ? null : new Date(window.reset_at * 1000);
 
   return (
-    <div className="@container min-w-0 text-sm">
-      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5 @md:grid-cols-[auto_minmax(3rem,1fr)_auto_auto]">
-        <p className="min-w-0 break-words font-medium">{window.label}</p>
-        {known && (
-          <Progress
-            value={value}
-            aria-label={`${window.label} remaining`}
-            className="col-span-2 row-start-2 gap-0 @md:col-span-1 @md:col-start-2 @md:row-start-1"
-          />
-        )}
-        <p className="col-start-2 row-start-1 text-muted-foreground tabular-nums @md:col-start-3">
-          {percent} remaining
-        </p>
-        {reset && Number.isFinite(reset.getTime()) && (
-          <div className="col-span-2 row-start-3 @md:col-span-1 @md:col-start-4 @md:row-start-1">
-            <ResetTime reset={reset} />
-          </div>
-        )}
-      </div>
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5 text-sm @md:col-span-4 @md:grid-cols-subgrid">
+      <p className="min-w-0 break-words font-medium">{window.label}</p>
+      {known && (
+        <Progress
+          value={value}
+          aria-label={`${window.label} remaining`}
+          className="col-span-2 row-start-2 gap-0 @md:col-span-1 @md:col-start-2 @md:row-start-1"
+        />
+      )}
+      <p className="col-start-2 row-start-1 text-muted-foreground tabular-nums @md:col-start-3">
+        {percent} remaining
+      </p>
+      {reset && Number.isFinite(reset.getTime()) && (
+        <div className="col-span-2 row-start-3 @md:col-span-1 @md:col-start-4 @md:row-start-1">
+          <ResetTime reset={reset} />
+        </div>
+      )}
     </div>
   );
 }
@@ -73,13 +71,11 @@ export function CredentialUsage({
   providerId,
   credentialId,
   credentialName,
-  kind,
   connected,
 }: {
   providerId: string;
   credentialId: string;
   credentialName: string;
-  kind: string;
   connected: boolean;
 }) {
   const usage = useQuery(
@@ -88,11 +84,7 @@ export function CredentialUsage({
 
   return (
     <div
-      className={
-        kind !== "zen" && kind !== "openrouter"
-          ? "w-full min-w-0 space-y-2 sm:w-[32rem] sm:max-w-full"
-          : "min-w-0 space-y-2 sm:max-w-sm"
-      }
+      className="@container w-full min-w-0 space-y-2"
       aria-label={`Usage for ${credentialName}`}
     >
       {connected && usage.isPending && (
@@ -116,7 +108,7 @@ export function CredentialUsage({
         !usage.isError &&
         usage.data?.kind === "quota" &&
         (usage.data.windows.length ? (
-          <div className="space-y-3">
+          <div className="space-y-3 @md:grid @md:grid-cols-[4.5rem_minmax(0,1fr)_8rem_minmax(11rem,max-content)] @md:gap-x-3">
             {usage.data.windows.map((window, index) => (
               <WindowUsage key={`${window.label}-${index}`} window={window} />
             ))}
@@ -127,16 +119,18 @@ export function CredentialUsage({
           </p>
         ))}
       {connected && !usage.isError && usage.data?.kind === "grouped_quota" && (
-        <div className="space-y-4">
+        <div className="space-y-4 @md:grid @md:grid-cols-[4.5rem_minmax(0,1fr)_8rem_minmax(11rem,max-content)] @md:gap-x-3">
           {usage.data.groups.map((group, index) => (
             <section
               key={`${group.label}-${index}`}
               role="group"
               aria-label={group.label}
-              className="space-y-2"
+              className="space-y-2 @md:col-span-4 @md:grid @md:grid-cols-subgrid"
             >
-              <h3 className="text-sm font-semibold">{group.label}</h3>
-              <div className="space-y-3">
+              <h3 className="text-sm font-semibold @md:col-span-4">
+                {group.label}
+              </h3>
+              <div className="space-y-3 @md:col-span-4 @md:grid @md:grid-cols-subgrid">
                 {group.windows.map((window, windowIndex) => (
                   <WindowUsage
                     key={`${window.label}-${windowIndex}`}

@@ -745,7 +745,6 @@ test("quota resets show a countdown and reveal the exact time", async () => {
         providerId="codex"
         credentialId="account"
         credentialName="Account"
-        kind="codex"
         connected
       />
     </TooltipProvider>,
@@ -786,7 +785,6 @@ test("Antigravity quotas show each pool with its own windows", async () => {
       providerId="agy"
       credentialId="account"
       credentialName="Account"
-      kind="agy"
       connected
     />,
   );

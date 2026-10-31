@@ -161,19 +161,13 @@ export function Credentials({
           No credentials configured.
         </p>
       )}
-      <div className="mt-2 grid grid-cols-[minmax(0,1fr)] gap-2">
+      <div className="mt-2 grid grid-cols-[repeat(auto-fit,minmax(min(100%,24rem),1fr))] gap-2">
         {credentials.data?.credentials.map((credential) => (
           <div
             key={credential.id}
-            className="flex flex-wrap justify-between gap-4 rounded-lg border p-3"
+            className="flex min-w-0 flex-col gap-4 rounded-lg border p-3"
           >
-            <div
-              className={
-                provider.kind === "zen" || provider.kind === "openrouter"
-                  ? "min-w-0 flex-[1_1_20rem]"
-                  : "min-w-0"
-              }
-            >
+            <div className="min-w-0">
               <p className="break-words font-medium">
                 {credential.name}
                 {credential.email && (
@@ -194,85 +188,78 @@ export function Credentials({
                 {credential.enabled ? "Enabled" : "Disabled"} ·{" "}
                 {credential.connected ? "Connected" : "Not connected"}
               </p>
-              <div
-                className={
-                  provider.kind === "zen" || provider.kind === "openrouter"
-                    ? "mt-2 flex flex-wrap gap-1.5"
-                    : "mt-2 flex flex-wrap gap-2"
-                }
-              >
-                <Button
-                  variant="outline"
-                  size="icon"
-                  aria-label={`Edit ${credential.name}`}
-                  disabled={loginBusy}
-                  onClick={() => edit(credential)}
-                >
-                  <Pencil />
-                </Button>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  aria-label={`Delete ${credential.name}`}
-                  disabled={loginBusy}
-                  onClick={() => {
-                    setError("");
-                    setDeleteTarget(credential);
-                  }}
-                >
-                  <Trash2 />
-                </Button>
-                {(provider.kind === "zen" ||
-                  provider.kind === "openrouter") && (
-                  <CredentialConfiguration
-                    providerId={provider.id}
-                    credentialId={credential.id}
-                    credentialName={credential.name}
-                    kind={provider.kind}
-                  />
-                )}
-                {kind?.oauth &&
-                  [
-                    "agy",
-                    "codex",
-                    "claude",
-                    "cursor",
-                    "grok",
-                    "grok-build",
-                  ].includes(provider.kind) && (
-                    <Button
-                      disabled={loginBusy || !credential.enabled}
-                      onClick={() => onLogin(credential)}
-                      variant="secondary"
-                    >
-                      {credential.connected ? "Reconnect" : "Sign in"}{" "}
-                      {
-                        (
-                          {
-                            agy: "Google",
-                            codex: "Codex",
-                            claude: "Claude Code",
-                            cursor: "Cursor",
-                            grok: "Grok",
-                            "grok-build": "Grok Build",
-                          } as Record<string, string>
-                        )[provider.kind]
-                      }
-                    </Button>
-                  )}
-              </div>
             </div>
             {["codex", "agy", "claude", "go", "zen", "openrouter"].includes(
               provider.kind,
-            ) && (
-              <CredentialUsage
-                providerId={provider.id}
-                credentialId={credential.id}
-                credentialName={credential.name}
-                kind={provider.kind}
-                connected={credential.connected}
-              />
-            )}
+            ) &&
+              credential.connected && (
+                <CredentialUsage
+                  providerId={provider.id}
+                  credentialId={credential.id}
+                  credentialName={credential.name}
+                  connected={credential.connected}
+                />
+              )}
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                size="icon"
+                aria-label={`Edit ${credential.name}`}
+                disabled={loginBusy}
+                onClick={() => edit(credential)}
+              >
+                <Pencil />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                aria-label={`Delete ${credential.name}`}
+                disabled={loginBusy}
+                onClick={() => {
+                  setError("");
+                  setDeleteTarget(credential);
+                }}
+              >
+                <Trash2 />
+              </Button>
+              {(provider.kind === "zen" || provider.kind === "openrouter") && (
+                <CredentialConfiguration
+                  providerId={provider.id}
+                  credentialId={credential.id}
+                  credentialName={credential.name}
+                  kind={provider.kind}
+                />
+              )}
+              {kind?.oauth &&
+                [
+                  "agy",
+                  "codex",
+                  "claude",
+                  "cursor",
+                  "grok",
+                  "grok-build",
+                ].includes(provider.kind) && (
+                  <Button
+                    disabled={loginBusy || !credential.enabled}
+                    onClick={() => onLogin(credential)}
+                    variant="secondary"
+                  >
+                    {credential.connected ? "Reconnect" : "Sign in"}{" "}
+                    {
+                      (
+                        {
+                          agy: "Google",
+                          codex: "Codex",
+                          claude: "Claude Code",
+                          cursor: "Cursor",
+                          grok: "Grok",
+                          "grok-build": "Grok Build",
+                        } as Record<string, string>
+                      )[provider.kind]
+                    }
+                  </Button>
+                )}
+            </div>
           </div>
         ))}
       </div>
