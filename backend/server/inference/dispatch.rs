@@ -49,10 +49,16 @@ pub(super) async fn dispatch(
     axum::Extension(router): axum::Extension<Router>,
     request: Request,
 ) -> Response {
-    let permissions = match permissions(&state, request.headers(), request.extensions().get()).await
+    let permissions = if let Some(permissions) = request
+        .extensions()
+        .get::<crate::server::settings::Permissions>()
     {
-        Ok(p) => p,
-        Err(e) => return e.into_response(),
+        permissions.clone()
+    } else {
+        match permissions(&state, request.headers(), request.extensions().get()).await {
+            Ok(p) => p,
+            Err(e) => return e.into_response(),
+        }
     };
     let (mut parts, body) = request.into_parts();
     let Ok(body) = to_bytes(body, INFERENCE_BODY_LIMIT).await else {

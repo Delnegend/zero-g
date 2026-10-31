@@ -108,6 +108,26 @@ async fn permissions(
     }
 }
 
+/// Authenticate inference requests before reading or logging their bodies.
+pub(super) async fn authenticate_post(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    mut request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    if request.method() != axum::http::Method::POST {
+        return next.run(request).await;
+    }
+    let identity = crate::provider::common::request_identity::RequestIdentity::default();
+    match permissions(&state, request.headers(), Some(&identity)).await {
+        Ok(permissions) => {
+            request.extensions_mut().insert(identity);
+            request.extensions_mut().insert(permissions);
+            next.run(request).await
+        }
+        Err(error) => error.into_response(),
+    }
+}
+
 /// The sole public inference API.
 pub(super) fn router(state: &AppState) -> Router<AppState> {
     let internal: Router = provider::router(&state.settings)

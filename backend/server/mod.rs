@@ -92,11 +92,15 @@ pub(crate) fn create_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health::health_handler))
         .merge(inference::router(&state))
-        .layer(cors)
         .layer(axum::middleware::from_fn_with_state(
             state.logs.clone(),
             observability::capture,
         ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            inference::authenticate_post,
+        ))
+        .layer(cors)
         .with_state(state)
         .merge(dashboard)
         .layer(axum::middleware::from_fn(
@@ -177,5 +181,42 @@ mod tests {
             document.pointer("/paths/~1v1~1models/get/operationId"),
             Some(&serde_json::json!("listInferenceModels"))
         );
+    }
+
+    /// Reject unauthenticated requests without waiting for their body.
+    #[tokio::test]
+    async fn inference_authentication_precedes_body_capture() {
+        let database = crate::database::Database::open(":memory:").await.unwrap();
+        let settings = settings::SettingsStore::new(
+            database.clone(),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )
+        .await
+        .unwrap();
+        let app = create_router(AppState {
+            providers: provider::Providers::new(),
+            settings,
+            logs: observability::LogStore::new(database),
+            dashboard_auth: dashboard_auth_config::test_auth().await,
+        });
+        for authorization in [None, Some("Bearer invalid")] {
+            let mut builder = Request::builder()
+                .method("POST")
+                .uri("/v1/chat/completions");
+            if let Some(value) = authorization {
+                builder = builder.header(header::AUTHORIZATION, value);
+            }
+            let body = Body::from_stream(futures_util::stream::pending::<
+                Result<axum::body::Bytes, std::convert::Infallible>,
+            >());
+            let response = tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                app.clone().oneshot(builder.body(body).unwrap()),
+            )
+            .await
+            .expect("authentication must not wait for an unauthenticated body")
+            .unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        }
     }
 }
