@@ -557,7 +557,7 @@ mod tests {
             ],
             temperature: Some(0.7), // must be ignored/omitted in payload
             top_p: Some(0.9),       // must be ignored/omitted in payload
-            max_tokens: Some(100),  // must be ignored/omitted in payload
+            max_tokens: None,
             max_completion_tokens: None,
             stream: Some(true),
             stream_options: None,
@@ -710,7 +710,7 @@ mod tests {
             tool_choice: None,
             temperature: Some(0.2),
             top_p: None,
-            max_output_tokens: Some(500),
+            max_output_tokens: None,
             reasoning_effort: None,
             reasoning: None,
         };

@@ -47,6 +47,19 @@ fn model_forbidden() -> Response {
         .into_response()
 }
 
+/// Reports output limits unsupported by the `ChatGPT` Codex endpoint.
+fn unsupported_output_limit(field: &str) -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(crate::server::error_body(
+            &format!("{field} is not supported by the Codex upstream"),
+            "invalid_request_error",
+            Some("unsupported_parameter"),
+        )),
+    )
+        .into_response()
+}
+
 /// Removes a recognized Codex provider prefix from a model identifier.
 fn strip_codex_prefix(model: &str) -> String {
     model
@@ -62,6 +75,8 @@ pub(crate) struct PoolError {
     pub(crate) message: String,
     /// Whether the failure originated locally rather than upstream.
     local: bool,
+    /// HTTP status returned by the upstream, if one was received.
+    status: Option<StatusCode>,
     /// Whether another credential may be tried.
     retryable: bool,
 }
@@ -72,6 +87,7 @@ impl PoolError {
         Self {
             message: message.into(),
             local: true,
+            status: None,
             retryable: false,
         }
     }
@@ -81,6 +97,7 @@ impl PoolError {
         Self {
             retryable: error.retryable(),
             message: error.message,
+            status: error.status,
             local: false,
         }
     }
@@ -90,7 +107,8 @@ impl PoolError {
         let retryable = retryable_status(error.upstream_status);
         Self {
             message: error.message,
-            local: true,
+            local: error.upstream_status.is_none(),
+            status: error.upstream_status,
             retryable,
         }
     }
@@ -104,7 +122,11 @@ impl PoolError {
                 "internal_error",
             )
         } else {
-            (StatusCode::BAD_GATEWAY, "upstream_error", "bad_gateway")
+            (
+                self.status.unwrap_or(StatusCode::BAD_GATEWAY),
+                "upstream_error",
+                "bad_gateway",
+            )
         };
         (
             status,
@@ -204,6 +226,12 @@ async fn chat_handler(
     if !permissions.allows_model(&req.model) {
         return model_forbidden();
     }
+    if req.max_completion_tokens.is_some() {
+        return unsupported_output_limit("max_completion_tokens");
+    }
+    if req.max_tokens.is_some() {
+        return unsupported_output_limit("max_tokens");
+    }
     let client = &state.providers.codex_client;
     let req = &req;
     let session = &session.id;
@@ -242,6 +270,9 @@ async fn responses_handler(
     if !permissions.allows_model(&req.model) {
         return model_forbidden();
     }
+    if req.max_output_tokens.is_some() {
+        return unsupported_output_limit("max_output_tokens");
+    }
     let client = &state.providers.codex_client;
     let req = &req;
     let session = &session.id;
@@ -271,6 +302,110 @@ async fn responses_handler(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn output_limits_are_rejected_for_both_api_modes() {
+        let database = crate::database::Database::open(":memory:").await.unwrap();
+        let settings = SettingsStore::new(
+            database.clone(),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )
+        .await
+        .unwrap();
+        let state = AppState {
+            providers: crate::provider::Providers::new(),
+            settings,
+            logs: crate::server::observability::LogStore::new(database),
+            dashboard_auth: crate::server::dashboard_auth_config::test_auth().await,
+        };
+        let permissions = Permissions {
+            providers: vec![],
+            models: vec![],
+        };
+        let provider = Provider {
+            id: "codex".into(),
+            name: "Codex".into(),
+            kind: "codex".into(),
+            base_url: String::new(),
+        };
+        let session = RequestSession { id: "test".into() };
+        for stream in [false, true] {
+            for field in ["max_tokens", "max_completion_tokens", "max_output_tokens"] {
+                let mut input = if field == "max_output_tokens" {
+                    serde_json::json!({"model":"test","input":"hello","stream":stream})
+                } else {
+                    serde_json::json!({"model":"test","messages":[{"role":"user","content":"hello"}],"stream":stream})
+                };
+                input[field] = serde_json::json!(10);
+                let response = if field == "max_output_tokens" {
+                    responses_handler(
+                        State(state.clone()),
+                        Extension(permissions.clone()),
+                        Extension(provider.clone()),
+                        Extension(session.clone()),
+                        None,
+                        Json(serde_json::from_value(input).unwrap()),
+                    )
+                    .await
+                } else {
+                    chat_handler(
+                        State(state.clone()),
+                        Extension(permissions.clone()),
+                        Extension(provider.clone()),
+                        Extension(session.clone()),
+                        None,
+                        Json(serde_json::from_value(input).unwrap()),
+                    )
+                    .await
+                };
+                assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+                let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+                    .await
+                    .unwrap();
+                let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(body["error"]["code"], "unsupported_parameter");
+                assert!(body["error"]["message"].as_str().unwrap().contains(field));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn exhausted_pool_returns_last_upstream_status() {
+        let mut attempts = Vec::new();
+        let result: Result<(), _> = try_credentials(
+            [StatusCode::UNAUTHORIZED, StatusCode::TOO_MANY_REQUESTS],
+            |status| {
+                attempts.push(status);
+                async move {
+                    Err(PoolError::upstream(UpstreamError {
+                        status: Some(status),
+                        message: "upstream failure".into(),
+                    }))
+                }
+            },
+        )
+        .await;
+        assert_eq!(
+            attempts,
+            [StatusCode::UNAUTHORIZED, StatusCode::TOO_MANY_REQUESTS]
+        );
+        let response = result.err().unwrap().response();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["error"]["message"], "upstream failure");
+        assert_eq!(
+            PoolError::upstream(UpstreamError {
+                status: None,
+                message: "network".into()
+            })
+            .response()
+            .status(),
+            StatusCode::BAD_GATEWAY
+        );
+    }
 
     #[tokio::test]
     async fn pool_retries_only_upstream_credential_statuses() {
