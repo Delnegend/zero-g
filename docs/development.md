@@ -88,6 +88,8 @@ The models in `backend/storage.rs` define the Turso schema. After changing them,
 
 The release workflow uses [Delnegend/actions](https://github.com/Delnegend/actions) for versioning and publication. It builds container images with pinned Docker actions so rebuilding an older tag cannot replace `latest`, and labels the image with the commit actually checked out. Version bumps follow the Conventional Commits contract:
 
+CI also builds the `linux/amd64` container without publishing it. The release runs this check before creating a version tag, so missing container build inputs stop the release early.
+
 Run `just version get` to inspect the current version. To change it without committing, run `just version bump X.Y.Z`, replacing `X.Y.Z` with the intended version.
 
 ## Contribution Workflow

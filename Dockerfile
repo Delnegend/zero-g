@@ -8,7 +8,6 @@ FROM rust:alpine AS builder
 RUN apk add --no-cache musl-dev clang-dev cmake make
 WORKDIR /app
 COPY Cargo.toml Cargo.lock build.rs ./
-COPY assets ./assets
 COPY backend ./backend
 COPY Toasty.toml ./
 COPY toasty ./toasty
