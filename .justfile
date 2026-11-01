@@ -89,7 +89,7 @@ build: frontend-build
 
 
 # Language-agnostic version contract for Delnegend/actions/resolve-release.
-# `just version get` prints X.Y.Z; `just version set X.Y.Z` rewrites manifests.
+# `just version get` prints X.Y.Z; `just version set X.Y.Z` updates manifests and API contracts.
 version action ver="":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -101,6 +101,7 @@ version action ver="":
         [ -n "{{ver}}" ] || { echo "usage: just version set X.Y.Z" >&2; exit 1; }
         sed -i -E '0,/^version = ".*"/s//version = "{{ver}}"/' Cargo.toml
         cargo check
+        just api-generate
         ;;
       *) echo "usage: just version get|set X.Y.Z" >&2; exit 1 ;;
     esac
