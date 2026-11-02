@@ -1,57 +1,111 @@
 # Architecture
 
-## Overview
-
-`zero-g` exposes one OpenAI-compatible API for multiple providers, plus `/v1/decisions` for OpenRouter's native Decisions API. Requests name a provider and model, such as `codex/gpt-5.3-codex`. Antigravity, Codex, Claude Code and Cursor requests are translated to their upstream protocols; Grok and Grok Build use separate xAI and CLI-proxy endpoints. OpenCode Go, Zen, OpenRouter and custom OpenAI-compatible providers are forwarded. Provider credentials, virtual keys, settings and request logs are stored in the local database.
+Zero-G provides a unified OpenAI-compatible interface (`/v1`) that translates and dispatches requests across multiple upstream LLM providers, with credential pooling, local SQLite/Turso persistence, and an integrated management dashboard.
 
 ```mermaid
 flowchart TD
-    Agent[Agent or API client] -->|Bearer virtual key and provider/model| API[Unified /v1 API]
-    Browser[Dashboard user] -->|Basic or OIDC| Dashboard[Dashboard API]
-    API -->|Check permissions| DB[(Turso database)]
-    Dashboard -->|Manage settings and credentials| DB
-    API --> Router[Provider dispatch]
-    Router -->|Load provider credentials| DB
-    Router --> AGY[Antigravity translation]
-    Router --> Codex[Codex translation]
-    Router --> Claude[Claude Code translation]
-    Router --> Cursor[Cursor agent protocol]
-    Router --> Grok[Grok and Grok Build]
-    Router --> Zen[Zen API]
-    Router --> Go[OpenCode Go]
-    Router --> OpenRouter[OpenRouter API]
-    Router --> Custom[OpenAI-compatible upstream]
-    AGY --> Google[Google Cloud Code Assist]
-    Codex --> OpenAI[ChatGPT backend]
-    API -->|Record inference requests| Logs[Observability]
-    Logs --> DB
+    Client[Client / Gateway / Agent] -->|Bearer Virtual Key + provider/model| V1["Unified /v1 API"]
+    Admin[Dashboard User] -->|Basic / OIDC Auth| Dash[Dashboard API]
+    
+    subgraph Storage ["Persistence (Turso/SQLite)"]
+        DB[(Local DB)]
+    end
+
+    V1 -->|Validate Key| DB
+    Dash -->|Manage Credentials & Settings| DB
+
+    V1 --> Dispatch[Provider Dispatch]
+    Dispatch -->|Load Active Credentials| DB
+
+    subgraph Translation ["Translated Providers"]
+        Dispatch --> AGY[Antigravity]
+        Dispatch --> Codex[Codex]
+        Dispatch --> Claude[Claude Code]
+        Dispatch --> Cursor[Cursor]
+        Dispatch --> Grok[Grok / Grok Build]
+    end
+
+    subgraph Passthrough ["Passthrough / Forwarded"]
+        Dispatch --> Zen[OpenCode Zen]
+        Dispatch --> Go[OpenCode Go]
+        Dispatch --> OpenRouter[OpenRouter + Decisions API]
+        Dispatch --> Custom[Custom OpenAI-Compatible]
+    end
+
+    AGY -->|Upstream SSE / gRPC| Google[Google Cloud Code Assist]
+    Codex -->|ChatGPT Backend| OpenAI[OpenAI API]
+    Claude -->|Interleaved Thinking| Anthropic[Anthropic API]
+    
+    V1 -.->|Log Request / Response| Logs[Observability Engine]
+    Logs -.-> DB
 ```
+
+---
 
 ## Core Components
 
-- **Axum HTTP Layer (`backend/server/`):** The unified `/v1` API requires a virtual key and dispatches `provider/model` IDs to provider-owned routers. Dashboard authentication and observability remain separate.
-- **Server endpoints (`backend/server/`):** Endpoint handlers live in dedicated files within their feature directories; shared storage, authentication, and middleware stay alongside them.
-- **Dashboard authentication (`backend/server/dashboard_auth_config.rs`):** Maps Zero-G configuration to `axum-auth-gate`, which implements Basic and OIDC authentication, discovery, PKCE, token exchange, signed ID-token validation, and process-local sessions. Signing keys are refreshed at login.
-- **Protocol Models (`backend/openai.rs`, `backend/responses.rs`):** Strongly typed Serde models for Chat Completions and Responses API inputs (prompts, messages, tool outputs).
-- **Auth Managers (`backend/provider/antigravity/auth.rs`, `backend/provider/codex/auth.rs`):** Hold the credential lock while using a shared loader, then refresh access tokens with provider-specific rules. Codex also reads account information from its token.
-- **Login Flows (`backend/provider/*/dashboard_login.rs`):** Each OAuth provider owns its dashboard sign-in and pending state. `backend/provider/login.rs` contains shared origin and credential checks and refresh locks.
-- **Provider interface (`backend/provider/common/`):** The `Provider` trait exposes model discovery, permission-aware discovery, and inference routers; separate traits describe optional quota and dashboard routes. Antigravity overrides model filtering to retain its variant rules. Shared upstream errors and OpenAI-compatible proxy checks live alongside them. `ProviderKind` in `backend/provider/mod.rs` uses one static registration list and dispatches without boxed futures.
-- **Provider routes (`backend/provider/*/`):** Each provider owns its protocol handling, model discovery and account-specific operations.
-- **Provider kinds (`backend/provider/mod.rs`):** Provider descriptors own labels and credential capabilities; the dashboard loads them from `/api/provider-kinds`.
-- **Credential pools (`backend/provider/credentials.rs`):** Store separately encrypted API keys and OAuth sessions per provider. Selection draws enabled, connected credentials in weighted order; upstream 401, 403 and 429 responses permit trying another credential before a response is sent. Legacy migration preserves credentials and refuses merges that would widen a virtual key's access.
-- **Model catalog (`backend/provider/catalog.rs`, `backend/server/model_catalog/`, `backend/server/model_setting/`):** Discovers models per provider, persists the last results and synchronized pricing/parameter datasheets, and refreshes them on configurable schedules. Discovery and both model-list endpoints share the `Model` type in `backend/openai.rs`, retaining extra provider metadata alongside common fields. The dashboard catalog combines these records with current cached datasheets and returns normalized display details and prices per million tokens; `/v1/models` keeps its OpenAI-compatible format. A failed provider or datasheet sync retains the last successful data.
-- **Model settings endpoints (`backend/server/model_setting/`):** `get.rs`, `update.rs`, and `sync.rs` own their respective API actions and tests; `datasheet.rs` handles downloads and filtering, and `schedule.rs` handles background refreshes.
-- **OpenAI-compatible provider (`backend/provider/openai/`):** Forwards model discovery, Chat Completions and Responses requests to the configured upstream API without translating between the two protocols. OpenAI-compatible and Grok discovery share bounded model-list parsing; OpenAI-compatible, Go and Zen routes share API-key retry handling while retaining their own header policies.
-- **OpenCode Go (`backend/provider/go/`):** Forwards both OpenAI APIs with the supplied session header, discovers Go models, and uses the same weighted credential failover.
-- **Account usage (`backend/provider/quota.rs`):** Dispatches to provider-owned quota implementations; Zen balance uses a separately encrypted Console session and workspace ID, while OpenRouter credits use a separate encrypted management key. Both enforce credential ownership in the same transaction as secret changes. The dashboard caches responses for five minutes and offers manual refresh; failed refreshes retain the previous reading.
-- **Codex tool history:** Function-call arguments are sent upstream as JSON strings, including when a Responses request supplies an object.
-- **Stream Parsers (`backend/provider/antigravity/stream.rs`, `backend/provider/codex/client.rs`):** Decode upstream SSE streams into standard OpenAI chat completion chunks or Responses API lifecycle events.
-- **Storage (`backend/database.rs`, `backend/storage.rs`):** A shared Toasty connection pool serves providers, settings, encrypted secrets, virtual keys and request logs. The settings store holds its validated 32-byte encryption key as an `EncryptionKey` type. Related changes use `transaction_with_retry!` to start a fresh transaction for each attempt; write conflicts are retried for up to five seconds, and callers decide whether to commit. Dashboard summaries use a consistent read snapshot. Embedded migrations run at startup.
-## Invariants & Guarantees
+| Component | Path / Location | Responsibility |
+|---|---|---|
+| **HTTP Layer** | `backend/server/` | Axum web server exposing `/v1` inference and dashboard endpoints. |
+| **Dashboard Auth** | `backend/server/dashboard_auth_config.rs` | Maps configuration to `axum-auth-gate` (Basic and OIDC + PKCE). |
+| **Protocol Types** | `backend/openai.rs`, `backend/responses.rs` | Strongly typed Serde models for Chat Completions and Responses API. |
+| **Auth Managers** | `backend/provider/*/auth.rs` | Token lifecycle, credential locking, and provider-specific refreshes. |
+| **Provider System** | `backend/provider/common/`, `backend/provider/*/` | `Provider` trait for routing, discovery, streaming, and error normalization. |
+| **Credential Pools** | `backend/provider/credentials.rs` | Encrypted credential storage, weighted load-balancing, and automatic failover on 401/403/429. |
+| **Catalog & Datasheets** | `backend/provider/catalog.rs`, `backend/server/model_setting/` | Model metadata, pricing synchronization, and background discovery polling. |
+| **Storage & Migrations** | `backend/database.rs`, `backend/storage.rs` | Toasty ORM over SQLite/Turso with retry-aware transactions and startup migrations. |
 
-- **OAuth Token Refresh:** When an Antigravity or Codex credential has a known expiration within 60 seconds, zero-g attempts to refresh it before the upstream request. Antigravity leaves credentials unchanged if no refresh token is available; Codex reports an error.
-- **Antigravity Endpoint Failover:** Generation and model discovery try `daily-cloudcode-pa.googleapis.com` first, then the sandbox endpoint after a connection failure or upstream 5xx response.
-- **Thought Signatures:** Antigravity returns signed text and reasoning in `provider_parts` and signed tool calls in `thought_signature`. Clients that replay these fields preserve signatures for the same provider and model. An unsigned first tool call uses `skip_thought_signature_validator`; later calls retain their order.
-- **Contiguous Tool Turns:** Consecutive tool results merge into a single contiguous `role: "user"` turn as required by Cloud Code Assist.
-- **Interrupted Translated Streams:** For Antigravity and Codex, an upstream failure or a stream ending without a terminal response is reported as an error rather than a successful completion. OpenAI-compatible pass-through streams retain upstream behavior.
-- **Claude Wire Handling:** Antigravity Claude requests include `anthropic-beta: interleaved-thinking-2025-05-14`. Tool mode follows the requested tool choice, defaulting to `VALIDATED`; requested output tokens are capped by the discovered model limit when one is available.
+---
+
+## Request & Data Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client
+    participant V1 as /v1 Router
+    participant Auth as Auth & DB
+    participant Pool as Credential Pool
+    participant Engine as Provider Engine
+    participant Upstream as Upstream Service
+
+    Client->>V1: POST /v1/chat/completions (model: "agy/claude-sonnet-4")
+    V1->>Auth: Verify Virtual Key & Model Permissions
+    Auth-->>V1: Authorized
+    V1->>Pool: Borrow weighted connected credential
+    Pool-->>V1: Credential (with OAuth access token)
+    
+    alt Needs Token Refresh (expires in < 60s)
+        V1->>Upstream: Refresh OAuth token
+        Upstream-->>V1: New Access Token
+    end
+
+    V1->>Engine: Translate OpenAI payload to Upstream format
+    Engine->>Upstream: Send translated request
+    
+    alt Upstream Error (401, 403, 429 before streaming)
+        Upstream-->>Engine: Failover status code
+        Engine->>Pool: Mark credential temporary failure, request next
+        Pool-->>Engine: Alternative Credential
+        Engine->>Upstream: Retry request
+    end
+
+    Upstream-->>Engine: Stream chunks (SSE)
+    Engine-->>V1: Translate to OpenAI stream chunks
+    V1-->>Client: Stream SSE chunks
+    V1-)Auth: Async log request & response metadata (capped at 256 KiB)
+```
+
+---
+
+## Invariants & Protocol Guarantees
+
+| Invariant | Scope | Rule |
+|---|---|---|
+| **OAuth Token Refresh** | Antigravity, Codex | Checked before request; if expiration is within 60s, token refresh triggers automatically. |
+| **Endpoint Failover** | Antigravity | Tries `daily-cloudcode-pa.googleapis.com` first; falls back to sandbox endpoint on network failure or 5xx. |
+| **Thought Signatures** | Antigravity | Preserves reasoning signatures via `provider_parts` and `thought_signature`. Missing first-tool signature triggers `skip_thought_signature_validator`. |
+| **Contiguous Tool Turns** | Cloud Code Assist | Successive tool output turns are merged into a single contiguous `user` role turn. |
+| **Interrupted Streams** | Antigravity, Codex | Broken streams without terminal response raise a clean downstream error instead of a truncated success marker. |
+| **Claude Wire Handling** | Claude (via AGY) | Includes `anthropic-beta: interleaved-thinking-2025-05-14`; tool mode defaults to `VALIDATED`; output tokens capped to catalog limit. |
+| **Payload Size Limit** | All `/v1` Endpoints | Requests capped at 20,000,000 bytes. Responses logged up to 256 KiB. |
