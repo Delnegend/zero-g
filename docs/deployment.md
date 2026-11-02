@@ -1,24 +1,102 @@
 # Deployment & Operations
 
-## Container deployment
+Zero-G is packaged as a lightweight Linux container image (`ghcr.io/delnegend/zero-g`) with an embedded SQLite/Turso database and frontend bundle.
 
-Zero-G releases are `linux/amd64` container images at `ghcr.io/delnegend/zero-g`. The supplied Compose file pulls `latest`, persists `/app/data` in the `zero-g-data` volume, and publishes port 8080 only on host loopback. Use a version tag in `compose.yml` to pin a release.
+---
 
-The current `latest` image is 0.5.8 and uses the older CLI. The setup below applies after the next container image is published.
+## Quick Deploy (Docker Compose)
 
-Download `compose.yml` and `.env.example` from the project, save the latter as `.env`, and restrict its permissions. Set `ZERO_G_ENCRYPTION_KEY` to the output of `openssl rand -base64 32`, keep it stable and back it up separately, and set a strong dashboard password. See the [quick start](../README.md#quick-start) for commands.
+```mermaid
+flowchart LR
+    Browser[Dashboard Admin] -->|Port 8080| Proxy[Reverse Proxy / Host Loopback]
+    Client[AI Gateway / SDK] -->|Port 8080| Proxy
+    Proxy -->|127.0.0.1:8080| Container[Zero-G Container]
+    Container --> Volume[(zero-g-data volume\n/app/data/zero-g-logs.db)]
+```
 
-Run `docker compose pull` and `docker compose up -d`, then check `curl --fail http://127.0.0.1:8080/health`. Sign in at `http://127.0.0.1:8080/`, create a provider and credential under **Providers**, then create and copy a virtual key under **Virtual keys**. Supply that key as the bearer token for inference requests.
+### 1. Configuration Setup
 
-Compose defaults `ZERO_G_BIND` to `0.0.0.0:8080` inside the container; the published port remains restricted to host loopback. If `.env` sets `ZERO_G_BIND`, it must be reachable from the container network. Set `ZERO_G_DASHBOARD_ORIGIN` to the exact browser-facing origin, and use HTTPS outside localhost.
+Create an environment file:
 
-Use `docker compose logs zero-g` to inspect logs. For updates, back up the database and encryption key, then run `docker compose pull` and `docker compose up -d`. Migrations are embedded in the image and applied at startup. Use the dashboard for provider sign-in, including remote Google callback URL paste and Codex device authorization.
+```bash
+# Generate encryption key
+echo "ZERO_G_ENCRYPTION_KEY=$(openssl rand -base64 32)" > .env
 
-## Upgrade, migration and backup
+# Set basic credentials and origins
+cat <<EOF >> .env
+ZERO_G_DASHBOARD_AUTH=basic
+ZERO_G_DASHBOARD_USERNAME=admin
+ZERO_G_DASHBOARD_PASSWORD=$(openssl rand -hex 16)
+ZERO_G_DASHBOARD_ORIGIN=http://127.0.0.1:8080
+EOF
+chmod 600 .env
+```
 
-Before upgrading, stop zero-g and back up the entire database and associated sidecar files, plus the encryption key stored separately and securely. The database holds private request/response bodies and credentials; the key is required to decrypt its secrets. Retain a protected copy of the old database for rollback. The embedded Toasty/Turso migrations run on startup; verify the upgraded service and provider sign-in before retiring the backup.
+### 2. Docker Compose File
 
-Older singleton credentials and key restrictions are not migrated to named providers. For those installations, create provider entries and sign in again, then create virtual keys for the intended provider IDs and update clients to use the shared `/v1` API.
+Save as `compose.yml`:
 
-On upgrading an existing named-provider database, built-in provider IDs are migrated to their fixed IDs, along with credential ownership and virtual-key provider restrictions. Update clients using old provider-prefixed model IDs. Startup refuses the migration if a destination ID is occupied, multiple active entries have the same built-in kind, or a key already grants the destination without granting the old ID; reconcile the reported conflict before retrying.
+```yaml
+services:
+  zero-g:
+    image: ghcr.io/delnegend/zero-g:latest
+    container_name: zero-g
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      - ZERO_G_BIND=0.0.0.0:8080
+      - ZERO_G_LOG_DB=/app/data/zero-g-logs.db
+    env_file:
+      - .env
+    volumes:
+      - zero-g-data:/app/data
 
+volumes:
+  zero-g-data:
+```
+
+### 3. Startup & Health Verification
+
+| Step | Command | Expected Output |
+|---|---|---|
+| **Start Service** | `docker compose up -d` | Container starts in background |
+| **Check Health** | `curl -f http://127.0.0.1:8080/health` | `HTTP 200 OK` |
+| **Inspect Logs** | `docker compose logs -f zero-g` | Migration status and listening banner |
+
+---
+
+## Upgrade & Migration Workflow
+
+Migrations are automatically applied on startup by the embedded Toasty ORM engine.
+
+```mermaid
+flowchart TD
+    Stop[1. Stop Container: docker compose stop zero-g] --> Backup[2. Backup DB Volume + ZERO_G_ENCRYPTION_KEY]
+    Backup --> Pull[3. Pull New Image: docker compose pull]
+    Pull --> Start[4. Start Container: docker compose up -d]
+    Start --> Migrate[5. Auto-Apply Embedded Migrations on Startup]
+    Migrate --> Check{6. Health Check}
+    Check -->|Pass| Ready[Upgrade Complete]
+    Check -->|Fail| Rollback[Restore DB backup + Previous Tag]
+```
+
+### Upgrade Checklist
+
+| Task | Action | Command |
+|---|---|---|
+| **1. Stop container** | Prevent write operations | `docker compose stop zero-g` |
+| **2. Backup database** | Copy SQLite database and journal | `docker run --rm -v zero-g_zero-g-data:/data -v $(pwd):/backup alpine cp /data/zero-g-logs.db /backup/` |
+| **3. Backup key** | Confirm `.env` key is preserved | `cat .env \| grep ZERO_G_ENCRYPTION_KEY` |
+| **4. Pull & Restart** | Run new version | `docker compose pull && docker compose up -d` |
+| **5. Verify status** | Confirm health and auth | `curl -f http://127.0.0.1:8080/health` |
+
+---
+
+## Backup & Recovery
+
+| Item | What to Backup | Why it's Critical |
+|---|---|---|
+| **Database File** | `/app/data/zero-g-logs.db` (+ any `-wal` / `-shm` sidecars) | Contains credentials, provider definitions, virtual keys, and request telemetry. |
+| **Encryption Key** | `ZERO_G_ENCRYPTION_KEY` | Without this key, existing stored credentials and secrets **cannot be decrypted**. |
+| **Dashboard Password / OIDC Config** | `.env` file | Needed for dashboard administrative access. |
