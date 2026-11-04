@@ -1,54 +1,16 @@
 import { afterEach, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
-import { JSDOM } from "jsdom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type * as TestingLibrary from "@testing-library/react/pure";
 import type * as CredentialUsageModule from "./components/CredentialUsage";
 
-const domGlobals = [
-  "window",
-  "document",
-  "navigator",
-  "HTMLElement",
-  "HTMLButtonElement",
-  "Element",
-  "Node",
-  "Document",
-  "ShadowRoot",
-  "NodeFilter",
-  "MutationObserver",
-  "getComputedStyle",
-  "Event",
-  "MouseEvent",
-  "CustomEvent",
-  "DOMException",
-  "SVGElement",
-] as const;
-
-let dom: JSDOM;
-let originalGlobals: Map<string, PropertyDescriptor | undefined>;
 let originalFetch: typeof fetch;
 let testingLibrary: typeof TestingLibrary;
 let CredentialUsage: typeof CredentialUsageModule.CredentialUsage;
 
 beforeEach(async () => {
-  dom = new JSDOM("<!doctype html><html><body></body></html>", {
-    url: "http://localhost",
-  });
-  originalGlobals = new Map(
-    [...domGlobals, "IS_REACT_ACT_ENVIRONMENT"].map((name) => [
-      name,
-      Object.getOwnPropertyDescriptor(globalThis, name),
-    ]),
-  );
+  document.body.innerHTML = "";
   originalFetch = globalThis.fetch;
-  for (const name of domGlobals) {
-    Object.defineProperty(globalThis, name, {
-      value: dom.window[name],
-      configurable: true,
-      writable: true,
-    });
-  }
   Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", {
     value: true,
     configurable: true,
@@ -62,11 +24,7 @@ beforeEach(async () => {
 afterEach(() => {
   testingLibrary.cleanup();
   globalThis.fetch = originalFetch;
-  for (const [name, descriptor] of originalGlobals) {
-    if (descriptor) Object.defineProperty(globalThis, name, descriptor);
-    else Reflect.deleteProperty(globalThis, name);
-  }
-  dom.window.close();
+  document.body.innerHTML = "";
 });
 
 function mount(connected = true) {

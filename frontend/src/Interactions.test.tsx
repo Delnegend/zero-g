@@ -1,6 +1,5 @@
 import { afterEach, test } from "node:test";
 import assert from "node:assert/strict";
-import { JSDOM } from "jsdom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
@@ -8,38 +7,6 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 
-const dom = new JSDOM("<!doctype html><html><body></body></html>", {
-  url: "http://localhost",
-});
-for (const name of [
-  "window",
-  "document",
-  "navigator",
-  "localStorage",
-  "HTMLElement",
-  "HTMLInputElement",
-  "HTMLButtonElement",
-  "Element",
-  "Node",
-  "Document",
-  "ShadowRoot",
-  "NodeFilter",
-  "MutationObserver",
-  "getComputedStyle",
-  "Event",
-  "MouseEvent",
-  "KeyboardEvent",
-  "CustomEvent",
-  "DOMException",
-  "SVGElement",
-  "DOMRect",
-] as const) {
-  Object.defineProperty(globalThis, name, {
-    value: dom.window[name],
-    configurable: true,
-    writable: true,
-  });
-}
 Object.defineProperty(globalThis, "scrollTo", {
   value() {},
   configurable: true,
@@ -79,15 +46,7 @@ Object.defineProperty(window, "IntersectionObserver", {
   value: ObserverStub,
   configurable: true,
 });
-Object.defineProperty(globalThis, "PointerEvent", {
-  value: dom.window.MouseEvent,
-  configurable: true,
-});
-Object.defineProperty(window, "PointerEvent", {
-  value: dom.window.MouseEvent,
-  configurable: true,
-});
-Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", {
+Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
   value() {},
   configurable: true,
 });
@@ -119,7 +78,7 @@ const {
   waitFor,
   getQueriesForElement,
 } = await import("@testing-library/react");
-const screen = getQueriesForElement(dom.window.document.body);
+const screen = getQueriesForElement(document.body);
 const userEvent = (await import("@testing-library/user-event")).default;
 const { SettingsPage } = await import("./routes/settings");
 const { KeysPage } = await import("./routes/keys");

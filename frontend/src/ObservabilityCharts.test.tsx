@@ -1,7 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
-import { JSDOM } from "jsdom";
+function parseDocument(html: string) {
+  document.body.innerHTML = html;
+  return document;
+}
 import { ObservabilityCharts } from "./ObservabilityCharts";
 import type { ObservabilityResponse } from "./server/api/generated/schemas";
 
@@ -94,7 +97,7 @@ test("input and output panels show independent reported totals and gaps", () => 
       comparison={{ ...comparison, data: { ...previous, buckets: prior } }}
     />,
   );
-  const document = new JSDOM(html).window.document;
+  const document = parseDocument(html);
   const charts = [...document.querySelectorAll(".request-chart")];
   assert.equal(charts.length, 6);
   const input = charts[2].parentElement!;
@@ -200,7 +203,7 @@ test("seven-day previous points overlay their matching bars despite missing curr
       }}
     />,
   );
-  const document = new JSDOM(html).window.document;
+  const document = parseDocument(html);
   const chart = document.querySelector(".request-chart");
   assert.ok(chart);
   const bars = [...chart.querySelectorAll("rect[fill]")];
@@ -254,7 +257,7 @@ test("sparse periods align selected boundaries rather than first activity", () =
       }}
     />,
   );
-  const document = new JSDOM(html).window.document;
+  const document = parseDocument(html);
   const chart = document.querySelector(".request-chart");
   assert.ok(chart);
   const bars = [...chart.querySelectorAll("rect[fill]")].slice(0, 3);
@@ -319,7 +322,7 @@ test("extra previous buckets retain their offsets beyond the current boundary", 
       }}
     />,
   );
-  const document = new JSDOM(html).window.document;
+  const document = parseDocument(html);
   const previousRows = document.querySelector(
     '[aria-label="Request volume previous period data"]',
   );
@@ -351,7 +354,7 @@ test("inclusive one-second edge buckets do not shift the previous series", () =>
       }}
     />,
   );
-  const document = new JSDOM(html).window.document;
+  const document = parseDocument(html);
   const previousRows = document.querySelector(
     '[aria-label="Request volume previous period data"]',
   );
@@ -399,7 +402,7 @@ test("model usage stacks only current models without previous period content", (
       }}
     />,
   );
-  const document = new JSDOM(html).window.document;
+  const document = parseDocument(html);
   const panels = [...document.querySelectorAll(".request-chart")];
   assert.equal(panels.length, 6);
   const chart = panels[4];

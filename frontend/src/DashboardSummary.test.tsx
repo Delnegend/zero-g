@@ -2,7 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { JSDOM } from "jsdom";
 import { ObservabilityPage } from "./routes/index";
 import { TooltipProvider } from "./components/ui/tooltip";
 import type { ObservabilityComparison } from "./server/api/observability";
@@ -48,7 +47,7 @@ function dashboard(
       </TooltipProvider>
     </QueryClientProvider>,
   );
-  const document = new JSDOM(html).window.document;
+  document.body.innerHTML = html;
   const section = document.querySelector('[aria-label="Request summary"]');
   assert.ok(section);
   return section;

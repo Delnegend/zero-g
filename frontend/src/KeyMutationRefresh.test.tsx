@@ -1,40 +1,7 @@
 import { afterEach, test } from "node:test";
 import assert from "node:assert/strict";
-import { JSDOM } from "jsdom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-const dom = new JSDOM("<!doctype html><html><body></body></html>", {
-  url: "http://localhost",
-});
-for (const name of [
-  "window",
-  "document",
-  "navigator",
-  "localStorage",
-  "HTMLElement",
-  "HTMLInputElement",
-  "HTMLButtonElement",
-  "Element",
-  "Node",
-  "Document",
-  "ShadowRoot",
-  "NodeFilter",
-  "MutationObserver",
-  "getComputedStyle",
-  "Event",
-  "MouseEvent",
-  "KeyboardEvent",
-  "CustomEvent",
-  "DOMException",
-  "SVGElement",
-  "DOMRect",
-] as const) {
-  Object.defineProperty(globalThis, name, {
-    value: dom.window[name],
-    configurable: true,
-    writable: true,
-  });
-}
 Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", {
   value: true,
   configurable: true,
@@ -67,10 +34,6 @@ for (const target of [globalThis, window]) {
     value: ObserverStub,
     configurable: true,
   });
-  Object.defineProperty(target, "PointerEvent", {
-    value: dom.window.MouseEvent,
-    configurable: true,
-  });
   Object.defineProperty(target, "requestAnimationFrame", {
     value: (callback: FrameRequestCallback) =>
       setTimeout(() => callback(Date.now()), 0),
@@ -81,7 +44,7 @@ for (const target of [globalThis, window]) {
     configurable: true,
   });
 }
-Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", {
+Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
   value() {},
   configurable: true,
 });
@@ -89,7 +52,7 @@ Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", {
 // Testing Library and Radix capture the document at import time, after JSDOM setup.
 const { act, render, within, cleanup, waitFor, getQueriesForElement } =
   await import("@testing-library/react");
-const screen = getQueriesForElement(dom.window.document.body);
+const screen = getQueriesForElement(document.body);
 const userEvent = (await import("@testing-library/user-event")).default;
 const { KeysPage } = await import("./routes/keys");
 const { TooltipProvider } = await import("./components/ui/tooltip");
@@ -179,7 +142,7 @@ function setup(operation: "create" | "revoke" | "expiration") {
 
 test("created token survives a failed list refresh and retry does not create another key", async () => {
   const state = setup("create");
-  const user = userEvent.setup({ document: dom.window.document });
+  const user = userEvent.setup({ document });
   await screen.findByText("No keys created yet.");
   await user.click(screen.getByRole("button", { name: "Create key" }));
   const dialog = await screen.findByRole("dialog");
@@ -218,7 +181,7 @@ test("created token survives a failed list refresh and retry does not create ano
 
 test("a later independent key-list refetch clears the stale-list warning", async () => {
   const state = setup("revoke");
-  const user = userEvent.setup({ document: dom.window.document });
+  const user = userEvent.setup({ document });
   await screen.findByText("CI key");
   await user.click(screen.getByRole("button", { name: "Revoke CI key" }));
   const dialog = await screen.findByRole("dialog");
@@ -238,7 +201,7 @@ test("a later independent key-list refetch clears the stale-list warning", async
 for (const operation of ["revoke", "expiration"] as const) {
   test(`${operation} succeeds even when the key list refresh fails`, async () => {
     const state = setup(operation);
-    const user = userEvent.setup({ document: dom.window.document });
+    const user = userEvent.setup({ document });
     await screen.findByText("CI key");
     await user.click(
       screen.getByRole("button", {
