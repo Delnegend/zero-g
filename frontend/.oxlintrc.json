@@ -1,9 +1,22 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["react", "typescript", "oxc"],
+  "jsPlugins": ["oxlint-tailwindcss"],
+  "settings": {
+    "tailwindcss": {
+      "entryPoint": "src/index.css"
+    }
+  },
   "ignorePatterns": ["src/routeTree.gen.ts"],
   "rules": {
     "react/rules-of-hooks": "error",
-    "react/only-export-components": "off"
+    "react/only-export-components": "off",
+    "tailwindcss/no-unknown-classes": [
+      "error",
+      {
+        "allowlist": ["request-body"]
+      }
+    ],
+    "tailwindcss/no-conflicting-classes": "error"
   }
 }

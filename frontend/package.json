@@ -35,6 +35,7 @@
     "orval": "^8.45.0",
     "oxc-transform-react": "^0.152.0",
     "oxlint": "^1.90.0",
+    "oxlint-tailwindcss": "^1.16.0",
     "redoc": "2.5.1",
     "tailwindcss": "^4.3.3",
     "typescript": "~7.0.2",
