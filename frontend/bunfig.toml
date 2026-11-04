@@ -4,3 +4,6 @@ minimumReleaseAge = 1209600
 
 [test]
 preload = "./happydom.ts"
+
+[fmt.sortTailwindcss]
+stylesheet = "./src/index.css"

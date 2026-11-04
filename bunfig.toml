@@ -1,2 +1,5 @@
 [fmt]
 ignorePatterns = ["frontend/src/routeTree.gen.ts"]
+
+[fmt.sortTailwindcss]
+stylesheet = "./frontend/src/index.css"

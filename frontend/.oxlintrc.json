@@ -17,6 +17,9 @@
         "allowlist": ["request-body"]
       }
     ],
-    "tailwindcss/no-conflicting-classes": "error"
+    "tailwindcss/no-conflicting-classes": "error",
+    "tailwindcss/no-deprecated-classes": "warn",
+    "tailwindcss/enforce-canonical": "warn",
+    "tailwindcss/enforce-sort-order": "warn"
   }
 }
