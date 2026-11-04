@@ -42,10 +42,10 @@ export function ProviderCard({
           <>
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
-                <h2 className="break-words text-lg font-semibold">
+                <h2 className="text-lg font-semibold wrap-break-word">
                   {provider.name}
                 </h2>
-                <p className="mt-1 break-all text-sm text-muted-foreground">
+                <p className="mt-1 text-sm break-all text-muted-foreground">
                   {kind?.label ?? provider.kind} · {provider.id}
                 </p>
               </div>
@@ -110,7 +110,7 @@ export function ProviderCard({
             {kind?.api_key &&
               provider.kind !== "zen" &&
               provider.kind !== "openrouter" && (
-                <p className="mt-2 break-all text-sm text-muted-foreground">
+                <p className="mt-2 text-sm break-all text-muted-foreground">
                   Upstream: {provider.base_url}
                 </p>
               )}

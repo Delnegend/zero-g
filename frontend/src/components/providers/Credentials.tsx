@@ -165,7 +165,7 @@ export function Credentials({
               className="flex min-w-0 flex-col gap-4 rounded-lg border p-3"
             >
               <div className="min-w-0">
-                <p className="break-words font-medium">
+                <p className="font-medium wrap-break-word">
                   {credential.name}
                   {credential.email && (
                     <span className="font-normal text-muted-foreground">

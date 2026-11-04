@@ -196,12 +196,12 @@ function ModelCard({
         >
           <TooltipTrigger
             ref={descriptionRef}
-            className="mt-1 line-clamp-3 break-words text-left text-sm text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-2"
+            className="mt-1 line-clamp-3 text-left text-sm wrap-break-word text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-2"
           >
             {description}
           </TooltipTrigger>
           <TooltipContent>
-            <span className="block max-h-[50vh] overflow-y-auto whitespace-pre-wrap break-words">
+            <span className="block max-h-[50vh] overflow-y-auto wrap-break-word whitespace-pre-wrap">
               {description}
             </span>
           </TooltipContent>
@@ -335,11 +335,11 @@ function CarouselEdgeFades() {
     <>
       <div
         aria-hidden="true"
-        className={`pointer-events-none absolute inset-y-0 left-0 w-4 bg-gradient-to-r from-background to-transparent transition-opacity duration-200 motion-reduce:transition-none ${canScrollPrev ? "opacity-100" : "opacity-0"}`}
+        className={`pointer-events-none absolute inset-y-0 left-0 w-4 bg-linear-to-r from-background to-transparent transition-opacity duration-200 motion-reduce:transition-none ${canScrollPrev ? "opacity-100" : "opacity-0"}`}
       />
       <div
         aria-hidden="true"
-        className={`pointer-events-none absolute inset-y-0 right-0 w-4 bg-gradient-to-l from-background to-transparent transition-opacity duration-200 motion-reduce:transition-none ${canScrollNext ? "opacity-100" : "opacity-0"}`}
+        className={`pointer-events-none absolute inset-y-0 right-0 w-4 bg-linear-to-l from-background to-transparent transition-opacity duration-200 motion-reduce:transition-none ${canScrollNext ? "opacity-100" : "opacity-0"}`}
       />
     </>
   );
@@ -478,7 +478,7 @@ export function ModelCatalogPage() {
         </Alert>
       )}
       <div className="mt-6 grid gap-3 sm:grid-cols-2">
-        <Label className="flex flex-col gap-2 items-start">
+        <Label className="flex flex-col items-start gap-2">
           Search models or providers
           <Input
             className={inputClass}

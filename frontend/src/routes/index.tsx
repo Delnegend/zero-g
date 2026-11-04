@@ -183,7 +183,7 @@ export function ObservabilityPage({
   return (
     <main
       aria-busy={loading}
-      className="mx-auto w-full min-w-0 max-w-7xl px-4 py-5 sm:px-6 lg:px-8"
+      className="mx-auto w-full max-w-7xl min-w-0 px-4 py-5 sm:px-6 lg:px-8"
     >
       <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold tracking-tight">Dashboard</h1>

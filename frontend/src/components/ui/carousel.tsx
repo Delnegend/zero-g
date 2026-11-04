@@ -129,9 +129,9 @@ function CarouselContent({ className, ...props }: React.ComponentProps<"div">) {
     <div
       ref={carouselRef}
       className={cn(
-        "overflow-x-auto scroll-smooth snap-x snap-mandatory [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+        "snap-x snap-mandatory scrollbar-none overflow-x-auto scroll-smooth [&::-webkit-scrollbar]:hidden",
         orientation === "vertical" &&
-          "overflow-y-auto overflow-x-hidden snap-y",
+          "snap-y overflow-x-hidden overflow-y-auto",
       )}
       data-slot="carousel-content"
     >

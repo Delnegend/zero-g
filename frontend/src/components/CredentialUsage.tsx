@@ -29,7 +29,7 @@ function ResetTime({ reset }: { reset: Date }) {
     .join(" ");
   return (
     <Tooltip>
-      <TooltipTrigger className="whitespace-nowrap text-left text-muted-foreground underline decoration-dotted underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2">
+      <TooltipTrigger className="text-left whitespace-nowrap text-muted-foreground underline decoration-dotted underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2">
         {minutes > 0 ? `Resets in ${relative}` : "Reset due"}
       </TooltipTrigger>
       <TooltipContent>{reset.toLocaleString()}</TooltipContent>
@@ -47,7 +47,7 @@ function WindowUsage({ window }: { window: QuotaWindow }) {
 
   return (
     <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5 text-sm @md:col-span-4 @md:grid-cols-subgrid">
-      <p className="min-w-0 break-words font-medium">{window.label}</p>
+      <p className="min-w-0 font-medium wrap-break-word">{window.label}</p>
       {known && (
         <Progress
           value={value}
@@ -96,7 +96,7 @@ export function CredentialUsage({
         />
       )}
       {connected && usage.isError && (
-        <p className="break-words text-sm text-destructive" role="alert">
+        <p className="text-sm wrap-break-word text-destructive" role="alert">
           {usage.data ? "Refresh failed" : "Usage unavailable"}:{" "}
           {message(usage.error)}
         </p>

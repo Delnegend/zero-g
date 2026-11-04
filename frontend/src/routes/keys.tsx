@@ -93,7 +93,7 @@ function ExpirationStatus({
     .join(" ");
   return (
     <Tooltip>
-      <TooltipTrigger className="whitespace-nowrap text-left text-muted-foreground underline decoration-dotted underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2">
+      <TooltipTrigger className="text-left whitespace-nowrap text-muted-foreground underline decoration-dotted underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2">
         {minutes > 0 ? `Expires in ${relative}` : "Expired"}
       </TooltipTrigger>
       <TooltipContent>{date.toLocaleString()}</TooltipContent>
@@ -362,7 +362,7 @@ export function KeysPage() {
     }
   }
   return (
-    <main className="mx-auto w-full min-w-0 max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
+    <main className="mx-auto w-full max-w-7xl min-w-0 px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
       <h1 className="text-3xl font-semibold tracking-tight">Virtual keys</h1>
       <p className="mt-2 text-sm text-muted-foreground">
         Create keys for inference access and restrict their providers and
@@ -602,7 +602,7 @@ export function KeysPage() {
               >
                 <div>
                   <h3 className="font-medium">{key.name}</h3>
-                  <p className="mt-1 break-all text-sm text-muted-foreground">
+                  <p className="mt-1 text-sm break-all text-muted-foreground">
                     Providers:{" "}
                     {key.providers.length ? key.providers.join(", ") : "All"} ·
                     Models: {key.models.length ? key.models.join(", ") : "All"}

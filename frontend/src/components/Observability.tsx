@@ -133,9 +133,9 @@ export function RequestLogs({
               </DrawerHeader>
               <div className="min-h-0 overflow-y-auto overscroll-contain p-4">
                 <dl className="flex min-w-0 flex-wrap gap-x-8 gap-y-2 text-sm">
-                  <div className="min-w-0 max-w-full">
+                  <div className="max-w-full min-w-0">
                     <dt className="text-muted-foreground">Path</dt>
-                    <dd className="break-all font-mono">{selected.path}</dd>
+                    <dd className="font-mono break-all">{selected.path}</dd>
                   </div>
                   <div>
                     <dt className="text-muted-foreground">Status</dt>
@@ -152,19 +152,19 @@ export function RequestLogs({
                       {formatTokens(selected.output_tokens)} out
                     </dd>
                   </div>
-                  <div className="min-w-0 max-w-full">
+                  <div className="max-w-full min-w-0">
                     <dt className="text-muted-foreground">Virtual key</dt>
-                    <dd className="break-words">
+                    <dd className="wrap-break-word">
                       {selected.virtual_key_name ??
                         selected.virtual_key_id ??
                         "Unknown"}
                     </dd>
                   </div>
-                  <div className="min-w-0 max-w-full">
+                  <div className="max-w-full min-w-0">
                     <dt className="text-muted-foreground">
                       Provider credential
                     </dt>
-                    <dd className="break-words">
+                    <dd className="wrap-break-word">
                       {selected.credential_name ??
                         selected.credential_id ??
                         "Unknown"}

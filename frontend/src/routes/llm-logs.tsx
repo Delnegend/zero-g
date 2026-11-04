@@ -46,11 +46,11 @@ export function LlmLogsPage({
   return (
     <main
       aria-busy={loading}
-      className="mx-auto w-full min-w-0 max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-12"
+      className="mx-auto w-full max-w-7xl min-w-0 px-4 py-8 sm:px-6 lg:px-8 lg:py-12"
     >
       <header className="mb-8 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+          <p className="mb-2 text-xs font-semibold tracking-widest text-muted-foreground uppercase">
             Zero-G
           </p>
           <h1 className="text-3xl font-semibold tracking-tight">LLM Logs</h1>

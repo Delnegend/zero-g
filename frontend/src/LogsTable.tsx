@@ -240,7 +240,7 @@ export function LogsTable({
         <div className="relative w-full sm:w-72">
           <Search
             aria-hidden="true"
-            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+            className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
           />
           <Input
             type="search"
@@ -248,7 +248,7 @@ export function LogsTable({
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search logs…"
-            className="h-9 w-full rounded-lg border border-input bg-background pl-9 pr-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+            className="h-9 w-full rounded-lg border border-input bg-background pr-3 pl-9 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
           />
         </div>
       </div>
@@ -298,8 +298,8 @@ export function LogsTable({
               />
               <div className="flex min-w-0 items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="break-all font-medium">{log.model}</p>
-                  <p className="break-all text-xs text-muted-foreground">
+                  <p className="font-medium break-all">{log.model}</p>
+                  <p className="text-xs break-all text-muted-foreground">
                     {log.provider}
                   </p>
                 </div>
@@ -315,7 +315,7 @@ export function LogsTable({
               </div>
               <p
                 title={log.path}
-                className="mt-3 inline-block max-w-full break-all rounded-sm bg-muted px-1.5 py-1 text-[11px] font-medium uppercase"
+                className="mt-3 inline-block max-w-full rounded-sm bg-muted px-1.5 py-1 text-[11px] font-medium break-all uppercase"
               >
                 {requestType(log.path)}
               </p>

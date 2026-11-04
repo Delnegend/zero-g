@@ -127,7 +127,7 @@ export function FilterGroup({
             />
           </div>
         )}
-        <div className="max-h-48 overflow-y-auto divide-y">
+        <div className="max-h-48 divide-y overflow-y-auto">
           {items.map((value) => (
             <label
               key={value}
@@ -185,7 +185,7 @@ function FilterContents({
   );
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-11 shrink-0 items-center justify-between border-b pl-5 pr-2">
+      <div className="flex h-11 shrink-0 items-center justify-between border-b pr-2 pl-5">
         {mobile ? (
           <SheetTitle className="text-sm font-semibold">
             Filters{count > 0 && ` (${count})`}

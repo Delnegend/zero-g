@@ -47,7 +47,7 @@ export function CopyDeviceCode({
         onClick={() => void copy()}
         className="relative w-fit overflow-hidden rounded px-1 text-left focus-visible:outline-2 focus-visible:outline-offset-2"
       >
-        <code className="select-none text-lg font-semibold">{code}</code>
+        <code className="text-lg font-semibold select-none">{code}</code>
         <span
           aria-hidden="true"
           className={`pointer-events-none absolute inset-0 flex items-center justify-center rounded bg-green-100 text-green-700 transition-opacity duration-150 motion-reduce:transition-none dark:bg-green-950 dark:text-green-400 ${feedback === "visible" ? "opacity-100" : "opacity-0"}`}
