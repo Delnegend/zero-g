@@ -16,7 +16,7 @@ import {
   type ColumnDef,
   type SortingState,
 } from "@tanstack/react-table";
-import { formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow } from "./lib/date";
 import { ArrowUpDown, ChevronLeft, ChevronRight, Search } from "lucide-react";
 import type { Log } from "./server/api/observability";
 import { Button } from "./components/ui/button";

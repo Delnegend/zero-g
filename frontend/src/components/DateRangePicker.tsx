@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { format } from "date-fns";
+import { formatDate } from "../lib/date";
 import { CalendarDays } from "lucide-react";
 import type { DateRange } from "react-day-picker";
 import { useIsMobile } from "../hooks/use-mobile";
@@ -38,7 +38,7 @@ export function DateRangePicker({
   const label =
     value.kind === "preset"
       ? presets.find((preset) => preset.value === value.value)?.label
-      : `${format(new Date(value.from * 1000), "LLL d, y")} – ${format(new Date(value.until * 1000), "LLL d, y")}`;
+      : `${formatDate(new Date(value.from * 1000))} – ${formatDate(new Date(value.until * 1000))}`;
 
   return (
     <Popover

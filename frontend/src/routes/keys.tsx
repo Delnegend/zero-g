@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { format } from "date-fns";
+import { formatDate, formatDateYMD } from "@/lib/date";
 import { CalendarDays } from "lucide-react";
 import { FilterGroup } from "@/components/ObservabilityFilters";
 import { Button } from "@/components/ui/button";
@@ -125,14 +125,14 @@ function ExpirationField({
               type="button"
               variant="outline"
               disabled={disabled}
-              aria-label={`Choose expiration date: ${selected ? `${format(selected, "PP")} ${time}` : "never expires"}`}
+              aria-label={`Choose expiration date: ${selected ? `${formatDate(selected)} ${time}` : "never expires"}`}
               className="w-full justify-start text-left font-normal"
             />
           }
         >
           <CalendarDays />
           <span className="min-w-0 truncate">
-            {selected ? `${format(selected, "PP")} · ${time}` : "Never expires"}
+            {selected ? `${formatDate(selected)} · ${time}` : "Never expires"}
           </span>
         </PopoverTrigger>
         <PopoverContent
@@ -145,8 +145,7 @@ function ExpirationField({
             selected={selected}
             defaultMonth={selected}
             onSelect={(day) => {
-              if (day)
-                onChange(`${format(day, "yyyy-MM-dd")}T${time || "23:59:59"}`);
+              if (day) onChange(`${formatDateYMD(day)}T${time || "23:59:59"}`);
             }}
           />
           <Label className="mx-3 flex items-center justify-between gap-3 border-t pt-3 text-sm">
