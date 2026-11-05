@@ -18,6 +18,7 @@ import {
   CredentialsResponse,
   CursorPollResponse,
   CursorStartResponse,
+  DashboardUser,
   GrokPollResponse,
   GrokStartResponse,
   KeyList,
@@ -45,12 +46,30 @@ import type {
   GetObservabilityParams,
   GrokPollInput,
   ManagementKey,
+  OidcCallbackParams,
   UpdateKey,
   UpdateProvider,
   UpdateSettings,
 } from "./schemas";
 
 import { request } from "../client";
+export const getCurrentUserUrl = () => {
+  return `/api/auth/user`;
+};
+
+/**
+ * @summary Returns the current dashboard user identity based on authentication configuration.
+ */
+export const currentUser = async (
+  options?: Parameters<typeof request>[1],
+): Promise<DashboardUser> => {
+  return request<DashboardUser>(getCurrentUserUrl(), {
+    ...options,
+    method: "GET",
+    schema: DashboardUser,
+  });
+};
+
 export const getListKeysUrl = () => {
   return `/api/keys`;
 };
@@ -1319,5 +1338,50 @@ export const updateSettings = async (
     },
     body: JSON.stringify(updateSettingsBody),
     schema: SettingsResponse,
+  });
+};
+
+export const getOidcCallbackUrl = (params?: OidcCallbackParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/auth/callback?${stringifiedParams}`
+    : `/auth/callback`;
+};
+
+/**
+ * @summary Consumes OIDC callback state and creates a session after successful verification.
+ */
+export const oidcCallback = async (
+  params?: OidcCallbackParams,
+  options?: Parameters<typeof request>[1],
+): Promise<unknown> => {
+  return request<unknown>(getOidcCallbackUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getLogoutUrl = () => {
+  return `/auth/logout`;
+};
+
+/**
+ * @summary Clears session cookies and redirects to the OIDC `end_session_endpoint` or dashboard root.
+ */
+export const logout = async (
+  options?: Parameters<typeof request>[1],
+): Promise<unknown> => {
+  return request<unknown>(getLogoutUrl(), {
+    ...options,
+    method: "POST",
   });
 };

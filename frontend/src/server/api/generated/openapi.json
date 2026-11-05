@@ -10,6 +10,25 @@
     "version": "0.6.1"
   },
   "paths": {
+    "/api/auth/user": {
+      "get": {
+        "tags": [],
+        "summary": "Returns the current dashboard user identity based on authentication configuration.",
+        "operationId": "currentUser",
+        "responses": {
+          "200": {
+            "description": "Current authenticated dashboard user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardUser"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/keys": {
       "get": {
         "tags": [],
@@ -1615,6 +1634,18 @@
         }
       }
     },
+    "/auth/logout": {
+      "post": {
+        "tags": [],
+        "summary": "Clears session cookies and redirects to the OIDC `end_session_endpoint` or dashboard root.",
+        "operationId": "logout",
+        "responses": {
+          "303": {
+            "description": "Redirect to end session endpoint or dashboard root after clearing session cookies"
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "tags": [],
@@ -2652,6 +2683,25 @@
           "url": {
             "type": "string",
             "description": "Cursor authorization URL."
+          }
+        }
+      },
+      "DashboardUser": {
+        "type": "object",
+        "description": "Authenticated dashboard user identity details.",
+        "required": ["name"],
+        "properties": {
+          "avatar": {
+            "type": ["string", "null"],
+            "description": "URL pointing to the user's profile picture or avatar."
+          },
+          "email": {
+            "type": ["string", "null"],
+            "description": "User's verified email address, if available."
+          },
+          "name": {
+            "type": "string",
+            "description": "User's display name."
           }
         }
       },

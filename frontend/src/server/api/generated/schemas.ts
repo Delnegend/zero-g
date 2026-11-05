@@ -723,6 +723,23 @@ export const CursorStartResponse = zod
 export type CursorStartResponse = zod.input<typeof CursorStartResponse>;
 export type CursorStartResponseOutput = zod.output<typeof CursorStartResponse>;
 
+export const DashboardUser = zod
+  .object({
+    avatar: zod
+      .string()
+      .nullish()
+      .describe("URL pointing to the user's profile picture or avatar."),
+    email: zod
+      .string()
+      .nullish()
+      .describe("User's verified email address, if available."),
+    name: zod.string().describe("User's display name."),
+  })
+  .describe("Authenticated dashboard user identity details.");
+
+export type DashboardUser = zod.input<typeof DashboardUser>;
+export type DashboardUserOutput = zod.output<typeof DashboardUser>;
+
 export const IdentityOption = zod
   .object({
     id: zod.string().describe("Stable identifier."),
@@ -2099,3 +2116,12 @@ export const UpdateSettingsBody = zod
 
 export type UpdateSettingsBody = zod.input<typeof UpdateSettingsBody>;
 export type UpdateSettingsBodyOutput = zod.output<typeof UpdateSettingsBody>;
+
+export const OidcCallbackParams = zod.object({
+  state: zod.string().optional(),
+  code: zod.string().optional(),
+  error: zod.string().optional(),
+});
+
+export type OidcCallbackParams = zod.input<typeof OidcCallbackParams>;
+export type OidcCallbackParamsOutput = zod.output<typeof OidcCallbackParams>;

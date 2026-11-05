@@ -11,8 +11,8 @@ export default defineConfig({
         transformer: (spec) => ({
           ...spec,
           paths: Object.fromEntries(
-            Object.entries(spec.paths ?? {}).filter(([path]) =>
-              path.startsWith("/api/"),
+            Object.entries(spec.paths ?? {}).filter(
+              ([path]) => path.startsWith("/api/") || path.startsWith("/auth/"),
             ),
           ),
         }),
