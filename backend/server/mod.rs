@@ -1,3 +1,5 @@
+/// Dashboard authentication routes.
+pub(crate) mod dashboard_auth;
 /// Dashboard authentication environment configuration.
 pub(crate) mod dashboard_auth_config;
 /// Health probe endpoint.
@@ -21,6 +23,7 @@ mod web;
 
 use axum::Router;
 use axum::routing::get;
+use dashboard_auth::{__path_current_user, __path_logout, DashboardUser};
 use health::__path_health_handler;
 use openapi::__path_openapi;
 use redoc::__path_redoc;
@@ -43,7 +46,10 @@ pub(crate) struct AppState {
 
 /// Health and API reference operations.
 #[derive(utoipa::OpenApi)]
-#[openapi(paths(health_handler, redoc, openapi))]
+#[openapi(
+    paths(health_handler, redoc, openapi, current_user, logout),
+    components(schemas(DashboardUser))
+)]
 pub(crate) struct Api;
 
 /// Assemble public provider routes and protected dashboard routes.
@@ -85,6 +91,7 @@ pub(crate) fn create_router(state: AppState) -> Router {
             "/api/keys/{id}/revoke",
             axum::routing::post(settings::revoke_key).with_state(state.settings.clone()),
         )
+        .route("/api/auth/user", get(dashboard_auth::current_user))
         .merge(registry::router(state.settings.clone()))
         .merge(provider::dashboard_router(&state))
         .merge(model_catalog::router(state.clone()))
@@ -94,6 +101,10 @@ pub(crate) fn create_router(state: AppState) -> Router {
 
     Router::new()
         .route("/health", get(health::health_handler))
+        .route(
+            "/auth/logout",
+            get(dashboard_auth::logout).post(dashboard_auth::logout),
+        )
         .merge(inference::router(&state))
         .layer(axum::middleware::from_fn_with_state(
             state.logs.clone(),
