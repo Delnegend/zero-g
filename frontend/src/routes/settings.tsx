@@ -20,9 +20,6 @@ export const Route = createFileRoute("/settings")({
   component: SettingsPage,
 });
 
-const inputClass =
-  "mt-1 h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
-
 export function SettingsPage() {
   const draftStarted = useRef(false);
   const [error, setError] = useState("");
@@ -129,7 +126,7 @@ export function SettingsPage() {
                 <Label className="block text-sm font-medium">
                   Log retention (days)
                   <Input
-                    className={inputClass}
+                    className="mt-1"
                     type="number"
                     min={1}
                     max={36500}

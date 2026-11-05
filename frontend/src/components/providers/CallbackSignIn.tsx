@@ -4,7 +4,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { message } from "@/server/api/client";
 import { finishClaudeSignIn, finishGoogleSignIn } from "@/server/api/providers";
-import { inputClass } from "./inputClass";
 import type { CallbackFlow } from "./signInFlow";
 import { useSignInPolling } from "./useSignInPolling";
 
@@ -94,7 +93,7 @@ export function CallbackSignIn({
               ? "Redirected callback URL"
               : "Authorization code or callback URL"}
             <Input
-              className={inputClass}
+              className="mt-1"
               required
               type={flow.kind === "google" ? "url" : "text"}
               autoComplete="off"

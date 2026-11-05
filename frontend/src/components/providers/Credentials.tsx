@@ -28,7 +28,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { CredentialConfiguration } from "./CredentialConfiguration";
-import { inputClass } from "./inputClass";
 
 export function Credentials({
   provider,
@@ -305,7 +304,7 @@ export function Credentials({
                   <Label className="block text-sm font-medium">
                     Name
                     <Input
-                      className={inputClass}
+                      className="mt-1"
                       required
                       value={field.state.value}
                       onBlur={field.handleBlur}
@@ -321,7 +320,7 @@ export function Credentials({
                   <Label className="block text-sm font-medium">
                     Weight
                     <Input
-                      className={inputClass}
+                      className="mt-1"
                       type="number"
                       required
                       min={1}
@@ -366,7 +365,7 @@ export function Credentials({
                               )
                             </span>
                             <Input
-                              className={inputClass}
+                              className="mt-1"
                               type="password"
                               required={
                                 provider.kind === "go" && editing === "new"

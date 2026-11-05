@@ -26,7 +26,6 @@ import {
   type Provider,
   type ProviderKind,
 } from "@/server/api/providers";
-import { inputClass } from "./inputClass";
 
 export function ProviderForm({
   provider,
@@ -145,7 +144,7 @@ export function ProviderForm({
                             changed)
                           </span>
                           <Input
-                            className={inputClass}
+                            className="mt-1"
                             required
                             minLength={1}
                             maxLength={64}
@@ -167,7 +166,7 @@ export function ProviderForm({
                         <Label className="block text-sm font-medium">
                           Name
                           <Input
-                            className={inputClass}
+                            className="mt-1"
                             required
                             value={field.state.value}
                             onBlur={field.handleBlur}
@@ -231,7 +230,7 @@ export function ProviderForm({
                       <Label className="block text-sm font-medium">
                         Upstream base URL
                         <Input
-                          className={inputClass}
+                          className="mt-1"
                           required={kind !== "go"}
                           type="url"
                           placeholder={
