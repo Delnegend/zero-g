@@ -137,7 +137,7 @@ function ExpirationField({
         </PopoverTrigger>
         <PopoverContent
           align="start"
-          className="w-[250px] max-w-[calc(100vw-1rem)] p-0"
+          className="w-62.5 max-w-[calc(100vw-1rem)] p-0"
         >
           <Calendar
             classNames={{ root: "rdp-root w-full" }}

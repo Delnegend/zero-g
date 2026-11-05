@@ -89,5 +89,6 @@ sequenceDiagram
 |---|---|---|
 | **Rust Lints** | [Namtao strict Clippy](https://www.namtao.com/rust/#strict-lints) | Pedantic, nursery, missing docs on private items check (`just check`). |
 | **Frontend Compiler** | Oxc React Compiler | Automatic memoization of eligible React components. |
+| **Tailwind classes** | Canonical names and spacing-scale suggestions | Oxlint warns when a hardcoded length matches a theme token; suggestions can change sizing if the theme or root font size changes. |
 | **Audits & Deps** | OSV Scanner | `osv-scanner.toml` contains policy and temporary waivers. |
 | **Migrations** | Zero uncommitted schema changes | Startup applies only committed Toasty migrations. |
