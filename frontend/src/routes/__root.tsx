@@ -8,9 +8,11 @@ import {
 import { Activity, Boxes, KeyRound, Moon, Settings, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { NavUser } from "@/components/NavUser";
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarHeader,
   SidebarInset,
@@ -162,6 +164,9 @@ function DashboardSidebar() {
           </nav>
         </SidebarGroup>
       </SidebarContent>
+      <SidebarFooter>
+        <NavUser />
+      </SidebarFooter>
     </Sidebar>
   );
 }

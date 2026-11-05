@@ -20,7 +20,7 @@ function dashboardAuth(): Plugin {
           ["/agy/", "/codex/", "/zen/", "/openai/", "/go/"].some((prefix) =>
             pathname.startsWith(prefix),
           ) ||
-          pathname === "/auth/callback"
+          pathname.startsWith("/auth/")
         ) {
           next();
           return;
@@ -110,7 +110,7 @@ export default defineConfig({
       "/openai": { target: "http://127.0.0.1:8080", changeOrigin: false },
       "/redoc": { target: "http://127.0.0.1:8080", changeOrigin: false },
       "/api": { target: "http://127.0.0.1:8080", changeOrigin: false },
-      "/auth/callback": {
+      "/auth": {
         target: "http://127.0.0.1:8080",
         changeOrigin: false,
       },
