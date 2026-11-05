@@ -50,11 +50,11 @@ The published image is `ghcr.io/delnegend/zero-g:latest`; use a version tag to p
 
 ## Highlights
 
-- **Unified API** — All providers share `/v1`; model IDs include the provider ID. OpenRouter Decisions models use `/v1/decisions`.
-- **Multi-Provider Backends** — Connect Antigravity, Codex, Claude Code, Cursor, Grok, Grok Build, OpenCode Zen and Go, OpenRouter, and OpenAI-compatible upstreams.
-- **OAuth Refresh** — Refreshes supported access tokens on demand when they approach expiration.
-- **Claude & Gemini Support** — Formats Anthropic thinking beta headers, system instructions, and tool calling signatures automatically.
-- **Multi-Turn Tool Calling** — End-to-end function declaration, execution, and tool response turn merging.
+- **Unified API:** All providers share `/v1`; model IDs include the provider ID. OpenRouter Decisions models use `/v1/decisions`.
+- **Multi-Provider Backends:** Connect Antigravity, Codex, Claude Code, Cursor, Grok, Grok Build, OpenCode Zen and Go, OpenRouter, and OpenAI-compatible upstreams.
+- **OAuth Refresh:** Refreshes supported access tokens on demand when they approach expiration.
+- **Claude & Gemini Support:** Formats Anthropic thinking beta headers, system instructions, and tool calling signatures automatically.
+- **Multi-Turn Tool Calling:** End-to-end function declaration, execution, and tool response turn merging.
 
 ## Running
 
@@ -84,11 +84,11 @@ For component boundaries, internal translation, and state invariants, see **[Arc
 
 ## Documentation
 
-- **[Configuration](docs/configuration.md)** — Environment variables, dashboard settings, and credentials.
-- **[Architecture](docs/architecture.md)** — Request envelopes, streaming translation, and invariants.
-- **[Gateway Integration](docs/gateways.md)** — LiteLLM and Bifrost provider configuration.
-- **[Deployment](docs/deployment.md)** — Container setup, updates, and backups.
-- **[Development](docs/development.md)** — Prerequisites, `just check` gate, and test suite.
+- **[Configuration](docs/configuration.md):** Environment variables, dashboard settings, and credentials.
+- **[Architecture](docs/architecture.md):** Request envelopes, streaming translation, and invariants.
+- **[Gateway Integration](docs/gateways.md):** LiteLLM and Bifrost provider configuration.
+- **[Deployment](docs/deployment.md):** Container setup, updates, and backups.
+- **[Development](docs/development.md):** Prerequisites, `just check` gate, and test suite.
 
 ## License
 

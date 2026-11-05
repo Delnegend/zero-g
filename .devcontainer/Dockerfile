@@ -32,14 +32,14 @@ USER dev
 ENV CARGO_HOME=/usr/local/cargo
 ENV PATH="/usr/local/cargo/bin:${PATH}"
 
-# Rust stable toolchain (minimal) + analyzer/fmt/clippy + musl target —
+# Rust stable toolchain (minimal) + analyzer/fmt/clippy + musl target:
 # pre-installed so the container works even if postCreateCommand is skipped
 # (e.g. Zed). Native build stays gnu.
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal --no-modify-path && \
     /usr/local/cargo/bin/rustup component add rust-analyzer rustfmt clippy && \
     /usr/local/cargo/bin/rustup target add x86_64-unknown-linux-musl
 
-# mold — pinned to keep linker fast/reproducible; also configure cargo to use it
+# mold: pinned to keep linker fast/reproducible; also configure cargo to use it
 # for native (gnu) builds. Note: project .cargo/config.toml (incremental=false)
 # merges with this CARGO_HOME-level config.
 RUN curl -fsSL -o /tmp/mold.tar.gz "https://github.com/rui314/mold/releases/download/v${MOLD_VERSION}/mold-${MOLD_VERSION}-x86_64-linux.tar.gz" && \

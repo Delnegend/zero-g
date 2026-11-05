@@ -1231,7 +1231,7 @@ mod tests {
     }
 
     /// Single call: deltas arrive first and the `done` event repeats the full
-    /// arguments — replacing must not duplicate them.
+    /// arguments; replacing must not duplicate them.
     #[test]
     fn test_single_tool_call_deltas_then_done_are_not_duplicated() {
         let mut sse = String::new();

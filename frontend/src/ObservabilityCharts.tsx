@@ -89,7 +89,7 @@ function GraphTrend({
   const value = isNew
     ? "New"
     : change === null
-      ? "—"
+      ? "-"
       : change !== 0 && Math.abs(change) < 0.01
         ? "<0.01%"
         : `${number.format(Math.abs(change))}%`;

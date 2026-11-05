@@ -136,11 +136,11 @@ function ModelCard({
   const number = (value: unknown) =>
     typeof value === "number" && Number.isFinite(value)
       ? value.toLocaleString()
-      : "—";
+      : "-";
   const cost = (value: unknown) =>
     typeof value === "number" && Number.isFinite(value)
       ? `$${value.toLocaleString(undefined, { maximumFractionDigits: 6 })}`
-      : "—";
+      : "-";
   const title = model.display_name;
   const efforts = model.reasoning_efforts;
   const description = model.description;

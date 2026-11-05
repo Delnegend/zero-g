@@ -4400,7 +4400,7 @@ message AgentStoreConflictResult {
    }
 }
 
-// ===== Git diff (upstream aiserver.v1; declared here in agent.v1 — the exec channel is binary
+// ===== Git diff (upstream aiserver.v1; declared here in agent.v1; the exec channel is binary
 // protobuf, so field numbers, not type names, define wire compatibility) =====
 
 enum GetDiffRequest_OutputFormat {
@@ -4478,7 +4478,7 @@ message GetDiffResponse {
 // The streamed `ToolCall` wrappers for the Pi exec frames. Their `args`/`result`
 // payloads are field-identical to the `Pi*Exec*` messages above (verified against
 // the modern CLI's `pi_*_tool_pb.js`), and the exec channel is binary protobuf,
-// so field numbers — not type names — define wire compatibility. Reusing the
+// so field numbers, not type names, define wire compatibility. Reusing the
 // exec messages keeps one shape per Pi tool instead of two that must stay in sync.
 
 message PiReadToolCall {
