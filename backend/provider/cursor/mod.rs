@@ -35,7 +35,7 @@ pub(crate) struct Backend;
 impl super::common::Provider for Backend {
     const DESCRIPTOR: super::common::ProviderDescriptor = super::common::ProviderDescriptor {
         value: "cursor",
-        label: "Cursor",
+        label: None,
         oauth: true,
         api_key: false,
         fixed_id: Some("cursor"),

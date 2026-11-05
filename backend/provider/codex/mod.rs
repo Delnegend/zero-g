@@ -24,7 +24,7 @@ pub(crate) struct Backend;
 impl super::common::Provider for Backend {
     const DESCRIPTOR: super::common::ProviderDescriptor = super::common::ProviderDescriptor {
         value: "codex",
-        label: "Codex (OpenAI)",
+        label: None,
         oauth: true,
         api_key: false,
         fixed_id: Some("codex"),

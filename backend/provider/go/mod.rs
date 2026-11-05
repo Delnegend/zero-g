@@ -333,7 +333,7 @@ impl super::openai::ModelEndpoint for Backend {
 impl super::common::Provider for Backend {
     const DESCRIPTOR: super::common::ProviderDescriptor = super::common::ProviderDescriptor {
         value: "go",
-        label: "OpenCode Go",
+        label: None,
         oauth: false,
         api_key: true,
         fixed_id: Some("go"),

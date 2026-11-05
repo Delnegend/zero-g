@@ -55,6 +55,7 @@ flowchart TD
 ## Providers & Authentication Methods
 
 Manage providers under **Models → Providers** in the dashboard.
+Built-in provider cards show their name without a separate type label. Custom OpenAI-compatible providers also show their type and ID.
 
 | Provider | Type | ID | Auth Mechanism | Setup / Credentials |
 |---|---|---|---|---|

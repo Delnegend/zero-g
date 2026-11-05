@@ -129,7 +129,7 @@ pub(crate) struct Backend;
 impl super::common::Provider for Backend {
     const DESCRIPTOR: super::common::ProviderDescriptor = super::common::ProviderDescriptor {
         value: "agy",
-        label: "Antigravity (Google)",
+        label: None,
         oauth: true,
         api_key: false,
         fixed_id: Some("agy"),

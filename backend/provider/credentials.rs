@@ -544,16 +544,19 @@ pub(crate) async fn migrate_legacy(store: &SettingsStore) -> Result<(), String> 
         let kind = crate::provider::ProviderKind::from_str(&provider.kind)
             .ok_or_else(|| format!("Unsupported provider kind: {}", provider.kind))?;
         let descriptor = kind.descriptor();
+        let name = descriptor
+            .label
+            .or(descriptor.fixed_name)
+            .unwrap_or(descriptor.value);
         if descriptor.legacy.same_base {
             let url = reqwest::Url::parse(provider.base_url.trim_end_matches('/'))
-                .map_err(|e| format!("Invalid existing {} provider URL: {e}", descriptor.label))?;
+                .map_err(|e| format!("Invalid existing {name} provider URL: {e}"))?;
             if singleton_urls
                 .get(&provider.kind)
                 .is_some_and(|existing| existing != &url)
             {
                 return Err(format!(
-                    "Existing {} providers use different base URLs. Reconcile them before upgrading; no credentials have been changed.",
-                    descriptor.label
+                    "Existing {name} providers use different base URLs. Reconcile them before upgrading; no credentials have been changed."
                 ));
             }
             singleton_urls.insert(provider.kind.clone(), url);

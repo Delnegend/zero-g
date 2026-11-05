@@ -24,7 +24,7 @@ pub(crate) struct BuildBackend;
 impl Provider for Backend {
     const DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
         value: "grok",
-        label: "Grok (xAI)",
+        label: None,
         oauth: true,
         api_key: false,
         fixed_id: Some("grok"),
@@ -49,7 +49,7 @@ impl Provider for Backend {
 impl Provider for BuildBackend {
     const DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
         value: "grok-build",
-        label: "Grok Build",
+        label: None,
         oauth: true,
         api_key: false,
         fixed_id: Some("grok-build"),

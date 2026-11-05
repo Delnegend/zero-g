@@ -1576,7 +1576,12 @@ export const ProviderDescriptor = zod
       .string()
       .nullable()
       .describe("Fixed provider instance name, when applicable."),
-    label: zod.string().describe("Display name for the provider kind."),
+    label: zod
+      .string()
+      .nullable()
+      .describe(
+        "Display name for the provider kind, when different from its fixed name.",
+      ),
     oauth: zod.boolean().describe("Whether OAuth credentials are supported."),
     value: zod.string().describe("Stable provider kind identifier."),
   })
@@ -1602,7 +1607,12 @@ export const ProviderKindsResponse = zod
               .string()
               .nullable()
               .describe("Fixed provider instance name, when applicable."),
-            label: zod.string().describe("Display name for the provider kind."),
+            label: zod
+              .string()
+              .nullable()
+              .describe(
+                "Display name for the provider kind, when different from its fixed name.",
+              ),
             oauth: zod
               .boolean()
               .describe("Whether OAuth credentials are supported."),

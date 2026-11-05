@@ -225,7 +225,7 @@ pub(crate) fn forward(response: reqwest::Response) -> Response {
 impl super::common::Provider for Backend {
     const DESCRIPTOR: super::common::ProviderDescriptor = super::common::ProviderDescriptor {
         value: "openai",
-        label: "OpenAI-compatible",
+        label: Some("OpenAI-compatible"),
         oauth: false,
         api_key: true,
         fixed_id: None,

@@ -130,7 +130,7 @@ pub(crate) fn catalog_info(model: &crate::openai::Model) -> common::catalog::Cat
 impl common::Provider for Backend {
     const DESCRIPTOR: common::ProviderDescriptor = common::ProviderDescriptor {
         value: "openrouter",
-        label: "OpenRouter",
+        label: None,
         oauth: false,
         api_key: true,
         fixed_id: Some("openrouter"),

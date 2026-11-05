@@ -59,8 +59,9 @@ pub(crate) trait DashboardProvider {
 pub(crate) struct ProviderDescriptor {
     /// Stable provider kind identifier.
     pub(crate) value: &'static str,
-    /// Display name for the provider kind.
-    pub(crate) label: &'static str,
+    /// Display name for the provider kind, when different from its fixed name.
+    #[schema(required = true)]
+    pub(crate) label: Option<&'static str>,
     /// Whether OAuth credentials are supported.
     pub(crate) oauth: bool,
     /// Whether API key credentials are supported.

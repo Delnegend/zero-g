@@ -833,6 +833,13 @@ mod tests {
                     && kind["fixed_id"] == "agy"
                     && kind["fixed_name"] == "Google Antigravity")
         );
+        for kind in kinds["kinds"].as_array().unwrap() {
+            if kind["fixed_name"].is_string() {
+                assert!(kind["label"].is_null());
+            } else if kind["value"] == "openai" {
+                assert_eq!(kind["label"], "OpenAI-compatible");
+            }
+        }
         assert_eq!(
             request(
                 &router,

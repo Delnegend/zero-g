@@ -207,7 +207,7 @@ pub(crate) struct Backend;
 impl super::common::Provider for Backend {
     const DESCRIPTOR: super::common::ProviderDescriptor = super::common::ProviderDescriptor {
         value: "zen",
-        label: "Zen (OpenCode)",
+        label: None,
         oauth: false,
         api_key: true,
         fixed_id: Some("zen"),

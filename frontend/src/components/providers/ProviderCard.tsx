@@ -45,9 +45,11 @@ export function ProviderCard({
                 <h2 className="text-lg font-semibold wrap-break-word">
                   {provider.name}
                 </h2>
-                <p className="mt-1 text-sm break-all text-muted-foreground">
-                  {kind?.label ?? provider.kind} · {provider.id}
-                </p>
+                {kind?.label && (
+                  <p className="mt-1 text-sm break-all text-muted-foreground">
+                    {kind.label} · {provider.id}
+                  </p>
+                )}
               </div>
               <div className="flex shrink-0 gap-2">
                 {kind &&

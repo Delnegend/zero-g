@@ -192,7 +192,10 @@ export function ProviderForm({
             <form.Field name="kind">
               {(field) => (
                 <Select
-                  items={kinds.map(({ value, label }) => ({ value, label }))}
+                  items={kinds.map(({ value, label, fixed_name }) => ({
+                    value,
+                    label: label ?? fixed_name ?? value,
+                  }))}
                   disabled={!!provider}
                   value={field.state.value}
                   onValueChange={(value) => {
@@ -205,9 +208,9 @@ export function ProviderForm({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {kinds.map(({ value, label }) => (
+                    {kinds.map(({ value, label, fixed_name }) => (
                       <SelectItem key={value} value={value}>
-                        {label}
+                        {label ?? fixed_name ?? value}
                       </SelectItem>
                     ))}
                   </SelectContent>

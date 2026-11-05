@@ -3395,8 +3395,8 @@
             "description": "Fixed provider instance name, when applicable."
           },
           "label": {
-            "type": "string",
-            "description": "Display name for the provider kind."
+            "type": ["string", "null"],
+            "description": "Display name for the provider kind, when different from its fixed name."
           },
           "oauth": {
             "type": "boolean",

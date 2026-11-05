@@ -108,6 +108,45 @@ function mount(element: React.ReactNode) {
 }
 
 const settings = { log_retention_days: 30 };
+test("built-in provider names remain visible without an extra label", async () => {
+  globalThis.fetch = (async () =>
+    Response.json({ credentials: [] })) as typeof fetch;
+  const kind = {
+    value: "zen",
+    label: null,
+    api_key: true,
+    oauth: false,
+    fixed_id: "zen",
+    fixed_name: "OpenCode Zen",
+  };
+  const view = mount(
+    <TooltipProvider>
+      <ProviderCard
+        provider={{
+          id: "zen",
+          name: "OpenCode Zen",
+          kind: "zen",
+          base_url: "",
+        }}
+        kind={kind}
+        onEdit={() => {}}
+        onDelete={() => {}}
+        deleting={false}
+      />
+    </TooltipProvider>,
+  );
+  assert.ok(screen.getByRole("heading", { name: "OpenCode Zen" }));
+  assert.equal(screen.queryByText(/· zen/), null);
+  await screen.findByText("No credentials configured.");
+  view.unmount();
+  mount(<ProviderForm kinds={[kind]} onDone={() => {}} onCancel={() => {}} />);
+  assert.ok(
+    screen
+      .getByRole("combobox", { name: "Kind" })
+      .textContent?.includes("OpenCode Zen"),
+  );
+});
+
 test("provider save stays open on failure and closes after a successful retry", async () => {
   let attempts = 0;
   let closed = false;
