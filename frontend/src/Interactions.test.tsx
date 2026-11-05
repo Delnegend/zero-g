@@ -1691,11 +1691,15 @@ test("dashboard filters graphs and changes the time range without showing logs",
     JSON.parse(new URLSearchParams(history.location.search).get("statuses")!),
     ["error"],
   );
-  history.back();
+  await act(async () => {
+    history.back();
+  });
   await waitFor(() =>
     assert.equal(requests.at(-1)?.searchParams.has("statuses"), false),
   );
-  history.forward();
+  await act(async () => {
+    history.forward();
+  });
   await waitFor(() =>
     assert.deepEqual(
       JSON.parse(requests.at(-1)!.searchParams.get("statuses")!),
