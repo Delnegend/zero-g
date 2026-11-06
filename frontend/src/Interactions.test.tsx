@@ -128,6 +128,7 @@ test("built-in provider names remain visible without an extra label", async () =
           name: "OpenCode Zen",
           kind: "zen",
           base_url: "",
+          keyless: false,
         }}
         kind={kind}
         onEdit={() => {}}
@@ -161,6 +162,7 @@ test("provider save stays open on failure and closes after a successful retry", 
             name: "Codex",
             kind: "codex",
             base_url: "",
+            keyless: false,
           });
     }
     throw new Error("Unexpected request");
@@ -305,6 +307,7 @@ test("adding a credential saves it and shows it in the list", async () => {
           name: "Alpha",
           kind: "openai",
           base_url: "https://example.test",
+          keyless: false,
         }}
         kind={{
           value: "openai",
@@ -328,6 +331,82 @@ test("adding a credential saves it and shows it in the list", async () => {
   );
   await screen.findByText("Production");
   assert.equal(screen.queryByRole("dialog"), null);
+});
+
+test("keyless provider hides credentials and add button on provider card", async () => {
+  globalThis.fetch = (async () =>
+    Response.json({ credentials: [] })) as typeof fetch;
+  mount(
+    <TooltipProvider>
+      <ProviderCard
+        provider={{
+          id: "ollama",
+          name: "Ollama",
+          kind: "openai",
+          base_url: "http://localhost:11434/v1",
+          keyless: true,
+        }}
+        kind={{
+          value: "openai",
+          label: "OpenAI-compatible",
+          api_key: true,
+          oauth: false,
+          fixed_id: null,
+          fixed_name: null,
+        }}
+        onEdit={() => {}}
+        onDelete={() => {}}
+        deleting={false}
+      />
+    </TooltipProvider>,
+  );
+  assert.ok(screen.getByRole("heading", { name: "Ollama" }));
+  assert.ok(screen.getByText(/Keyless/));
+  assert.equal(screen.queryByRole("button", { name: "Add credential" }), null);
+  assert.equal(screen.queryByText("Credentials"), null);
+});
+
+test("keyless provider allows immediate deletion even if credentials exist", async () => {
+  globalThis.fetch = (async () =>
+    Response.json({
+      credentials: [
+        {
+          id: "one",
+          name: "Leftover",
+          weight: 1,
+          enabled: true,
+          connected: true,
+        },
+      ],
+    })) as typeof fetch;
+  mount(
+    <TooltipProvider>
+      <ProviderCard
+        provider={{
+          id: "ollama",
+          name: "Ollama",
+          kind: "openai",
+          base_url: "http://localhost:11434/v1",
+          keyless: true,
+        }}
+        kind={{
+          value: "openai",
+          label: "OpenAI-compatible",
+          api_key: true,
+          oauth: false,
+          fixed_id: null,
+          fixed_name: null,
+        }}
+        onEdit={() => {}}
+        onDelete={() => {}}
+        deleting={false}
+      />
+    </TooltipProvider>,
+  );
+  const deleteButton = screen.getByRole("button", { name: "Delete Ollama" });
+  await waitFor(() =>
+    assert.equal((deleteButton as HTMLButtonElement).disabled, false),
+  );
 });
 
 test("credential editing retains a blank API key unless keyless is selected", async () => {
@@ -374,6 +453,7 @@ test("credential editing retains a blank API key unless keyless is selected", as
         name: "Alpha",
         kind: "openai",
         base_url: "https://example.test",
+        keyless: false,
       }}
       kind={{
         value: "openai",
@@ -401,22 +481,16 @@ test("credential editing retains a blank API key unless keyless is selected", as
   await screen.findByText(/Weight: 1.*Enabled.*Connected/);
   await user.click(screen.getByRole("button", { name: "Edit Renamed" }));
   dialog = await screen.findByRole("dialog");
-  await user.click(
-    within(dialog).getByRole("checkbox", { name: "Use a keyless upstream" }),
-  );
-  assert.equal(
-    (within(dialog).getByLabelText(/^API key/) as HTMLInputElement).disabled,
-    true,
-  );
+  await user.type(within(dialog).getByLabelText(/^API key/), "new-secret");
   await user.click(
     within(dialog).getByRole("button", { name: "Save credential" }),
   );
-  await screen.findByText(/Weight: 1.*Enabled.*Not connected/);
+  await screen.findByText(/Weight: 1.*Enabled.*Connected/);
   assert.deepEqual(requests[1], {
     name: "Renamed",
     weight: 1,
     enabled: true,
-    api_key: "",
+    api_key: "new-secret",
   });
   await user.click(screen.getByRole("button", { name: "Delete Renamed" }));
   assert.ok(await screen.findByRole("dialog", { name: "Delete credential?" }));
@@ -462,6 +536,7 @@ test("provider deletion stays unavailable until all credentials are removed", as
           name: "Alpha",
           kind: "openai",
           base_url: "https://example.test",
+          keyless: false,
         }}
         kind={{
           value: "openai",
@@ -526,6 +601,7 @@ test("provider deletion remains disabled when credentials cannot be loaded", asy
         name: "Alpha",
         kind: "openai",
         base_url: "https://example.test",
+        keyless: false,
       }}
       onEdit={() => {}}
       onDelete={() => {}}
@@ -551,6 +627,7 @@ test("provider deletion reports a conflict if credentials were added elsewhere",
             name: "Alpha",
             kind: "openai",
             base_url: "https://example.test",
+            keyless: false,
           },
         ],
       });
@@ -635,6 +712,7 @@ test("credential names show available account emails and plans without placehold
         name: "OpenAI Codex",
         kind: "codex",
         base_url: "",
+        keyless: false,
       }}
       kind={{
         value: "codex",
@@ -694,6 +772,7 @@ test("OpenRouter credentials configure and remove a management key and show bala
         name: "OpenRouter",
         kind: "openrouter",
         base_url: "https://openrouter.ai/api/v1",
+        keyless: false,
       }}
       kind={{
         value: "openrouter",
@@ -777,7 +856,13 @@ test("Zen console configuration sits with credential actions and can be saved", 
   const user = userEvent.setup();
   mount(
     <CredentialsCard
-      provider={{ id: "zen", name: "OpenCode Zen", kind: "zen", base_url: "" }}
+      provider={{
+        id: "zen",
+        name: "OpenCode Zen",
+        kind: "zen",
+        base_url: "",
+        keyless: false,
+      }}
       kind={{
         value: "zen",
         label: "Zen",
@@ -936,6 +1021,7 @@ test("connected Claude credentials show subscription quota", async () => {
         name: "Claude Code",
         kind: "claude",
         base_url: "",
+        keyless: false,
       }}
       kind={{
         value: "claude",
@@ -986,7 +1072,13 @@ test("Codex device code copies with temporary confirmation", async () => {
   mount(
     <TooltipProvider>
       <ProviderCard
-        provider={{ id: "codex", name: "Codex", kind: "codex", base_url: "" }}
+        provider={{
+          id: "codex",
+          name: "Codex",
+          kind: "codex",
+          base_url: "",
+          keyless: false,
+        }}
         kind={{
           value: "codex",
           label: "Codex",
@@ -1064,7 +1156,13 @@ for (const [kind, label, host] of [
     mount(
       <TooltipProvider>
         <ProviderCard
-          provider={{ id: "alpha", name: "Alpha", kind, base_url: "" }}
+          provider={{
+            id: "alpha",
+            name: "Alpha",
+            kind,
+            base_url: "",
+            keyless: false,
+          }}
           kind={{
             value: kind,
             label,
@@ -1152,7 +1250,13 @@ test("Google callback failure keeps the flow available for retry", async () => {
   const user = userEvent.setup();
   mount(
     <ProviderCard
-      provider={{ id: "agy", name: "Google", kind: "agy", base_url: "" }}
+      provider={{
+        id: "agy",
+        name: "Google",
+        kind: "agy",
+        base_url: "",
+        keyless: false,
+      }}
       kind={{
         value: "agy",
         label: "Google",
@@ -1219,7 +1323,13 @@ test("cancelling Google sign-in aborts polling and ignores a late completion", a
   const user = userEvent.setup();
   mount(
     <ProviderCard
-      provider={{ id: "agy", name: "Google", kind: "agy", base_url: "" }}
+      provider={{
+        id: "agy",
+        name: "Google",
+        kind: "agy",
+        base_url: "",
+        keyless: false,
+      }}
       kind={{
         value: "agy",
         label: "Google",
@@ -1274,7 +1384,13 @@ test("Google sign-in completes through polling", async () => {
   const user = userEvent.setup();
   mount(
     <ProviderCard
-      provider={{ id: "agy", name: "Google", kind: "agy", base_url: "" }}
+      provider={{
+        id: "agy",
+        name: "Google",
+        kind: "agy",
+        base_url: "",
+        keyless: false,
+      }}
       kind={{
         value: "agy",
         label: "Google",
@@ -1318,7 +1434,13 @@ test("rejects an untrusted provider authorization URL", async () => {
   const user = userEvent.setup();
   mount(
     <ProviderCard
-      provider={{ id: "alpha", name: "Alpha", kind: "cursor", base_url: "" }}
+      provider={{
+        id: "alpha",
+        name: "Alpha",
+        kind: "cursor",
+        base_url: "",
+        keyless: false,
+      }}
       kind={{
         value: "cursor",
         label: "Cursor",
@@ -1374,12 +1496,14 @@ test("create restricted keys, edit expiration, and retain revoked metadata", asy
             name: "Alpha",
             kind: "openai",
             base_url: "https://example.test",
+            keyless: false,
           },
           {
             id: "beta",
             name: "Beta",
             kind: "openai",
             base_url: "https://example.test",
+            keyless: false,
           },
         ],
       });

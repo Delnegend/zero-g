@@ -17,6 +17,9 @@ import { CredentialsAddButton } from "./CredentialsAddButton";
 import { CredentialsCard } from "./CredentialsCard";
 import { ProviderSignIn } from "./ProviderSignIn";
 
+const triggerClass =
+  "inline-flex rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
+
 export function ProviderCard({
   provider,
   kind,
@@ -37,7 +40,7 @@ export function ProviderCard({
     credentials.isPending ||
     credentials.isFetching ||
     credentials.isError ||
-    hasCredentials;
+    (!provider.keyless && hasCredentials);
   return (
     <Card className="mt-6 p-5">
       <ProviderSignIn provider={provider}>
@@ -48,9 +51,12 @@ export function ProviderCard({
                 <h2 className="text-lg font-semibold wrap-break-word">
                   {provider.name}
                 </h2>
-                {kind?.label && (
+                {(kind?.label || provider.keyless) && (
                   <p className="mt-1 text-sm break-all text-muted-foreground">
-                    {kind.label} · {provider.id}
+                    {kind?.label
+                      ? `${kind.label} · ${provider.id}`
+                      : provider.id}
+                    {provider.keyless && " · Keyless"}
                   </p>
                 )}
               </div>
@@ -71,23 +77,22 @@ export function ProviderCard({
                       <Pencil />
                     </Button>
                   )}
-                <Tooltip>
-                  <TooltipTrigger
-                    render={<span />}
-                    className="inline-flex rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-                  >
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      aria-label="Add credential"
-                      disabled={!kind || busy || loginBusy || deleting}
-                      onClick={() => setAddingCredential(true)}
-                    >
-                      <Plus />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Add credential</TooltipContent>
-                </Tooltip>
+                {!provider.keyless && (
+                  <Tooltip>
+                    <TooltipTrigger render={<span />} className={triggerClass}>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        aria-label="Add credential"
+                        disabled={!kind || busy || loginBusy || deleting}
+                        onClick={() => setAddingCredential(true)}
+                      >
+                        <Plus />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Add credential</TooltipContent>
+                  </Tooltip>
+                )}
                 <Tooltip>
                   <TooltipTrigger
                     render={<span />}
@@ -97,7 +102,7 @@ export function ProviderCard({
                         ? `Why ${provider.name} cannot be deleted`
                         : undefined
                     }
-                    className="inline-flex rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                    className={triggerClass}
                   >
                     <Button
                       variant="destructive"
@@ -116,7 +121,7 @@ export function ProviderCard({
                       <Trash2 />
                     </Button>
                   </TooltipTrigger>
-                  {hasCredentials && (
+                  {!provider.keyless && hasCredentials && (
                     <TooltipContent>
                       Remove all credentials before deleting this provider.
                     </TooltipContent>
@@ -124,12 +129,14 @@ export function ProviderCard({
                 </Tooltip>
               </div>
             </div>
-            <CredentialsCard
-              provider={provider}
-              kind={kind}
-              onLogin={start}
-              loginBusy={loginBusy}
-            />
+            {!provider.keyless && (
+              <CredentialsCard
+                provider={provider}
+                kind={kind}
+                onLogin={start}
+                loginBusy={loginBusy}
+              />
+            )}
             {addingCredential && (
               <CredentialsAddButton
                 provider={provider}

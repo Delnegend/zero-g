@@ -45,7 +45,6 @@ export function CredentialsAddButton({
       weight: editing === "new" ? "1" : String(editing.weight),
       enabled: editing === "new" ? true : editing.enabled,
       apiKey: "",
-      clearKey: false,
     },
     onSubmit: async ({ value }) => {
       if (busy) return;
@@ -61,11 +60,8 @@ export function CredentialsAddButton({
         weight: parsedWeight,
         enabled: value.enabled,
       };
-      if (
-        kind?.api_key &&
-        (editing === "new" || value.clearKey || value.apiKey)
-      ) {
-        body.api_key = value.clearKey ? "" : value.apiKey;
+      if (kind?.api_key && (editing === "new" || value.apiKey)) {
+        body.api_key = value.apiKey;
       }
       try {
         await saveCredential(
@@ -166,55 +162,30 @@ export function CredentialsAddButton({
             )}
           </form.Field>
           {kind?.api_key && (
-            <>
-              <form.Subscribe selector={(state) => state.values.clearKey}>
-                {(clearKey) => (
-                  <form.Field name="apiKey">
-                    {(field) => (
-                      <Label className="block text-sm font-medium">
-                        API key{" "}
-                        <span className="font-normal text-muted-foreground">
-                          (
-                          {editing === "new"
-                            ? provider.kind === "go"
-                              ? "required"
-                              : "optional; leave blank for a keyless upstream"
-                            : "leave blank to retain"}
-                          )
-                        </span>
-                        <Input
-                          className="mt-1"
-                          type="password"
-                          required={provider.kind === "go" && editing === "new"}
-                          autoComplete="new-password"
-                          disabled={clearKey}
-                          value={field.state.value}
-                          onBlur={field.handleBlur}
-                          onChange={(event) =>
-                            field.handleChange(event.target.value)
-                          }
-                        />
-                      </Label>
-                    )}
-                  </form.Field>
-                )}
-              </form.Subscribe>
-              {editing !== "new" && provider.kind !== "go" && (
-                <form.Field name="clearKey">
-                  {(field) => (
-                    <Label className="text-sm">
-                      <Checkbox
-                        checked={field.state.value}
-                        onCheckedChange={(checked) =>
-                          field.handleChange(checked === true)
-                        }
-                      />{" "}
-                      Use a keyless upstream
-                    </Label>
-                  )}
-                </form.Field>
+            <form.Field name="apiKey">
+              {(field) => (
+                <Label className="block text-sm font-medium">
+                  API key{" "}
+                  <span className="font-normal text-muted-foreground">
+                    (
+                    {editing === "new"
+                      ? provider.kind === "go"
+                        ? "required"
+                        : "optional"
+                      : "leave blank to retain"}
+                    )
+                  </span>
+                  <Input
+                    className="mt-1"
+                    type="password"
+                    required={provider.kind === "go" && editing === "new"}
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(event) => field.handleChange(event.target.value)}
+                  />
+                </Label>
               )}
-            </>
+            </form.Field>
           )}
           <div className="flex gap-2">
             <Button type="submit" disabled={busy}>

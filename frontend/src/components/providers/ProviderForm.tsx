@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -44,7 +45,7 @@ export function ProviderForm({
   const queryClient = useQueryClient();
   const save = useMutation({
     gcTime: 0,
-    mutationFn: (body: Record<string, string>) =>
+    mutationFn: (body: Record<string, unknown>) =>
       saveProvider(provider?.id, body),
     onSuccess: async (updated) => {
       await queryClient.cancelQueries({
@@ -75,6 +76,7 @@ export function ProviderForm({
       name: provider?.name ?? "",
       kind: provider?.kind ?? kinds[0]?.value ?? "",
       baseUrl: provider?.base_url ?? "",
+      keyless: provider?.keyless ?? false,
     },
     onSubmit: ({ value }) => {
       if (busy) return;
@@ -85,8 +87,11 @@ export function ProviderForm({
         setValidationError("Provider kind is unavailable.");
         return;
       }
-      const body: Record<string, string> = {};
-      if (kind.fixed_name === null) body.name = value.name;
+      const body: Record<string, unknown> = {};
+      if (kind.fixed_name === null) {
+        body.name = value.name;
+        body.keyless = value.keyless;
+      }
       if (
         kind.api_key &&
         value.kind !== "zen" &&
@@ -179,6 +184,21 @@ export function ProviderForm({
                               field.handleChange(event.target.value)
                             }
                           />
+                        </Label>
+                      )}
+                    </form.Field>
+                  )}
+                  {metadata?.fixed_name === null && (
+                    <form.Field name="keyless">
+                      {(field) => (
+                        <Label className="text-sm">
+                          <Checkbox
+                            checked={field.state.value}
+                            onCheckedChange={(checked) =>
+                              field.handleChange(checked === true)
+                            }
+                          />{" "}
+                          Keyless upstream (no API key required)
                         </Label>
                       )}
                     </form.Field>

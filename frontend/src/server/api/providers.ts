@@ -3,12 +3,14 @@ import * as api from "./generated/client";
 import type {
   AntigravityStartResponse,
   CodexStartResponse,
+  CreateProvider,
   Credential,
   CredentialInput,
   Provider as ProviderContract,
   ProviderKindsResponse,
   QuotaSnapshot,
   QuotaWindow as QuotaWindowContract,
+  UpdateProvider,
 } from "./generated/schemas";
 
 export type ProviderKind = ProviderKindsResponse["kinds"][number];
@@ -22,11 +24,14 @@ export type CredentialUpdate = CredentialInput;
 
 export function saveProvider(
   id: string | undefined,
-  body: Record<string, string>,
+  body: Record<string, unknown>,
 ) {
   return id !== undefined
-    ? api.updateProvider(id, body)
-    : api.createProvider({ ...body, kind: body.kind });
+    ? api.updateProvider(id, body as UpdateProvider)
+    : api.createProvider({
+        ...body,
+        kind: body.kind as string,
+      } as CreateProvider);
 }
 
 export function deleteProvider(id: string) {
