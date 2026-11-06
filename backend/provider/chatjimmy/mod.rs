@@ -122,16 +122,42 @@ async fn discover_models() -> Result<Vec<Model>, String> {
         .get(format!("{DEFAULT_BASE}{MODELS_PATH}"))
         .send()
         .await;
-    if let Ok(r) = resp
+    let mut models = if let Ok(r) = resp
         && r.status().is_success()
         && let Ok(value) = r.json::<Value>().await
     {
-        let models = crate::provider::openai::models_from_list(&value);
-        if !models.is_empty() {
-            return Ok(models);
+        let list = crate::provider::openai::models_from_list(&value);
+        if list.is_empty() {
+            fallback_models()
+        } else {
+            list
+        }
+    } else {
+        fallback_models()
+    };
+    for model in &mut models {
+        if model.context_window.is_none() {
+            model.context_window = Some(6064);
+        }
+        if model.max_output_tokens.is_none() {
+            model.max_output_tokens = Some(2048);
+        }
+        if model.name.is_none() {
+            model.name = Some("Llama 3.1 8B".to_string());
+        }
+        if model.display_name.is_none() {
+            model.display_name = Some("Llama 3.1 8B (Taalas HC1)".to_string());
+        }
+        if model.reasoning.is_none() {
+            model.reasoning = Some(false);
         }
     }
-    Ok(vec![Model {
+    Ok(models)
+}
+
+/// Default fallback model when upstream discovery is unreachable.
+fn fallback_models() -> Vec<Model> {
+    vec![Model {
         id: DEFAULT_MODEL.to_string(),
         object: Some("model".to_string()),
         created: Some(1_700_000_000),
@@ -139,10 +165,11 @@ async fn discover_models() -> Result<Vec<Model>, String> {
         name: Some("Llama 3.1 8B".to_string()),
         display_name: Some("Llama 3.1 8B (Taalas HC1)".to_string()),
         context_window: Some(6064),
+        max_output_tokens: Some(2048),
+        reasoning: Some(false),
         ..Default::default()
-    }])
+    }]
 }
-
 /// Upstream chat request body sent to `ChatJimmy`.
 #[derive(Serialize)]
 struct ChatJimmyRequest {
