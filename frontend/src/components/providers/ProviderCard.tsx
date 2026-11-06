@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Pencil, Trash2 } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
@@ -12,7 +13,8 @@ import {
   type Provider,
   type ProviderKind,
 } from "@/server/api/providers";
-import { Credentials } from "./Credentials";
+import { CredentialsAddButton } from "./CredentialsAddButton";
+import { CredentialsCard } from "./CredentialsCard";
 import { ProviderSignIn } from "./ProviderSignIn";
 
 export function ProviderCard({
@@ -28,6 +30,7 @@ export function ProviderCard({
   onDelete: () => void;
   deleting: boolean;
 }) {
+  const [addingCredential, setAddingCredential] = useState(false);
   const credentials = useQuery(credentialsOptions(provider.id));
   const hasCredentials = (credentials.data?.credentials.length ?? 0) > 0;
   const cannotDelete =
@@ -70,6 +73,23 @@ export function ProviderCard({
                 <Tooltip>
                   <TooltipTrigger
                     render={<span />}
+                    className="inline-flex rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                  >
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      aria-label="Add credential"
+                      disabled={!kind || busy || loginBusy || deleting}
+                      onClick={() => setAddingCredential(true)}
+                    >
+                      <Plus />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Add credential</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={<span />}
                     tabIndex={hasCredentials ? 0 : -1}
                     aria-label={
                       hasCredentials
@@ -103,12 +123,20 @@ export function ProviderCard({
                 </Tooltip>
               </div>
             </div>
-            <Credentials
+            <CredentialsCard
               provider={provider}
               kind={kind}
               onLogin={start}
               loginBusy={loginBusy}
             />
+            {addingCredential && (
+              <CredentialsAddButton
+                provider={provider}
+                kind={kind}
+                editing="new"
+                onClose={() => setAddingCredential(false)}
+              />
+            )}
             {kind?.api_key &&
               provider.kind !== "zen" &&
               provider.kind !== "openrouter" && (

@@ -83,7 +83,8 @@ const userEvent = (await import("@testing-library/user-event")).default;
 const { SettingsPage } = await import("./routes/settings");
 const { KeysPage } = await import("./routes/keys");
 const { routeTree } = await import("./routeTree.gen");
-const { Credentials } = await import("./components/providers/Credentials");
+const { CredentialsCard } =
+  await import("./components/providers/CredentialsCard");
 const { CredentialUsage } = await import("./components/CredentialUsage");
 const { ProviderCard } = await import("./components/providers/ProviderCard");
 const { ProvidersPage } = await import("./routes/models/providers");
@@ -277,6 +278,58 @@ test("edits made during a delayed settings save survive the response", async () 
   ]);
 });
 
+test("adding a credential saves it and shows it in the list", async () => {
+  let credential:
+    | {
+        id: string;
+        name: string;
+        weight: number;
+        enabled: boolean;
+        connected: boolean;
+      }
+    | undefined;
+  globalThis.fetch = (async (_url, options) => {
+    if (options?.method === "POST") {
+      const body = JSON.parse(String(options.body));
+      credential = { id: "one", ...body, connected: false };
+      return Response.json(credential);
+    }
+    return Response.json({ credentials: credential ? [credential] : [] });
+  }) as typeof fetch;
+  const user = userEvent.setup();
+  mount(
+    <TooltipProvider>
+      <ProviderCard
+        provider={{
+          id: "alpha",
+          name: "Alpha",
+          kind: "openai",
+          base_url: "https://example.test",
+        }}
+        kind={{
+          value: "openai",
+          label: "OpenAI-compatible",
+          api_key: true,
+          oauth: false,
+          fixed_id: null,
+          fixed_name: null,
+        }}
+        onEdit={() => {}}
+        onDelete={() => {}}
+        deleting={false}
+      />
+    </TooltipProvider>,
+  );
+  await user.click(screen.getByRole("button", { name: "Add credential" }));
+  const dialog = await screen.findByRole("dialog", { name: "Add credential" });
+  await user.type(within(dialog).getByLabelText("Name"), "Production");
+  await user.click(
+    within(dialog).getByRole("button", { name: "Save credential" }),
+  );
+  await screen.findByText("Production");
+  assert.equal(screen.queryByRole("dialog"), null);
+});
+
 test("credential editing retains a blank API key unless keyless is selected", async () => {
   const requests: unknown[] = [];
   let secret = "existing-secret";
@@ -315,7 +368,7 @@ test("credential editing retains a blank API key unless keyless is selected", as
   }) as typeof fetch;
   const user = userEvent.setup();
   mount(
-    <Credentials
+    <CredentialsCard
       provider={{
         id: "alpha",
         name: "Alpha",
@@ -576,7 +629,7 @@ test("credential names show available account emails and plans without placehold
           ],
         })) as typeof fetch;
   mount(
-    <Credentials
+    <CredentialsCard
       provider={{
         id: "codex",
         name: "OpenAI Codex",
@@ -635,7 +688,7 @@ test("OpenRouter credentials configure and remove a management key and show bala
   }) as typeof fetch;
   const user = userEvent.setup();
   mount(
-    <Credentials
+    <CredentialsCard
       provider={{
         id: "openrouter",
         name: "OpenRouter",
@@ -723,7 +776,7 @@ test("Zen console configuration sits with credential actions and can be saved", 
   }) as typeof fetch;
   const user = userEvent.setup();
   mount(
-    <Credentials
+    <CredentialsCard
       provider={{ id: "zen", name: "OpenCode Zen", kind: "zen", base_url: "" }}
       kind={{
         value: "zen",
@@ -877,7 +930,7 @@ test("connected Claude credentials show subscription quota", async () => {
           ],
         })) as typeof fetch;
   mount(
-    <Credentials
+    <CredentialsCard
       provider={{
         id: "claude",
         name: "Claude Code",
