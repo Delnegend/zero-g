@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
-use super::{datasheet::sync_datasheets, load_settings};
-use crate::server::AppState;
+use super::datasheet::sync_datasheets;
+use crate::server::{AppState, settings::SettingsStore};
 
 /// Frequency at which background jobs check their schedules.
 const SCHEDULER_POLL: Duration = Duration::from_secs(5);
@@ -10,6 +10,24 @@ const SCHEDULER_POLL: Duration = Duration::from_secs(5);
 fn due(last: Option<Instant>, seconds: u64) -> bool {
     seconds != 0 && last.is_none_or(|last| last.elapsed().as_secs() >= seconds)
 }
+/// Load the configured pricing and discovery intervals from settings.
+async fn load_intervals(store: &SettingsStore) -> (u64, u64) {
+    let pricing = store
+        .setting_get("pricing_interval_hours")
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(24);
+    let discovery = store
+        .setting_get("discovery_interval_minutes")
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(60);
+    (pricing, discovery)
+}
 
 /// Run independent periodic datasheet and provider-discovery loops.
 pub(crate) async fn run_background(state: AppState) {
@@ -17,15 +35,12 @@ pub(crate) async fn run_background(state: AppState) {
     let pricing = async {
         let mut last = None;
         loop {
-            match load_settings(&state.settings).await {
-                Ok(settings) if due(last, settings.pricing_interval_hours.saturating_mul(3600)) => {
-                    last = Some(Instant::now());
-                    if let Err(message) = sync_datasheets(&state.settings).await {
-                        tracing::warn!("Model datasheet sync failed: {message}");
-                    }
+            let (pricing_hours, _) = load_intervals(&state.settings).await;
+            if due(last, pricing_hours.saturating_mul(3600)) {
+                last = Some(Instant::now());
+                if let Err(message) = sync_datasheets(&state.settings).await {
+                    tracing::warn!("Model datasheet sync failed: {message}");
                 }
-                Ok(_) => {}
-                Err(_) => tracing::warn!("Unable to load model settings for datasheet refresh"),
             }
             tokio::time::sleep(SCHEDULER_POLL).await;
         }
@@ -33,18 +48,12 @@ pub(crate) async fn run_background(state: AppState) {
     let discovery = async {
         let mut last = None;
         loop {
-            match load_settings(&state.settings).await {
-                Ok(settings)
-                    if due(last, settings.discovery_interval_minutes.saturating_mul(60)) =>
-                {
-                    last = Some(Instant::now());
-                    if let Err(error) = crate::server::model_catalog::refresh_catalog(&state).await
-                    {
-                        tracing::error!("Failed to refresh model catalog: {error}");
-                    }
+            let (_, discovery_mins) = load_intervals(&state.settings).await;
+            if due(last, discovery_mins.saturating_mul(60)) {
+                last = Some(Instant::now());
+                if let Err(error) = crate::server::model_catalog::refresh_catalog(&state).await {
+                    tracing::error!("Failed to refresh model catalog: {error}");
                 }
-                Ok(_) => {}
-                Err(_) => tracing::warn!("Unable to load model settings for model discovery"),
             }
             tokio::time::sleep(SCHEDULER_POLL).await;
         }

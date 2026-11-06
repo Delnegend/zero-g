@@ -1224,48 +1224,6 @@ export const ModelCatalog = zod
 export type ModelCatalog = zod.input<typeof ModelCatalog>;
 export type ModelCatalogOutput = zod.output<typeof ModelCatalog>;
 
-export const modelSettingsDiscoveryIntervalMinutesMin = 0;
-
-export const modelSettingsPricingIntervalHoursMin = 0;
-
-export const ModelSettings = zod
-  .object({
-    discovery_interval_minutes: zod
-      .int()
-      .min(modelSettingsDiscoveryIntervalMinutesMin)
-      .describe(
-        "Provider discovery interval in minutes; zero disables discovery.",
-      ),
-    parameters_url: zod.string().describe("Model parameters datasheet URL."),
-    pricing_interval_hours: zod
-      .int()
-      .min(modelSettingsPricingIntervalHoursMin)
-      .describe("Datasheet refresh interval in hours; zero disables refresh."),
-    pricing_url: zod.string().describe("Pricing datasheet URL."),
-  })
-  .describe("URLs and intervals governing model metadata refreshes.");
-
-export type ModelSettings = zod.input<typeof ModelSettings>;
-export type ModelSettingsOutput = zod.output<typeof ModelSettings>;
-
-export const ModelSettingsError = zod
-  .object({
-    error: zod.string().describe("Error message."),
-  })
-  .describe("Model settings API error.");
-
-export type ModelSettingsError = zod.input<typeof ModelSettingsError>;
-export type ModelSettingsErrorOutput = zod.output<typeof ModelSettingsError>;
-
-export const ModelSyncResult = zod
-  .object({
-    ok: zod.boolean().describe("Whether synchronization succeeded."),
-  })
-  .describe("Successful datasheet synchronization.");
-
-export type ModelSyncResult = zod.input<typeof ModelSyncResult>;
-export type ModelSyncResultOutput = zod.output<typeof ModelSyncResult>;
-
 export const observabilityBucketByModelMinOne = 0;
 
 export const observabilityBucketErrorsMin = 0;
@@ -1788,16 +1746,30 @@ export const QuotaSnapshot = zod
 export type QuotaSnapshot = zod.input<typeof QuotaSnapshot>;
 export type QuotaSnapshotOutput = zod.output<typeof QuotaSnapshot>;
 
+export const settingsResponseDiscoveryIntervalMinutesMin = 0;
+
 export const settingsResponseLogRetentionDaysMin = 0;
 export const settingsResponseLogRetentionDaysMax = 4294967295;
 
+export const settingsResponsePricingIntervalHoursMin = 0;
+
 export const SettingsResponse = zod
   .object({
+    discovery_interval_minutes: zod
+      .int()
+      .min(settingsResponseDiscoveryIntervalMinutesMin)
+      .describe(
+        "Model discovery interval in minutes; zero disables discovery.",
+      ),
     log_retention_days: zod
       .int()
       .min(settingsResponseLogRetentionDaysMin)
       .max(settingsResponseLogRetentionDaysMax)
       .describe("Number of days to retain logs."),
+    pricing_interval_hours: zod
+      .int()
+      .min(settingsResponsePricingIntervalHoursMin)
+      .describe("Datasheet refresh interval in hours; zero disables refresh."),
   })
   .describe("Dashboard-visible global settings.");
 
@@ -1836,17 +1808,31 @@ export const UpdateProvider = zod
 export type UpdateProvider = zod.input<typeof UpdateProvider>;
 export type UpdateProviderOutput = zod.output<typeof UpdateProvider>;
 
+export const updateSettingsDiscoveryIntervalMinutesMin = 0;
+
 export const updateSettingsLogRetentionDaysMin = 0;
 export const updateSettingsLogRetentionDaysMax = 4294967295;
 
+export const updateSettingsPricingIntervalHoursMin = 0;
+
 export const UpdateSettings = zod
   .object({
+    discovery_interval_minutes: zod
+      .int()
+      .min(updateSettingsDiscoveryIntervalMinutesMin)
+      .nullish()
+      .describe("Optional model discovery interval in minutes."),
     log_retention_days: zod
       .int()
       .min(updateSettingsLogRetentionDaysMin)
       .max(updateSettingsLogRetentionDaysMax)
       .nullish()
       .describe("Optional log retention in days."),
+    pricing_interval_hours: zod
+      .int()
+      .min(updateSettingsPricingIntervalHoursMin)
+      .nullish()
+      .describe("Optional datasheet refresh interval in hours."),
   })
   .describe("Partial settings update supplied by the dashboard.");
 
@@ -1886,32 +1872,6 @@ export const UpdateKeyBody = zod
 
 export type UpdateKeyBody = zod.input<typeof UpdateKeyBody>;
 export type UpdateKeyBodyOutput = zod.output<typeof UpdateKeyBody>;
-
-export const updateModelSettingsBodyDiscoveryIntervalMinutesMin = 0;
-
-export const updateModelSettingsBodyPricingIntervalHoursMin = 0;
-
-export const UpdateModelSettingsBody = zod
-  .object({
-    discovery_interval_minutes: zod
-      .int()
-      .min(updateModelSettingsBodyDiscoveryIntervalMinutesMin)
-      .describe(
-        "Provider discovery interval in minutes; zero disables discovery.",
-      ),
-    parameters_url: zod.string().describe("Model parameters datasheet URL."),
-    pricing_interval_hours: zod
-      .int()
-      .min(updateModelSettingsBodyPricingIntervalHoursMin)
-      .describe("Datasheet refresh interval in hours; zero disables refresh."),
-    pricing_url: zod.string().describe("Pricing datasheet URL."),
-  })
-  .describe("URLs and intervals governing model metadata refreshes.");
-
-export type UpdateModelSettingsBody = zod.input<typeof UpdateModelSettingsBody>;
-export type UpdateModelSettingsBodyOutput = zod.output<
-  typeof UpdateModelSettingsBody
->;
 
 export const GetObservabilityParams = zod.object({
   since: zod.int().optional(),
@@ -2132,17 +2092,31 @@ export type SaveOpenrouterManagementKeyBodyOutput = zod.output<
   typeof SaveOpenrouterManagementKeyBody
 >;
 
+export const updateSettingsBodyDiscoveryIntervalMinutesMin = 0;
+
 export const updateSettingsBodyLogRetentionDaysMin = 0;
 export const updateSettingsBodyLogRetentionDaysMax = 4294967295;
 
+export const updateSettingsBodyPricingIntervalHoursMin = 0;
+
 export const UpdateSettingsBody = zod
   .object({
+    discovery_interval_minutes: zod
+      .int()
+      .min(updateSettingsBodyDiscoveryIntervalMinutesMin)
+      .nullish()
+      .describe("Optional model discovery interval in minutes."),
     log_retention_days: zod
       .int()
       .min(updateSettingsBodyLogRetentionDaysMin)
       .max(updateSettingsBodyLogRetentionDaysMax)
       .nullish()
       .describe("Optional log retention in days."),
+    pricing_interval_hours: zod
+      .int()
+      .min(updateSettingsBodyPricingIntervalHoursMin)
+      .nullish()
+      .describe("Optional datasheet refresh interval in hours."),
   })
   .describe("Partial settings update supplied by the dashboard.");
 

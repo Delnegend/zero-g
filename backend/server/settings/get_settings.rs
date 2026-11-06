@@ -24,9 +24,23 @@ pub(crate) async fn get_settings(State(store): State<SettingsStore>) -> Response
                 .await?
                 .and_then(|row| row.value.parse::<u32>().ok())
                 .unwrap_or(30);
+            let pricing_interval = Setting::filter_by_name("pricing_interval_hours")
+                .first()
+                .exec(&mut tx)
+                .await?
+                .and_then(|row| row.value.parse::<u64>().ok())
+                .unwrap_or(24);
+            let discovery_interval = Setting::filter_by_name("discovery_interval_minutes")
+                .first()
+                .exec(&mut tx)
+                .await?
+                .and_then(|row| row.value.parse::<u64>().ok())
+                .unwrap_or(60);
             tx.commit().await?;
             Ok(SettingsResponse {
                 log_retention_days: retention,
+                pricing_interval_hours: pricing_interval,
+                discovery_interval_minutes: discovery_interval,
             })
         })
         .map_err(|e| e.to_string())

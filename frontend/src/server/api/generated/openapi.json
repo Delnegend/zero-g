@@ -223,121 +223,6 @@
         }
       }
     },
-    "/api/model-settings": {
-      "get": {
-        "tags": [],
-        "summary": "Return the current model synchronization settings.",
-        "operationId": "getModelSettings",
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ModelSettings"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ModelSettingsError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [],
-        "summary": "Validate and persist model synchronization settings.",
-        "operationId": "updateModelSettings",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ModelSettings"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ModelSettings"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ModelSettingsError"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ModelSettingsError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/model-settings/sync": {
-      "post": {
-        "tags": [],
-        "summary": "Handle an on-demand datasheet synchronization.",
-        "operationId": "syncModelSettings",
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ModelSyncResult"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ModelSettingsError"
-                }
-              }
-            }
-          },
-          "502": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ModelSettingsError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/observability": {
       "get": {
         "tags": [],
@@ -3140,61 +3025,6 @@
           }
         }
       },
-      "ModelSettings": {
-        "type": "object",
-        "description": "URLs and intervals governing model metadata refreshes.",
-        "required": [
-          "pricing_url",
-          "parameters_url",
-          "pricing_interval_hours",
-          "discovery_interval_minutes"
-        ],
-        "properties": {
-          "discovery_interval_minutes": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Provider discovery interval in minutes; zero disables discovery.",
-            "minimum": 0
-          },
-          "parameters_url": {
-            "type": "string",
-            "description": "Model parameters datasheet URL."
-          },
-          "pricing_interval_hours": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Datasheet refresh interval in hours; zero disables refresh.",
-            "minimum": 0
-          },
-          "pricing_url": {
-            "type": "string",
-            "description": "Pricing datasheet URL."
-          }
-        },
-        "additionalProperties": false
-      },
-      "ModelSettingsError": {
-        "type": "object",
-        "description": "Model settings API error.",
-        "required": ["error"],
-        "properties": {
-          "error": {
-            "type": "string",
-            "description": "Error message."
-          }
-        }
-      },
-      "ModelSyncResult": {
-        "type": "object",
-        "description": "Successful datasheet synchronization.",
-        "required": ["ok"],
-        "properties": {
-          "ok": {
-            "type": "boolean",
-            "description": "Whether synchronization succeeded."
-          }
-        }
-      },
       "ObservabilityBucket": {
         "type": "object",
         "description": "Request count for a UTC time bucket.",
@@ -3547,13 +3377,29 @@
       "SettingsResponse": {
         "type": "object",
         "description": "Dashboard-visible global settings.",
-        "required": ["log_retention_days"],
+        "required": [
+          "log_retention_days",
+          "pricing_interval_hours",
+          "discovery_interval_minutes"
+        ],
         "properties": {
+          "discovery_interval_minutes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Model discovery interval in minutes; zero disables discovery.",
+            "minimum": 0
+          },
           "log_retention_days": {
             "type": "integer",
             "format": "int64",
             "description": "Number of days to retain logs.",
             "maximum": 4294967295,
+            "minimum": 0
+          },
+          "pricing_interval_hours": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Datasheet refresh interval in hours; zero disables refresh.",
             "minimum": 0
           }
         }
@@ -3593,11 +3439,23 @@
         "type": "object",
         "description": "Partial settings update supplied by the dashboard.",
         "properties": {
+          "discovery_interval_minutes": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Optional model discovery interval in minutes.",
+            "minimum": 0
+          },
           "log_retention_days": {
             "type": ["integer", "null"],
             "format": "int64",
             "description": "Optional log retention in days.",
             "maximum": 4294967295,
+            "minimum": 0
+          },
+          "pricing_interval_hours": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Optional datasheet refresh interval in hours.",
             "minimum": 0
           }
         }

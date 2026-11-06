@@ -95,7 +95,6 @@ pub(crate) fn create_router(state: AppState) -> Router {
         .merge(registry::router(state.settings.clone()))
         .merge(provider::dashboard_router(&state))
         .merge(model_catalog::router(state.clone()))
-        .merge(model_setting::router(state.clone()))
         .fallback(get(web::fallback));
     let dashboard = state.dashboard_auth.protect(dashboard);
 

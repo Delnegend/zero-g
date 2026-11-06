@@ -362,6 +362,12 @@ pub(crate) struct SettingsResponse {
     /// Number of days to retain logs.
     #[schema(format = Int64, minimum = 0, maximum = 4_294_967_295_u64)]
     log_retention_days: u32,
+    /// Datasheet refresh interval in hours; zero disables refresh.
+    #[schema(format = Int64, minimum = 0)]
+    pricing_interval_hours: u64,
+    /// Model discovery interval in minutes; zero disables discovery.
+    #[schema(format = Int64, minimum = 0)]
+    discovery_interval_minutes: u64,
 }
 
 /// Partial settings update supplied by the dashboard.
@@ -370,6 +376,12 @@ pub(crate) struct UpdateSettings {
     /// Optional log retention in days.
     #[schema(format = Int64, minimum = 0, maximum = 4_294_967_295_u64)]
     log_retention_days: Option<u32>,
+    /// Optional datasheet refresh interval in hours.
+    #[schema(format = Int64, minimum = 0)]
+    pricing_interval_hours: Option<u64>,
+    /// Optional model discovery interval in minutes.
+    #[schema(format = Int64, minimum = 0)]
+    discovery_interval_minutes: Option<u64>,
 }
 
 #[cfg(test)]
@@ -413,11 +425,18 @@ mod tests {
         let store = SettingsStore::new(database, &key(1)).await.unwrap();
         let logs = crate::server::observability::LogStore::new(store.database.clone());
 
-        let input = serde_json::from_value(json!({"log_retention_days": 7})).unwrap();
+        let input = serde_json::from_value(json!({
+            "log_retention_days": 7,
+            "pricing_interval_hours": 12,
+            "discovery_interval_minutes": 30
+        }))
+        .unwrap();
         let response = put_settings(State((store.clone(), logs.clone())), Json(input)).await;
         assert_eq!(response.status(), StatusCode::OK);
         let body = json_body(response).await;
         assert_eq!(body["log_retention_days"], 7);
+        assert_eq!(body["pricing_interval_hours"], 12);
+        assert_eq!(body["discovery_interval_minutes"], 30);
         assert!(body.get("oauth_client_id").is_none());
         assert!(body.get("oauth_client_secret_set").is_none());
 

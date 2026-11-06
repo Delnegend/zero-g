@@ -5,10 +5,29 @@ use futures_util::StreamExt;
 use serde::de::{DeserializeSeed, MapAccess, Visitor};
 use serde_json::{Value, json};
 
-use super::{CONFIG_KEY, ModelSettings, load_settings, validate_url};
 use crate::database::transaction_with_retry;
 use crate::server::settings::SettingsStore;
 use crate::storage::Setting;
+
+/// Hardcoded Bifrost pricing datasheet endpoint.
+pub(crate) const BIFROST_PRICING_URL: &str = "https://getbifrost.ai/datasheet";
+/// Hardcoded Bifrost model parameters datasheet endpoint.
+pub(crate) const BIFROST_PARAMETERS_URL: &str = "https://getbifrost.ai/datasheet/model-parameters";
+
+/// Accept only HTTP(S) URLs without credentials or fragments.
+fn validate_url(input: &str) -> Result<reqwest::Url, &'static str> {
+    let url =
+        reqwest::Url::parse(input).map_err(|_| "Datasheet URL must be a valid HTTP(S) URL")?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("Datasheet URL must be HTTP(S) without userinfo or a fragment");
+    }
+    Ok(url)
+}
 
 /// Settings key for the cached pricing sheet.
 const PRICING_KEY: &str = "model_pricing_datasheet";
@@ -21,19 +40,16 @@ const MAX_DATASHEET_BYTES: usize = 128 * 1024 * 1024;
 /// Overall timeout for downloading a sheet.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Conflict reported when sheet URLs change during synchronization.
-pub(super) const SETTINGS_CHANGED: &str =
-    "Datasheet URLs changed during sync; retry with the current settings";
 /// Serializes concurrent datasheet synchronizations.
 static SYNC_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// Cached datasheet entries indexed by their source keys.
 #[derive(Default)]
-pub(in crate::server) struct ModelData {
+pub(crate) struct ModelData {
     /// Pricing records.
-    pub(in crate::server) pricing: Value,
+    pub(crate) pricing: Value,
     /// Model parameter records.
-    pub(in crate::server) parameters: Value,
+    pub(crate) parameters: Value,
 }
 
 /// Download a datasheet within the configured timeout.
@@ -85,43 +101,33 @@ async fn fetch_datasheet_inner(input: &str) -> Result<String, String> {
 }
 
 /// Fetch both sheets under the synchronization lock and save them together.
-pub(super) async fn sync_datasheets(store: &SettingsStore) -> Result<(), String> {
-    let _guard = SYNC_LOCK.lock().await;
-    let settings = load_settings(store).await?;
-    settings.validate().map_err(str::to_string)?;
-    let pricing = fetch_datasheet(&settings.pricing_url)
-        .await
-        .map_err(|e| format!("Pricing: {e}"))?;
-    let parameters = fetch_datasheet(&settings.parameters_url)
-        .await
-        .map_err(|e| format!("Parameters: {e}"))?;
-    save_datasheets(store, &settings, &pricing, &parameters).await
+pub(crate) async fn sync_datasheets(store: &SettingsStore) -> Result<(), String> {
+    sync_datasheets_from(store, BIFROST_PRICING_URL, BIFROST_PARAMETERS_URL).await
 }
 
-/// Atomically save both sheets only if their configured URLs are unchanged.
+/// Fetch both sheets from specific URLs under lock and save them together.
+pub(super) async fn sync_datasheets_from(
+    store: &SettingsStore,
+    pricing_url: &str,
+    parameters_url: &str,
+) -> Result<(), String> {
+    let _guard = SYNC_LOCK.lock().await;
+    let pricing = fetch_datasheet(pricing_url)
+        .await
+        .map_err(|e| format!("Pricing: {e}"))?;
+    let parameters = fetch_datasheet(parameters_url)
+        .await
+        .map_err(|e| format!("Parameters: {e}"))?;
+    save_datasheets(store, &pricing, &parameters).await
+}
+
+/// Atomically save both sheets to the database.
 async fn save_datasheets(
     store: &SettingsStore,
-    settings: &ModelSettings,
     pricing: &str,
     parameters: &str,
 ) -> Result<(), String> {
-    // Commit the pair together. A bad download or failed write never destroys
-    // either last-known-good sheet.
-    let saved = transaction_with_retry!(store.database, |mut tx| {
-        let current = Setting::filter_by_name(CONFIG_KEY)
-            .first()
-            .exec(&mut tx)
-            .await?;
-        let current = match current {
-            Some(row) => serde_json::from_str::<ModelSettings>(&row.value).ok(),
-            None => Some(ModelSettings::default()),
-        };
-        if !current.is_some_and(|current| {
-            current.pricing_url == settings.pricing_url
-                && current.parameters_url == settings.parameters_url
-        }) {
-            return Ok(false);
-        }
+    transaction_with_retry!(store.database, |mut tx| {
         Setting::upsert_by_name(PRICING_KEY)
             .value(pricing)
             .exec(&mut tx)
@@ -131,19 +137,14 @@ async fn save_datasheets(
             .exec(&mut tx)
             .await?;
         tx.commit().await?;
-        Ok(true)
-    })
-    .map_err(|_| "Unable to save datasheets".to_string())?;
-    if saved {
         Ok(())
-    } else {
-        Err(SETTINGS_CHANGED.into())
-    }
+    })
+    .map_err(|_| "Unable to save datasheets".to_string())
 }
 
 /// Model identifiers used to select relevant datasheet entries.
 #[derive(Default)]
-pub(in crate::server) struct CatalogModels {
+pub(crate) struct CatalogModels {
     /// Discovered model identifiers.
     ids: HashSet<String>,
     /// Pairs of provider identifier or kind and model identifier.
@@ -154,7 +155,7 @@ pub(in crate::server) struct CatalogModels {
 
 impl CatalogModels {
     /// Collect model identifiers and provider associations from a catalog.
-    pub(in crate::server) fn from_entries<'a>(
+    pub(crate) fn from_entries<'a>(
         entries: impl IntoIterator<Item = (&'a str, &'a str, &'a str)>,
     ) -> Self {
         let mut result = Self::default();
@@ -271,7 +272,7 @@ fn filter_datasheet(sheet: &str, models: &CatalogModels) -> Result<Value, String
 }
 
 /// Load each cached sheet once, retaining only records relevant to this catalog.
-pub(in crate::server) async fn catalog_data(
+pub(crate) async fn catalog_data(
     store: &SettingsStore,
     models: &CatalogModels,
 ) -> Result<ModelData, String> {
@@ -326,18 +327,13 @@ mod tests {
         let store = SettingsStore::new(database, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
             .await
             .unwrap();
-        let mut settings = ModelSettings {
-            pricing_url: format!("http://{address}/data"),
-            parameters_url: format!("http://{address}/data"),
-            ..ModelSettings::default()
-        };
-        let value = serde_json::to_string(&settings).unwrap();
-        Setting::upsert_by_name(CONFIG_KEY)
-            .value(value)
-            .exec(&mut (*store.database.db).clone())
-            .await
-            .unwrap();
-        sync_datasheets(&store).await.unwrap();
+        sync_datasheets_from(
+            &store,
+            &format!("http://{address}/data"),
+            &format!("http://{address}/data"),
+        )
+        .await
+        .unwrap();
         let pricing = store.setting_get(PRICING_KEY).await.unwrap().unwrap();
         let parameters = store.setting_get(PARAMETERS_KEY).await.unwrap().unwrap();
         assert_eq!(
@@ -345,18 +341,15 @@ mod tests {
             json!({"model": {"price": 1}})
         );
         assert_eq!(parameters, pricing);
-        settings.parameters_url = format!("http://{address}/missing");
-        let value = serde_json::to_string(&settings).unwrap();
-        Setting::upsert_by_name(CONFIG_KEY)
-            .value(value)
-            .exec(&mut (*store.database.db).clone())
-            .await
-            .unwrap();
         assert!(
-            sync_datasheets(&store)
-                .await
-                .unwrap_err()
-                .contains("HTTP 404")
+            sync_datasheets_from(
+                &store,
+                &format!("http://{address}/data"),
+                &format!("http://{address}/missing"),
+            )
+            .await
+            .unwrap_err()
+            .contains("HTTP 404")
         );
         assert_eq!(
             store.setting_get(PRICING_KEY).await.unwrap().unwrap(),
@@ -412,49 +405,23 @@ mod tests {
         assert!(filtered.get("vertex_ai/gemini-3-pro").is_none());
     }
 
-    /// Reject stale downloads without replacing the cached pair.
+    /// Save both sheets atomically to the store.
     #[tokio::test]
-    async fn changed_urls_do_not_replace_cached_pair() {
+    async fn save_datasheets_persists_both_sheets_atomically() {
         let database = crate::database::Database::open(":memory:").await.unwrap();
         let store = SettingsStore::new(database, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
             .await
             .unwrap();
-        let original = ModelSettings::default();
-        save_datasheets(&store, &original, r#"{"old":1}"#, r#"{"old":2}"#)
-            .await
-            .unwrap();
-        let mut changed = original.clone();
-        changed.parameters_url = "https://example.com/new".into();
-        let value = serde_json::to_string(&changed).unwrap();
-        Setting::upsert_by_name(CONFIG_KEY)
-            .value(value)
-            .exec(&mut (*store.database.db).clone())
-            .await
-            .unwrap();
-        assert_eq!(
-            save_datasheets(&store, &original, r#"{"new":1}"#, r#"{"new":2}"#)
-                .await
-                .unwrap_err(),
-            SETTINGS_CHANGED
-        );
-        assert_eq!(
-            store.setting_get(PRICING_KEY).await.unwrap().unwrap(),
-            r#"{"old":1}"#
-        );
-        assert_eq!(
-            store.setting_get(PARAMETERS_KEY).await.unwrap().unwrap(),
-            r#"{"old":2}"#
-        );
-        save_datasheets(&store, &changed, r#"{"new":1}"#, r#"{"new":2}"#)
+        save_datasheets(&store, r#"{"pricing":1}"#, r#"{"params":2}"#)
             .await
             .unwrap();
         assert_eq!(
             store.setting_get(PRICING_KEY).await.unwrap().unwrap(),
-            r#"{"new":1}"#
+            r#"{"pricing":1}"#
         );
         assert_eq!(
             store.setting_get(PARAMETERS_KEY).await.unwrap().unwrap(),
-            r#"{"new":2}"#
+            r#"{"params":2}"#
         );
     }
 }

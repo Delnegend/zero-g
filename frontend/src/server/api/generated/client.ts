@@ -23,8 +23,6 @@ import {
   GrokStartResponse,
   KeyList,
   ModelCatalog,
-  ModelSettings,
-  ModelSyncResult,
   ObservabilityResponse,
   Provider,
   ProviderKindsResponse,
@@ -223,84 +221,6 @@ export const refreshModelCatalog = async (
     ...options,
     method: "POST",
     schema: ModelCatalog,
-  });
-};
-
-export const getGetModelSettingsUrl = () => {
-  return `/api/model-settings`;
-};
-
-/**
- * @summary Return the current model synchronization settings.
- */
-export const getModelSettings = async (
-  options?: Parameters<typeof request>[1],
-): Promise<ModelSettings> => {
-  return request<ModelSettings>(getGetModelSettingsUrl(), {
-    ...options,
-    method: "GET",
-    schema: ModelSettings,
-  });
-};
-
-export const getUpdateModelSettingsUrl = () => {
-  return `/api/model-settings`;
-};
-
-/**
- * @summary Validate and persist model synchronization settings.
- */
-export const updateModelSettings = async (
-  modelSettings: ModelSettings,
-  options?: Parameters<typeof request>[1],
-): Promise<ModelSettings> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(
-          h as Iterable<Iterable<string>>,
-          (entry) => Array.from(entry) as [string, string],
-        ),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<
-      string | readonly string[] | undefined
-    >(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-  return request<ModelSettings>(getUpdateModelSettingsUrl(), {
-    ...options,
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
-    },
-    body: JSON.stringify(modelSettings),
-    schema: ModelSettings,
-  });
-};
-
-export const getSyncModelSettingsUrl = () => {
-  return `/api/model-settings/sync`;
-};
-
-/**
- * @summary Handle an on-demand datasheet synchronization.
- */
-export const syncModelSettings = async (
-  options?: Parameters<typeof request>[1],
-): Promise<ModelSyncResult> => {
-  return request<ModelSyncResult>(getSyncModelSettingsUrl(), {
-    ...options,
-    method: "POST",
-    schema: ModelSyncResult,
   });
 };
 
