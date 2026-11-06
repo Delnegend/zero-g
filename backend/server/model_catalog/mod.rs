@@ -506,6 +506,7 @@ fn normalize_model(
     let reference = catalog_reference(provider, &model, data);
     let reasoning = info
         .reasoning
+        .or(model.reasoning)
         .or(reference.reasoning)
         .or(metadata.reasoning);
     let tool_call = info

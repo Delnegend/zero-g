@@ -52,13 +52,42 @@ impl openai::ModelEndpoint for Backend {
             .flatten()
             .filter_map(|entry| {
                 let mut entry = entry.clone();
+                let context_window = entry
+                    .get("context_length")
+                    .and_then(Value::as_i64)
+                    .filter(|&len| len > 0)
+                    .and_then(|len| u64::try_from(len).ok());
+                let max_output_tokens = entry
+                    .get("top_provider")
+                    .and_then(|v| v.get("max_completion_tokens"))
+                    .and_then(Value::as_u64)
+                    .and_then(|n| u32::try_from(n).ok());
+                let has_reasoning = entry
+                    .get("supported_parameters")
+                    .and_then(Value::as_array)
+                    .map(|params| {
+                        params.iter().any(|p| {
+                            p.as_str()
+                                .is_some_and(|s| s == "reasoning" || s == "include_reasoning")
+                        })
+                    });
                 if let Some(fields) = entry.as_object_mut()
                     && fields.get("reasoning").is_some_and(Value::is_object)
                     && let Some(reasoning) = fields.remove("reasoning")
                 {
                     fields.insert("openrouter_reasoning".into(), reasoning);
                 }
-                serde_json::from_value::<crate::openai::Model>(entry).ok()
+                let mut model = serde_json::from_value::<crate::openai::Model>(entry).ok()?;
+                if model.context_window.is_none() {
+                    model.context_window = context_window;
+                }
+                if model.max_output_tokens.is_none() {
+                    model.max_output_tokens = max_output_tokens;
+                }
+                if model.reasoning.is_none() {
+                    model.reasoning = has_reasoning;
+                }
+                Some(model)
             })
             .filter(|model| !model.id.is_empty())
             .collect()
@@ -98,12 +127,16 @@ pub(crate) fn catalog_info(model: &crate::openai::Model) -> common::catalog::Cat
             raw: raw.clone(),
         });
     CatalogInfo {
-        context_window: extra.get("context_length").and_then(Value::as_u64),
-        max_output_tokens: extra
-            .get("top_provider")
-            .and_then(|value| value.get("max_completion_tokens"))
-            .and_then(Value::as_u64)
-            .and_then(|value| u32::try_from(value).ok()),
+        context_window: model
+            .context_window
+            .or_else(|| extra.get("context_length").and_then(Value::as_u64)),
+        max_output_tokens: model.max_output_tokens.or_else(|| {
+            extra
+                .get("top_provider")
+                .and_then(|value| value.get("max_completion_tokens"))
+                .and_then(Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+        }),
         reasoning: model.reasoning.or_else(|| {
             (reasoning.is_some()
                 || parameters.as_ref().is_some_and(|parameters| {

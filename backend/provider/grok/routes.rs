@@ -274,7 +274,23 @@ pub(super) async fn discover(
 ) -> Result<Vec<Model>, String> {
     let session = uuid::Uuid::new_v4().to_string();
     let value = model_list(state, provider, kind, &session, None).await?;
-    Ok(openai::models_from_list(&value))
+    let mut models = openai::models_from_list(&value);
+    for model in &mut models {
+        if model.context_window.is_none() {
+            model.context_window = Some(if model.id.contains("vision") {
+                32_768
+            } else {
+                131_072
+            });
+        }
+        if model.max_output_tokens.is_none() {
+            model.max_output_tokens = Some(8192);
+        }
+        if model.reasoning.is_none() {
+            model.reasoning = Some(model.id.contains("reasoning"));
+        }
+    }
+    Ok(models)
 }
 
 /// Return upstream models filtered by virtual-key permissions.
