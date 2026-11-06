@@ -2,6 +2,8 @@
 pub(crate) mod antigravity;
 /// Model catalog aggregation.
 pub(crate) mod catalog;
+/// `ChatJimmy` provider integration.
+pub(crate) mod chatjimmy;
 /// Claude Code provider integration.
 pub(crate) mod claude;
 /// Codex provider integration.
@@ -103,6 +105,8 @@ providers! {
     Openai => openai::Backend,
     /// `OpenRouter` backend.
     Openrouter => openrouter::Backend,
+    /// `ChatJimmy` backend.
+    ChatJimmy => chatjimmy::Backend,
 }
 
 impl ProviderKind {
@@ -148,6 +152,7 @@ impl ProviderKind {
             Self::Go => go::Backend::discover(state, provider).await,
             Self::Openai => openai::Backend::discover(state, provider).await,
             Self::Openrouter => openrouter::Backend::discover(state, provider).await,
+            Self::ChatJimmy => chatjimmy::Backend::discover(state, provider).await,
         }
     }
 
@@ -175,6 +180,9 @@ impl ProviderKind {
             Self::Openrouter => {
                 openrouter::Backend::discover_permitted(state, provider, permissions).await
             }
+            Self::ChatJimmy => {
+                chatjimmy::Backend::discover_permitted(state, provider, permissions).await
+            }
         }
     }
 
@@ -187,7 +195,7 @@ impl ProviderKind {
             Self::Go => Some(QuotaCapability::Go),
             Self::Claude => Some(QuotaCapability::Claude),
             Self::Openrouter => Some(QuotaCapability::Openrouter),
-            Self::Openai | Self::Cursor | Self::Grok | Self::GrokBuild => None,
+            Self::Openai | Self::Cursor | Self::Grok | Self::GrokBuild | Self::ChatJimmy => None,
         }
     }
 
@@ -204,6 +212,7 @@ impl ProviderKind {
             Self::Go => go::Backend::router(settings),
             Self::Openai => openai::Backend::router(settings),
             Self::Openrouter => openrouter::Backend::router(settings),
+            Self::ChatJimmy => chatjimmy::Backend::router(settings),
         }
     }
 }
@@ -273,7 +282,10 @@ pub(crate) fn dashboard_router(state: &AppState) -> Router {
             ProviderKind::Openrouter => {
                 router.merge(openrouter::Backend::dashboard_router(state.clone()))
             }
-            ProviderKind::Go | ProviderKind::Openai | ProviderKind::GrokBuild => router,
+            ProviderKind::Go
+            | ProviderKind::Openai
+            | ProviderKind::GrokBuild
+            | ProviderKind::ChatJimmy => router,
         })
 }
 
@@ -298,7 +310,8 @@ mod tests {
                 "zen",
                 "go",
                 "openai",
-                "openrouter"
+                "openrouter",
+                "chatjimmy",
             ]
         );
         for value in values {

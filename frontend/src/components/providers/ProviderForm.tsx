@@ -87,7 +87,12 @@ export function ProviderForm({
       }
       const body: Record<string, string> = {};
       if (kind.fixed_name === null) body.name = value.name;
-      if (kind.api_key && value.kind !== "zen" && value.kind !== "openrouter") {
+      if (
+        kind.api_key &&
+        value.kind !== "zen" &&
+        value.kind !== "openrouter" &&
+        value.kind !== "chatjimmy"
+      ) {
         body.base_url = value.baseUrl;
       }
       if (!provider) {
@@ -220,11 +225,15 @@ export function ProviderForm({
           </div>
           <form.Subscribe selector={(state) => state.values.kind}>
             {(kind) =>
-              kind === "zen" || kind === "openrouter" ? (
+              kind === "zen" ||
+              kind === "openrouter" ||
+              kind === "chatjimmy" ? (
                 <p className="text-sm text-muted-foreground">
                   {kind === "zen"
                     ? "Zen uses the official OpenCode API for all models."
-                    : "OpenRouter uses the official OpenRouter API for all models."}
+                    : kind === "openrouter"
+                      ? "OpenRouter uses the official OpenRouter API for all models."
+                      : "ChatJimmy uses the official chatjimmy.ai inference endpoint for all models."}
                 </p>
               ) : (
                 kinds.find((item) => item.value === kind)?.api_key && (

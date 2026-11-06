@@ -58,7 +58,8 @@ export function ProviderCard({
                 {kind &&
                   ((kind.api_key &&
                     provider.kind !== "zen" &&
-                    provider.kind !== "openrouter") ||
+                    provider.kind !== "openrouter" &&
+                    provider.kind !== "chatjimmy") ||
                     kind.fixed_name === null) && (
                     <Button
                       variant="outline"
@@ -139,7 +140,8 @@ export function ProviderCard({
             )}
             {kind?.api_key &&
               provider.kind !== "zen" &&
-              provider.kind !== "openrouter" && (
+              provider.kind !== "openrouter" &&
+              provider.kind !== "chatjimmy" && (
                 <p className="mt-2 text-sm break-all text-muted-foreground">
                   Upstream: {provider.base_url}
                 </p>

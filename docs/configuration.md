@@ -68,6 +68,7 @@ Built-in provider cards show their name without a separate type label. Custom Op
 | **OpenCode Zen** | Passthrough | `zen` | API Key / Keyless | Keyless upstream supported. Balance check requires console session cookie. |
 | **OpenCode Go** | Passthrough | `go` | API Key | Subscription API key. |
 | **OpenRouter** | Passthrough | `openrouter` | API Key | Standard API key. Account credits check requires a Management Key. |
+| **ChatJimmy** | Translation | `chatjimmy` | API Key / Keyless | Keyless upstream; uses Taalas HC1 silicon at `chatjimmy.ai`. |
 | **Custom OpenAI** | Passthrough | _Custom_ | API Key / Keyless | Configurable base URL; forwards `/v1/chat/completions` & `/v1/responses`. |
 
 ---

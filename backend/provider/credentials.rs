@@ -528,6 +528,7 @@ pub(crate) fn router(store: SettingsStore) -> Router {
 /// Migrate encrypted legacy credentials after the encryption key has been verified.
 /// All provider, permission and credential changes commit together; old secrets are
 /// removed only after their replacement is encrypted in that same transaction.
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn migrate_legacy(store: &SettingsStore) -> Result<(), String> {
     const MARKER: &str = "credential_pool_migrated_v1";
     if store.setting_get(MARKER).await?.is_some() {
