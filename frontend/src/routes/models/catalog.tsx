@@ -157,7 +157,9 @@ function ModelCard({
               ? "These are OpenCode Zen base rates. Conditional pricing and other charges may apply; see pricing details."
               : model.pricing?.source === "openrouter"
                 ? "These are OpenRouter base token prices. Provider routing, pricing overrides, and other charges can change the actual cost; see pricing details."
-                : null;
+                : model.pricing?.source === "chatjimmy-reference"
+                  ? "ChatJimmy is a free public demo provided by Taalas on custom HC1 silicon. Reference prices are $0.00."
+                  : null;
   const capabilities = [
     ...(typeof model.reasoning === "boolean"
       ? [["Reasoning support", model.reasoning ? "Yes" : "No"]]

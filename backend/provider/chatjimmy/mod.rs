@@ -19,6 +19,7 @@ use crate::openai::{
     AssistantMessage, ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse, Choice,
     ChunkChoice, ChunkDelta, MessageContent, Model, Usage,
 };
+use crate::provider::common::catalog::{CatalogInfo, CatalogPrices};
 use crate::provider::common::proxy::{
     ProxyError, check_model, error, filter_models, retry_api_keys,
 };
@@ -85,6 +86,30 @@ impl Provider for Backend {
         _provider: &registry::Provider,
     ) -> Result<Vec<Model>, String> {
         discover_models().await
+    }
+}
+
+/// Provider-supplied model details and reference pricing for `ChatJimmy` models.
+pub(crate) fn catalog_info(_model: &Model) -> CatalogInfo {
+    CatalogInfo {
+        context_window: Some(6064),
+        max_output_tokens: Some(2048),
+        reasoning: Some(false),
+        tool_call: Some(false),
+        input_modalities: Some(vec!["text".to_string()]),
+        reasoning_efforts: None,
+        pricing: Some(CatalogPrices {
+            input: Some(0.0),
+            output: Some(0.0),
+            cache_write: None,
+            cache_read: None,
+            source: "chatjimmy-reference",
+            raw: serde_json::json!({
+                "input_cost_per_token": 0.0,
+                "output_cost_per_token": 0.0,
+                "info": "Free public demo on Taalas HC1 silicon"
+            }),
+        }),
     }
 }
 

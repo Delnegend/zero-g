@@ -471,6 +471,7 @@ fn normalize_model(
         "claude" => crate::provider::claude::catalog_info(&model),
         "codex" => crate::provider::codex::models::catalog_info(&model),
         "openrouter" => crate::provider::openrouter::catalog_info(&model),
+        "chatjimmy" => crate::provider::chatjimmy::catalog_info(&model),
         _ => crate::provider::common::catalog::CatalogInfo::default(),
     };
     let zen = (provider.kind == "zen")
@@ -840,6 +841,18 @@ mod tests {
                 .pricing
                 .is_none()
         );
+        let chatjimmy = sample_provider("chatjimmy", "chatjimmy");
+        let model: Model = serde_json::from_value(json!({"id":"llama3.1-8B"})).unwrap();
+        let result = normalize_model(&chatjimmy, model, &sample_data(json!({}), json!({})));
+        assert_eq!(result.reasoning, Some(false));
+        assert_eq!(result.tool_call, Some(false));
+        assert_eq!(result.input_modalities, ["text"]);
+        assert_eq!(result.model.context_window, Some(6064));
+        assert_eq!(result.model.max_output_tokens, Some(2048));
+        let price = result.pricing.unwrap();
+        assert_eq!(price.input, Some(0.0));
+        assert_eq!(price.output, Some(0.0));
+        assert_eq!(price.source, "chatjimmy-reference");
     }
 
     /// Invalid metadata fields do not hide other capabilities or raw details.
