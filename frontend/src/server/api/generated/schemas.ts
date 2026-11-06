@@ -576,6 +576,10 @@ export const CreateProvider = zod
       .string()
       .nullish()
       .describe("Requested instance identifier for non-fixed kinds."),
+    keyless: zod
+      .boolean()
+      .optional()
+      .describe("Whether the provider connects to a keyless upstream."),
     kind: zod.string().describe("Backend kind identifier."),
     name: zod
       .string()
@@ -1555,6 +1559,9 @@ export const Provider = zod
   .object({
     base_url: zod.string().describe("Configured upstream base URL."),
     id: zod.string().describe("Stable instance identifier."),
+    keyless: zod
+      .boolean()
+      .describe("Whether the provider connects to a keyless upstream."),
     kind: zod.string().describe("Backend kind identifier."),
     name: zod.string().describe("User-facing instance name."),
   })
@@ -1639,6 +1646,9 @@ export const ProvidersResponse = zod
           .object({
             base_url: zod.string().describe("Configured upstream base URL."),
             id: zod.string().describe("Stable instance identifier."),
+            keyless: zod
+              .boolean()
+              .describe("Whether the provider connects to a keyless upstream."),
             kind: zod.string().describe("Backend kind identifier."),
             name: zod.string().describe("User-facing instance name."),
           })
@@ -1812,6 +1822,10 @@ export const UpdateProvider = zod
       .string()
       .nullish()
       .describe("Replacement upstream base URL, if supplied."),
+    keyless: zod
+      .boolean()
+      .nullish()
+      .describe("Replacement keyless flag, if supplied."),
     name: zod
       .string()
       .nullish()
@@ -1929,6 +1943,10 @@ export const CreateProviderBody = zod
       .string()
       .nullish()
       .describe("Requested instance identifier for non-fixed kinds."),
+    keyless: zod
+      .boolean()
+      .optional()
+      .describe("Whether the provider connects to a keyless upstream."),
     kind: zod.string().describe("Backend kind identifier."),
     name: zod
       .string()
@@ -1946,6 +1964,10 @@ export const UpdateProviderBody = zod
       .string()
       .nullish()
       .describe("Replacement upstream base URL, if supplied."),
+    keyless: zod
+      .boolean()
+      .nullish()
+      .describe("Replacement keyless flag, if supplied."),
     name: zod
       .string()
       .nullish()

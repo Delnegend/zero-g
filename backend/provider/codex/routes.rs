@@ -331,6 +331,7 @@ mod tests {
             name: "Codex".into(),
             kind: "codex".into(),
             base_url: String::new(),
+            keyless: false,
         };
         let session = RequestSession { id: "test".into() };
         for stream in [false, true] {

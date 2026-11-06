@@ -489,6 +489,7 @@ mod tests {
                 name: id.to_string(),
                 kind: kind.to_string(),
                 base_url: String::new(),
+                keyless: false,
                 deleted: false
             })
             .exec(&mut db)

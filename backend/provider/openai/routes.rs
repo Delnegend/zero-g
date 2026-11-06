@@ -64,7 +64,7 @@ async fn send(
 ) -> Result<reqwest::Response, ProxyError> {
     retry_api_keys(
         settings,
-        &provider.id,
+        provider,
         "No connected OpenAI-compatible credentials",
         identity,
         |key| {
@@ -371,6 +371,7 @@ mod tests {
                 name: id.to_string(),
                 kind: kind.to_string(),
                 base_url: "http://127.0.0.1:1/untrusted".to_string(),
+                keyless: false,
                 deleted: false
             })
             .exec(&mut db)
@@ -591,6 +592,7 @@ mod tests {
                 name: id.to_string(),
                 kind: kind.to_string(),
                 base_url: String::new(),
+                keyless: false,
                 deleted: false
             })
             .exec(&mut (*store.database.db).clone())
@@ -657,6 +659,7 @@ mod tests {
                         name: kind.into(),
                         kind: kind.into(),
                         base_url: format!("http://{}/v1", listener.local_addr().unwrap()),
+                        keyless: false,
                     };
                     let server =
                         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -698,6 +701,7 @@ mod tests {
                 name: id.to_string(),
                 kind: kind.to_string(),
                 base_url: String::new(),
+                keyless: false,
                 deleted: false
             })
             .exec(&mut (*store.database.db).clone())
@@ -737,6 +741,7 @@ mod tests {
                 name: id.into(),
                 kind: kind.into(),
                 base_url: format!("http://{}/v1", listener.local_addr().unwrap()),
+                keyless: false,
             };
             let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
             assert_eq!(

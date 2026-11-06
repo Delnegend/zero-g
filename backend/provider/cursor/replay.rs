@@ -702,6 +702,7 @@ mod tests {
             name: "Cursor".to_string(),
             kind: "cursor".to_string(),
             base_url: String::new(),
+            keyless: false,
             deleted: false
         })
         .exec(&mut db)

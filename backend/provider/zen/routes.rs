@@ -353,7 +353,7 @@ async fn send_upstream(
 ) -> Result<reqwest::Response, ProxyError> {
     retry_api_keys(
         settings,
-        &provider.id,
+        provider,
         "No connected Zen credentials",
         identity,
         |key| {
@@ -519,6 +519,7 @@ mod tests {
             name: "Zen".to_string(),
             kind: "zen".to_string(),
             base_url: String::new(),
+            keyless: false,
             deleted: false
         })
         .exec(&mut (*store.database.db).clone())
@@ -569,6 +570,7 @@ mod tests {
             name: "Zen".into(),
             kind: "zen".into(),
             base_url: "http://untrusted.invalid/v1".into(),
+            keyless: false,
         };
         let body = Bytes::from_static(b"{\"model\":\"model:free\",\"stream\":true,\"custom\":1}");
         let mut headers = HeaderMap::new();

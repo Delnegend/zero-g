@@ -493,6 +493,7 @@ mod tests {
             name: "Grok".to_string(),
             kind: "grok".to_string(),
             base_url: String::new(),
+            keyless: false,
             deleted: false
         })
         .exec(&mut (*database.db).clone())

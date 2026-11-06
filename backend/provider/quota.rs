@@ -135,6 +135,7 @@ mod tests {
             name: "Zen".to_string(),
             kind: "zen".to_string(),
             base_url: "https://example.com/v1".to_string(),
+            keyless: false,
             deleted: false
         })
         .exec(&mut db)

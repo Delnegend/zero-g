@@ -2486,6 +2486,10 @@
             "type": ["string", "null"],
             "description": "Requested instance identifier for non-fixed kinds."
           },
+          "keyless": {
+            "type": "boolean",
+            "description": "Whether the provider connects to a keyless upstream."
+          },
           "kind": {
             "type": "string",
             "description": "Backend kind identifier."
@@ -3350,7 +3354,7 @@
       "Provider": {
         "type": "object",
         "description": "Active configured provider instance exposed by the registry.",
-        "required": ["id", "name", "kind", "base_url"],
+        "required": ["id", "name", "kind", "base_url", "keyless"],
         "properties": {
           "base_url": {
             "type": "string",
@@ -3359,6 +3363,10 @@
           "id": {
             "type": "string",
             "description": "Stable instance identifier."
+          },
+          "keyless": {
+            "type": "boolean",
+            "description": "Whether the provider connects to a keyless upstream."
           },
           "kind": {
             "type": "string",
@@ -3569,6 +3577,10 @@
           "base_url": {
             "type": ["string", "null"],
             "description": "Replacement upstream base URL, if supplied."
+          },
+          "keyless": {
+            "type": ["boolean", "null"],
+            "description": "Replacement keyless flag, if supplied."
           },
           "name": {
             "type": ["string", "null"],

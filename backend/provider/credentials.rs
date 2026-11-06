@@ -622,7 +622,7 @@ pub(crate) async fn migrate_legacy(store: &SettingsStore) -> Result<(), String> 
             if let Some(value) = encrypted { Secret::upsert_by_name(new_name.as_str()).value(value.clone()).exec(&mut tx).await?; }
             Secret::delete_by_name(&mut tx, old_name.as_str()).await?;
             if provider.id != *target {
-                ProviderRecord::upsert_by_id(provider.id.as_str()).name(String::new()).kind(provider.kind.clone()).base_url(String::new()).deleted(true).exec(&mut tx).await?;
+                ProviderRecord::upsert_by_id(provider.id.as_str()).name(String::new()).kind(provider.kind.clone()).base_url(String::new()).keyless(false).deleted(true).exec(&mut tx).await?;
             }
         }
         Setting::upsert_by_name(MARKER).value("1".to_string()).exec(&mut tx).await?;
@@ -653,6 +653,7 @@ mod tests {
                 name: id.to_string(),
                 kind: "codex".to_string(),
                 base_url: String::new(),
+                keyless: false,
                 deleted: false
             })
             .exec(&mut db)
@@ -730,6 +731,7 @@ mod tests {
                 name: kind.to_string(),
                 kind: kind.to_string(),
                 base_url: String::new(),
+                keyless: false,
                 deleted: false
             })
             .exec(&mut db)
@@ -792,6 +794,7 @@ mod tests {
                 name: id.to_string(),
                 kind: "agy".to_string(),
                 base_url: String::new(),
+                keyless: false,
                 deleted: false
             })
             .exec(&mut db)
@@ -922,6 +925,7 @@ mod incompatible_legacy_tests {
                 name: id.to_string(),
                 kind: "zen".to_string(),
                 base_url: format!("https://{id}.example/v1"),
+                keyless: false,
                 deleted: false
             })
             .exec(&mut db)

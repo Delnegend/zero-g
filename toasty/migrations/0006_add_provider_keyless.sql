@@ -1,0 +1,1 @@
+ALTER TABLE "providers" ADD COLUMN "keyless" BOOLEAN NOT NULL DEFAULT 0;

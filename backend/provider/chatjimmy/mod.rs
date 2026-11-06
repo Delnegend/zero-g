@@ -280,7 +280,7 @@ async fn chat_handler(
 
     let result = retry_api_keys(
         &state.settings,
-        &provider.id,
+        &provider,
         "No connected ChatJimmy credentials",
         identity.as_ref().map(|Extension(id)| id),
         |_key| {

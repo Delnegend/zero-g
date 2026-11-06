@@ -114,6 +114,8 @@ pub(crate) struct ProviderRecord {
     pub kind: String,
     /// Upstream base URL.
     pub base_url: String,
+    /// Whether the provider connects to a keyless upstream.
+    pub keyless: bool,
     /// Whether the provider has been deleted.
     pub deleted: bool,
 }

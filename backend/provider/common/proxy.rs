@@ -10,7 +10,7 @@ use std::future::Future;
 /// Resolve weighted API keys in order and retry only credential-related responses.
 pub(crate) async fn retry_api_keys<F, Fut>(
     settings: &SettingsStore,
-    provider_id: &str,
+    provider: &crate::provider::registry::Provider,
     no_credentials: &'static str,
     identity: Option<&crate::provider::common::request_identity::RequestIdentity>,
     mut send: F,
@@ -19,7 +19,23 @@ where
     F: FnMut(String) -> Fut,
     Fut: Future<Output = Result<reqwest::Response, &'static str>>,
 {
-    let credentials = crate::provider::credentials::list(settings, provider_id)
+    if provider.keyless {
+        let response = send(String::new()).await.map_err(|message| {
+            error(
+                StatusCode::BAD_GATEWAY,
+                message,
+                "upstream_error",
+                "bad_gateway",
+            )
+        })?;
+        if response.status().is_success()
+            && let Some(identity) = identity
+        {
+            identity.set_credential("keyless", "Keyless");
+        }
+        return Ok(response);
+    }
+    let credentials = crate::provider::credentials::list(settings, &provider.id)
         .await
         .map_err(|_| settings_error())?;
     let mut last = None;
@@ -350,9 +366,16 @@ mod tests {
         let settings = SettingsStore::new(database, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
             .await
             .unwrap();
+        let provider = crate::provider::registry::Provider {
+            id: "missing".into(),
+            name: "Missing".into(),
+            kind: "zen".into(),
+            base_url: String::new(),
+            keyless: false,
+        };
         let result = retry_api_keys(
             &settings,
-            "missing",
+            &provider,
             "No connected Zen credentials",
             None,
             |_| async { panic!("no request should be sent") },
@@ -367,5 +390,46 @@ mod tests {
         let value: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(value["error"]["message"], "No connected Zen credentials");
         assert_eq!(value["error"]["code"], "no_credentials");
+    }
+
+    #[tokio::test]
+    async fn keyless_provider_executes_without_credentials() {
+        let app = Router::new().route("/ok", get(|| async { "ok" }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/ok", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let database = crate::database::Database::open(":memory:").await.unwrap();
+        let settings = SettingsStore::new(database, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+            .await
+            .unwrap();
+        let provider = crate::provider::registry::Provider {
+            id: "ollama".into(),
+            name: "Ollama".into(),
+            kind: "openai".into(),
+            base_url: String::new(),
+            keyless: true,
+        };
+        let identity = crate::provider::common::request_identity::RequestIdentity::default();
+        let mut called = false;
+        let response = retry_api_keys(
+            &settings,
+            &provider,
+            "No connected credentials",
+            Some(&identity),
+            |key| {
+                assert_eq!(key, "");
+                called = true;
+                let url = url.clone();
+                async move { reqwest::get(&url).await.map_err(|_| "failed") }
+            },
+        )
+        .await
+        .unwrap();
+        assert!(called);
+        assert_eq!(response.status(), StatusCode::OK);
+        let snapshot = identity.snapshot();
+        assert_eq!(snapshot.credential_id.as_deref(), Some("keyless"));
+        assert_eq!(snapshot.credential_name.as_deref(), Some("Keyless"));
+        server.abort();
     }
 }

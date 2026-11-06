@@ -724,6 +724,7 @@ mod tests {
                 name: id.to_string(),
                 kind: kind.to_string(),
                 base_url: String::new(),
+                keyless: false,
                 deleted: false
             })
             .exec(&mut (*store.database.db).clone())
@@ -923,6 +924,7 @@ mod tests {
                 name: id.to_string(),
                 kind: "codex".to_string(),
                 base_url: String::new(),
+                keyless: false,
                 deleted: false
             })
             .exec(&mut (*store.database.db).clone())

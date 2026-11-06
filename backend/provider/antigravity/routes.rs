@@ -1010,6 +1010,7 @@ mod tests {
             name: "agy".to_string(),
             kind: "agy".to_string(),
             base_url: String::new(),
+            keyless: false,
             deleted: false
         })
         .exec(&mut (*store.database.db).clone())
@@ -1054,6 +1055,7 @@ mod tests {
                 name: "agy".into(),
                 kind: "agy".into(),
                 base_url: String::new(),
+                keyless: false,
             }))
             .layer(Extension(RequestSession {
                 id: "scoped-session".into(),

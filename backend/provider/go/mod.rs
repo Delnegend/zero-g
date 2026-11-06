@@ -184,7 +184,7 @@ async fn send(
 ) -> Result<reqwest::Response, ProxyError> {
     retry_api_keys(
         settings,
-        &provider.id,
+        provider,
         "No connected OpenCode Go credentials",
         identity,
         |key| {
@@ -381,6 +381,7 @@ mod tests {
             name: "Go".into(),
             kind: "go".into(),
             base_url: String::new(),
+            keyless: false,
         };
         assert_eq!(base(&provider, false), DEFAULT_BASE);
         assert_eq!(base(&provider, true), MODELS_BASE);
@@ -431,6 +432,7 @@ mod tests {
             name: "Go".to_string(),
             kind: "go".to_string(),
             base_url: base_url.clone(),
+            keyless: false,
             deleted: false
         })
         .exec(&mut (*database.db).clone())
@@ -463,6 +465,7 @@ mod tests {
             name: "Go".into(),
             kind: "go".into(),
             base_url,
+            keyless: false,
         };
         let permissions = Permissions {
             providers: vec![],
@@ -580,6 +583,7 @@ mod tests {
             name: "Go".to_string(),
             kind: "go".to_string(),
             base_url: String::new(),
+            keyless: false,
             deleted: false
         })
         .exec(&mut (*store.database.db).clone())
@@ -634,6 +638,7 @@ mod tests {
                 name: "Go".into(),
                 kind: "go".into(),
                 base_url: format!("http://{}/v1", listener.local_addr().unwrap()),
+                keyless: false,
             };
             let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
             let identity = RequestIdentity::default();

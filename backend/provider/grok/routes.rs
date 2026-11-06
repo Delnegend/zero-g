@@ -613,6 +613,7 @@ mod tests {
                     name: "Grok".into(),
                     kind: "grok".into(),
                     base_url: String::new(),
+                    keyless: false,
                 }),
                 Extension("grok"),
                 Extension(RequestSession {

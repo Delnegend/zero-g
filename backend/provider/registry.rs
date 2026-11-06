@@ -13,7 +13,7 @@ use crate::{
     database::{Database, transaction_with_retry},
     provider::{PROVIDER_KINDS, common::ProviderDescriptor, credentials},
     server::settings::SettingsStore,
-    storage::{ProviderCredential, ProviderRecord, Setting, VirtualKey},
+    storage::{ProviderCredential, ProviderRecord, Secret, Setting, VirtualKey},
 };
 
 /// Active configured provider instance exposed by the registry.
@@ -27,8 +27,9 @@ pub(crate) struct Provider {
     pub(crate) kind: String,
     /// Configured upstream base URL.
     pub(crate) base_url: String,
+    /// Whether the provider connects to a keyless upstream.
+    pub(crate) keyless: bool,
 }
-
 impl From<ProviderRecord> for Provider {
     fn from(row: ProviderRecord) -> Self {
         Self {
@@ -36,6 +37,7 @@ impl From<ProviderRecord> for Provider {
             name: row.name,
             kind: row.kind,
             base_url: row.base_url,
+            keyless: row.keyless,
         }
     }
 }
@@ -76,6 +78,9 @@ struct CreateProvider {
     /// Upstream base URL, empty when the backend supplies a default.
     #[serde(default)]
     base_url: String,
+    /// Whether the provider connects to a keyless upstream.
+    #[serde(default)]
+    keyless: bool,
 }
 
 /// Mutable provider instance properties.
@@ -86,8 +91,9 @@ struct UpdateProvider {
     name: Option<String>,
     /// Replacement upstream base URL, if supplied.
     base_url: Option<String>,
+    /// Replacement keyless flag, if supplied.
+    keyless: Option<bool>,
 }
-
 /// Validates provider identity, kind, and upstream URL.
 fn validate(id: &str, name: &str, kind: &str, base_url: &str) -> Result<(), &'static str> {
     if id.is_empty()
@@ -215,6 +221,7 @@ async fn list_providers(State(store): State<SettingsStore>) -> Response {
 
 /// Creates a provider after validating identity and uniqueness.
 #[utoipa::path(post, path = "/api/providers", operation_id = "createProvider", request_body = CreateProvider, responses((status = 201, body = Provider)))]
+#[allow(clippy::too_many_lines)]
 async fn create_provider(
     State(store): State<SettingsStore>,
     Json(input): Json<CreateProvider>,
@@ -251,6 +258,13 @@ async fn create_provider(
             )
                 .into_response();
         }
+    };
+    let keyless = if input.kind == "chatjimmy" {
+        true
+    } else if input.kind == "openai" {
+        input.keyless
+    } else {
+        false
     };
     if let Err(e) = validate(&id, &name, &input.kind, &input.base_url) {
         return (StatusCode::BAD_REQUEST, e).into_response();
@@ -289,6 +303,7 @@ async fn create_provider(
             .name(name.clone())
             .kind(input.kind.clone())
             .base_url(input.base_url.clone())
+            .keyless(keyless)
             .deleted(false)
             .exec(&mut tx)
             .await?;
@@ -305,6 +320,7 @@ async fn create_provider(
                 name,
                 kind: input.kind,
                 base_url: input.base_url,
+                keyless,
             }),
         )
             .into_response(),
@@ -347,6 +363,13 @@ async fn update_provider(
         if let Err(e) = validate(&id, &name, &row.kind, &base_url) {
             return Ok(Err((StatusCode::BAD_REQUEST, e)));
         }
+        let keyless = if row.kind == "chatjimmy" {
+            true
+        } else if row.kind == "openai" {
+            input.keyless.unwrap_or(row.keyless)
+        } else {
+            false
+        };
         if duplicate(&rows, &id, &row.kind, &base_url) {
             return Ok(Err((
                 StatusCode::CONFLICT,
@@ -357,6 +380,7 @@ async fn update_provider(
             .name(name.clone())
             .kind(row.kind.clone())
             .base_url(base_url.clone())
+            .keyless(keyless)
             .deleted(false)
             .exec(&mut tx)
             .await?;
@@ -366,6 +390,7 @@ async fn update_provider(
             name,
             kind: row.kind.clone(),
             base_url,
+            keyless,
         }))
     });
     match result {
@@ -395,12 +420,26 @@ async fn delete_provider(State(store): State<SettingsStore>, Path(id): Path<Stri
                 .exec(&mut tx)
                 .await?;
         if credential.is_some() {
-            return Ok(StatusCode::CONFLICT);
+            if row.keyless {
+                for cred in ProviderCredential::filter(
+                    ProviderCredential::fields().provider_id().eq(id.as_str()),
+                )
+                .exec(&mut tx)
+                .await?
+                {
+                    ProviderCredential::delete_by_id(&mut tx, cred.id.as_str()).await?;
+                    Secret::delete_by_name(&mut tx, &format!("credential.{}.api_key", cred.id))
+                        .await?;
+                }
+            } else {
+                return Ok(StatusCode::CONFLICT);
+            }
         }
         ProviderRecord::upsert_by_id(id.as_str())
             .name(String::new())
             .kind(row.kind)
             .base_url(String::new())
+            .keyless(false)
             .deleted(true)
             .exec(&mut tx)
             .await?;
@@ -469,9 +508,10 @@ pub(crate) async fn migrate_fixed_identities(store: &SettingsStore) -> Result<()
         }
         for row in rows.iter().filter(|row| !row.deleted) {
             let Some((target, name)) = PROVIDER_KINDS.iter().find(|kind| kind.value == row.kind).and_then(|kind| kind.fixed_id.zip(kind.fixed_name)) else { continue };
-            ProviderRecord::upsert_by_id(target).name(name.to_string()).kind(row.kind.clone()).base_url(row.base_url.clone()).deleted(false).exec(&mut tx).await?;
+            let keyless = target == "chatjimmy";
+            ProviderRecord::upsert_by_id(target).name(name.to_string()).kind(row.kind.clone()).base_url(row.base_url.clone()).keyless(keyless).deleted(false).exec(&mut tx).await?;
             if row.id != target {
-                ProviderRecord::upsert_by_id(row.id.as_str()).name(String::new()).kind(row.kind.clone()).base_url(String::new()).deleted(true).exec(&mut tx).await?;
+                ProviderRecord::upsert_by_id(row.id.as_str()).name(String::new()).kind(row.kind.clone()).base_url(String::new()).keyless(false).deleted(true).exec(&mut tx).await?;
             }
         }
         if !remap.is_empty() {
@@ -1033,7 +1073,8 @@ mod tests {
             name: "Old".to_string(),
             kind: "agy".to_string(),
             base_url: String::new(),
-            deleted: false
+            keyless: false,
+            deleted: false,
         })
         .exec(&mut db)
         .await
@@ -1043,7 +1084,8 @@ mod tests {
             name: String::new(),
             kind: "openai".to_string(),
             base_url: String::new(),
-            deleted: true
+            keyless: false,
+            deleted: true,
         })
         .exec(&mut db)
         .await
@@ -1157,5 +1199,46 @@ mod tests {
             "[\"agy\"]"
         );
         migrate_fixed_identities(&store).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn keyless_provider_lifecycle_and_cascade_delete() {
+        let store = SettingsStore::new(
+            Database::open(":memory:").await.unwrap(),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )
+        .await
+        .unwrap();
+        let router = router(store.clone());
+
+        let (status, provider) = request(
+            &router,
+            "POST",
+            "/api/providers",
+            r#"{"id":"ollama","name":"Ollama","kind":"openai","base_url":"http://localhost:11434/v1","keyless":true}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(provider["keyless"], true);
+
+        let (status, _) = request(
+            &router,
+            "POST",
+            "/api/providers/ollama/credentials",
+            r#"{"name":"default","weight":1,"enabled":true}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+
+        let (status, _) = request(&router, "DELETE", "/api/providers/ollama", "").await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        assert!(get(&store.database, "ollama").await.unwrap().is_none());
+        assert!(
+            credentials::list(&store, "ollama")
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 }

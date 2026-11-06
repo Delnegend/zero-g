@@ -86,22 +86,26 @@ pub(crate) async fn discover<E: ModelEndpoint>(
     store: &SettingsStore,
     provider: &Provider,
 ) -> Result<Vec<crate::openai::Model>, String> {
-    let credentials = crate::provider::credentials::list(store, &provider.id).await?;
-    let mut response = None;
-    for credential in credentials {
-        let key = store
-            .secret_get(&format!("credential.{}.api_key", credential.id))
-            .await
-            .map_err(|_| "Failed to load provider credentials")?
-            .ok_or("Provider credential is not connected")?;
-        let current = E::request(provider, &key).await.map_err(str::to_owned)?;
-        let status = current.status();
-        response = Some(current);
-        if !matches!(status.as_u16(), 401 | 403 | 429) {
-            break;
+    let response = if provider.keyless {
+        E::request(provider, "").await.map_err(str::to_owned)?
+    } else {
+        let credentials = crate::provider::credentials::list(store, &provider.id).await?;
+        let mut response = None;
+        for credential in credentials {
+            let key = store
+                .secret_get(&format!("credential.{}.api_key", credential.id))
+                .await
+                .map_err(|_| "Failed to load provider credentials")?
+                .ok_or("Provider credential is not connected")?;
+            let current = E::request(provider, &key).await.map_err(str::to_owned)?;
+            let status = current.status();
+            response = Some(current);
+            if !matches!(status.as_u16(), 401 | 403 | 429) {
+                break;
+            }
         }
-    }
-    let response = response.ok_or("Provider has no connected credentials")?;
+        response.ok_or("Provider has no connected credentials")?
+    };
     if !response.status().is_success() {
         return Err(format!(
             "Provider model discovery returned HTTP {}",

@@ -54,7 +54,7 @@ async fn decide(
     }
     let response = retry_api_keys(
         &state.settings,
-        &provider.id,
+        &provider,
         "No connected OpenRouter credentials",
         identity.as_ref().map(|Extension(identity)| identity),
         |key| {
@@ -136,6 +136,7 @@ mod tests {
             name: "OpenRouter".to_string(),
             kind: "openrouter".to_string(),
             base_url: String::new(),
+            keyless: false,
             deleted: false
         })
         .exec(&mut db)
