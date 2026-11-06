@@ -124,6 +124,20 @@ impl IntoResponse for ProxyError {
             .into_response()
     }
 }
+impl ProxyError {
+    /// Error message.
+    pub(crate) const fn message(&self) -> &'static str {
+        self.1
+    }
+    /// Wire error type.
+    pub(crate) const fn kind(&self) -> &'static str {
+        self.2
+    }
+    /// Error code.
+    pub(crate) const fn code(&self) -> &'static str {
+        self.3
+    }
+}
 
 /// Constructs a proxy error from its status and wire-level error fields.
 pub(crate) const fn error(
