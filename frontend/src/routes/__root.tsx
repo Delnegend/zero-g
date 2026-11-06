@@ -125,7 +125,6 @@ function DashboardSidebar() {
                       [
                         ["/models/catalog", "Catalog"],
                         ["/models/providers", "Providers"],
-                        ["/models/settings", "Settings"],
                       ] as const
                     ).map(([to, label]) => (
                       <SidebarMenuSubItem key={to}>

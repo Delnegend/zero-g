@@ -15,7 +15,6 @@ import { Route as LlmLogsRouteImport } from './routes/llm-logs'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ModelsCatalogRouteImport } from './routes/models/catalog'
 import { Route as ModelsProvidersRouteImport } from './routes/models/providers'
-import { Route as ModelsSettingsRouteImport } from './routes/models/settings'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -47,11 +46,6 @@ const ModelsProvidersRoute = ModelsProvidersRouteImport.update({
   path: '/models/providers',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ModelsSettingsRoute = ModelsSettingsRouteImport.update({
-  id: '/models/settings',
-  path: '/models/settings',
-  getParentRoute: () => rootRouteImport,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -60,7 +54,6 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
   '/models/catalog': typeof ModelsCatalogRoute
   '/models/providers': typeof ModelsProvidersRoute
-  '/models/settings': typeof ModelsSettingsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -69,7 +62,6 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
   '/models/catalog': typeof ModelsCatalogRoute
   '/models/providers': typeof ModelsProvidersRoute
-  '/models/settings': typeof ModelsSettingsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -79,7 +71,6 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/models/catalog': typeof ModelsCatalogRoute
   '/models/providers': typeof ModelsProvidersRoute
-  '/models/settings': typeof ModelsSettingsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -90,7 +81,6 @@ export interface FileRouteTypes {
     | '/settings'
     | '/models/catalog'
     | '/models/providers'
-    | '/models/settings'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -99,7 +89,6 @@ export interface FileRouteTypes {
     | '/settings'
     | '/models/catalog'
     | '/models/providers'
-    | '/models/settings'
   id:
     | '__root__'
     | '/'
@@ -108,7 +97,6 @@ export interface FileRouteTypes {
     | '/settings'
     | '/models/catalog'
     | '/models/providers'
-    | '/models/settings'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -118,7 +106,6 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRoute
   ModelsCatalogRoute: typeof ModelsCatalogRoute
   ModelsProvidersRoute: typeof ModelsProvidersRoute
-  ModelsSettingsRoute: typeof ModelsSettingsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -165,13 +152,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ModelsProvidersRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/models/settings': {
-      id: '/models/settings'
-      path: '/models/settings'
-      fullPath: '/models/settings'
-      preLoaderRoute: typeof ModelsSettingsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
   }
 }
 
@@ -182,7 +162,6 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRoute,
   ModelsCatalogRoute: ModelsCatalogRoute,
   ModelsProvidersRoute: ModelsProvidersRoute,
-  ModelsSettingsRoute: ModelsSettingsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

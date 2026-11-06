@@ -90,7 +90,6 @@ const { ProviderCard } = await import("./components/providers/ProviderCard");
 const { ProvidersPage } = await import("./routes/models/providers");
 const { ProviderForm } = await import("./components/providers/ProviderForm");
 const { ModelCatalogPage } = await import("./routes/models/catalog");
-const { ModelSettingsPage } = await import("./routes/models/settings");
 const { TooltipProvider } = await import("./components/ui/tooltip");
 const originalFetch = globalThis.fetch;
 
@@ -108,7 +107,11 @@ function mount(element: React.ReactNode) {
   );
 }
 
-const settings = { log_retention_days: 30 };
+const settings = {
+  log_retention_days: 30,
+  pricing_interval_hours: 24,
+  discovery_interval_minutes: 60,
+};
 test("built-in provider names remain visible without an extra label", async () => {
   globalThis.fetch = (async () =>
     Response.json({ credentials: [] })) as typeof fetch;
@@ -194,42 +197,34 @@ test("provider save stays open on failure and closes after a successful retry", 
   assert.equal(attempts, 2);
 });
 
-test("model settings retain edits made while saving and clear success on edit", async () => {
-  const initial = {
-    pricing_url: "",
-    parameters_url: "",
-    pricing_interval_hours: 1,
-    discovery_interval_minutes: 5,
-  };
-  let release!: (response: Response) => void;
+test("settings page saves model sync intervals in the new card", async () => {
+  const bodies: unknown[] = [];
   globalThis.fetch = (async (_url, options) => {
-    if (options?.method === "PUT") {
-      return new Promise<Response>((resolve) => {
-        release = resolve;
-      });
-    }
-    return Response.json(initial);
+    if (options?.method === "PUT")
+      bodies.push(JSON.parse(String(options.body)));
+    return Response.json(settings);
   }) as typeof fetch;
   const user = userEvent.setup();
-  mount(<ModelSettingsPage />);
-  const pricing = await screen.findByLabelText("Pricing datasheet URL");
-  await user.type(pricing, "https://example.test/first");
+  mount(<SettingsPage />);
+  const pricing = await screen.findByLabelText(
+    "Datasheet sync interval (hours)",
+  );
+  const discovery = await screen.findByLabelText(
+    "Model discovery interval (minutes)",
+  );
+  await user.clear(pricing);
+  await user.type(pricing, "12");
+  await user.clear(discovery);
+  await user.type(discovery, "30");
   await user.click(screen.getByRole("button", { name: "Save settings" }));
-  assert.ok(
-    (screen.getByRole("button", { name: "Saving…" }) as HTMLButtonElement)
-      .disabled,
-  );
-  await user.type(pricing, "-edited");
-  release(
-    Response.json({ ...initial, pricing_url: "https://example.test/first" }),
-  );
   await screen.findByText("Settings saved.");
-  assert.equal(
-    (pricing as HTMLInputElement).value,
-    "https://example.test/first-edited",
-  );
-  await user.type(pricing, "x");
-  assert.equal(screen.queryByText("Settings saved."), null);
+  assert.deepEqual(bodies, [
+    {
+      log_retention_days: 30,
+      pricing_interval_hours: 12,
+      discovery_interval_minutes: 30,
+    },
+  ]);
 });
 
 test("settings save log retention without provider OAuth settings", async () => {
@@ -245,7 +240,13 @@ test("settings save log retention without provider OAuth settings", async () => 
   assert.equal(screen.queryByLabelText(/Google OAuth/), null);
   await user.click(screen.getByRole("button", { name: "Save settings" }));
   await screen.findByText("Settings saved.");
-  assert.deepEqual(bodies, [{ log_retention_days: 30 }]);
+  assert.deepEqual(bodies, [
+    {
+      log_retention_days: 30,
+      pricing_interval_hours: 24,
+      discovery_interval_minutes: 60,
+    },
+  ]);
 });
 
 test("edits made during a delayed settings save survive the response", async () => {
@@ -258,7 +259,7 @@ test("edits made during a delayed settings save survive the response", async () 
     if (options?.method !== "PUT") return Response.json(settings);
     bodies.push(JSON.parse(String(options.body)));
     if (bodies.length === 1) return delayed;
-    return Response.json({ log_retention_days: 40 });
+    return Response.json({ ...settings, log_retention_days: 40 });
   }) as typeof fetch;
   const user = userEvent.setup();
   mount(<SettingsPage />);
@@ -269,14 +270,14 @@ test("edits made during a delayed settings save survive the response", async () 
   await waitFor(() => assert.equal(bodies.length, 1));
   await user.clear(retention);
   await user.type(retention, "40");
-  release(Response.json({ log_retention_days: 35 }));
+  release(Response.json({ ...settings, log_retention_days: 35 }));
   await screen.findByText("Settings saved.");
   assert.equal((retention as HTMLInputElement).value, "40");
   await user.click(screen.getByRole("button", { name: "Save settings" }));
   await waitFor(() => assert.equal(bodies.length, 2));
   assert.deepEqual(bodies, [
-    { log_retention_days: 35 },
-    { log_retention_days: 40 },
+    { ...settings, log_retention_days: 35 },
+    { ...settings, log_retention_days: 40 },
   ]);
 });
 

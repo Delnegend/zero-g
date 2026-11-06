@@ -48,7 +48,9 @@ export function SettingsPage() {
 
   const form = useForm({
     defaultValues: {
-      log_retention_days: settings?.log_retention_days ?? 1,
+      log_retention_days: settings?.log_retention_days ?? 30,
+      pricing_interval_hours: settings?.pricing_interval_hours ?? 24,
+      discovery_interval_minutes: settings?.discovery_interval_minutes ?? 60,
     },
     onSubmit: ({ value }) => save(value),
   });
@@ -56,10 +58,22 @@ export function SettingsPage() {
   useEffect(() => {
     if (settings && !draftStarted.current) {
       form.setFieldValue("log_retention_days", settings.log_retention_days);
+      form.setFieldValue(
+        "pricing_interval_hours",
+        settings.pricing_interval_hours,
+      );
+      form.setFieldValue(
+        "discovery_interval_minutes",
+        settings.discovery_interval_minutes,
+      );
     }
   }, [settings, form]);
 
-  async function save(value: { log_retention_days: number }) {
+  async function save(value: {
+    log_retention_days: number;
+    pricing_interval_hours: number;
+    discovery_interval_minutes: number;
+  }) {
     if (!settings) return;
     saveController.current?.abort();
     const controller = new AbortController();
@@ -70,6 +84,8 @@ export function SettingsPage() {
     try {
       const body: SettingsUpdate = {
         log_retention_days: value.log_retention_days,
+        pricing_interval_hours: value.pricing_interval_hours,
+        discovery_interval_minutes: value.discovery_interval_minutes,
       };
       const updated = await saveMutation.mutateAsync({
         body,
@@ -83,9 +99,22 @@ export function SettingsPage() {
         current.log_retention_days === value.log_retention_days
           ? updated.log_retention_days
           : current.log_retention_days;
-      draftStarted.current = logRetention !== updated.log_retention_days;
+      const pricingInterval =
+        current.pricing_interval_hours === value.pricing_interval_hours
+          ? updated.pricing_interval_hours
+          : current.pricing_interval_hours;
+      const discoveryInterval =
+        current.discovery_interval_minutes === value.discovery_interval_minutes
+          ? updated.discovery_interval_minutes
+          : current.discovery_interval_minutes;
+      draftStarted.current =
+        logRetention !== updated.log_retention_days ||
+        pricingInterval !== updated.pricing_interval_hours ||
+        discoveryInterval !== updated.discovery_interval_minutes;
       queryClient.setQueryData(settingsOptions().queryKey, updated);
       form.setFieldValue("log_retention_days", logRetention);
+      form.setFieldValue("pricing_interval_hours", pricingInterval);
+      form.setFieldValue("discovery_interval_minutes", discoveryInterval);
       setSaved(true);
     } catch (err) {
       if (!controller.signal.aborted) setError(message(err));
@@ -113,41 +142,100 @@ export function SettingsPage() {
       )}
       {settingsQuery.isPending && <FormSkeleton />}
       {settings && (
-        <Card className="mt-6 p-5">
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              void form.handleSubmit();
-            }}
-            className="grid gap-5"
-          >
-            <form.Field name="log_retention_days">
-              {(field) => (
-                <Label className="block text-sm font-medium">
-                  Log retention (days)
-                  <Input
-                    className="mt-1"
-                    type="number"
-                    min={1}
-                    max={36500}
-                    required
-                    value={field.state.value}
-                    onBlur={field.handleBlur}
-                    onChange={(e) => {
-                      draftStarted.current = true;
-                      field.handleChange(Number(e.target.value));
-                    }}
-                  />
-                </Label>
-              )}
-            </form.Field>
-            <div>
-              <Button type="submit" disabled={busy}>
-                {busy ? "Saving…" : "Save settings"}
-              </Button>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void form.handleSubmit();
+          }}
+          className="mt-6 grid gap-6"
+        >
+          <Card className="p-5">
+            <h2 className="text-lg font-semibold">Log retention</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Configure how long request logs and traces are retained before
+              being pruned.
+            </p>
+            <div className="mt-4">
+              <form.Field name="log_retention_days">
+                {(field) => (
+                  <Label className="block text-sm font-medium">
+                    Log retention (days)
+                    <Input
+                      className="mt-1"
+                      type="number"
+                      min={1}
+                      max={36500}
+                      required
+                      value={field.state.value}
+                      onBlur={field.handleBlur}
+                      onChange={(e) => {
+                        draftStarted.current = true;
+                        field.handleChange(Number(e.target.value));
+                      }}
+                    />
+                  </Label>
+                )}
+              </form.Field>
             </div>
-          </form>
-        </Card>
+          </Card>
+
+          <Card className="p-5">
+            <h2 className="text-lg font-semibold">Model synchronization</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Configure periodic background intervals for refreshing pricing
+              datasheets and discovering provider models. A value of 0 disables
+              periodic refreshes.
+            </p>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <form.Field name="pricing_interval_hours">
+                {(field) => (
+                  <Label className="block text-sm font-medium">
+                    Datasheet sync interval (hours)
+                    <Input
+                      className="mt-1"
+                      type="number"
+                      min={0}
+                      step={1}
+                      required
+                      value={field.state.value}
+                      onBlur={field.handleBlur}
+                      onChange={(e) => {
+                        draftStarted.current = true;
+                        field.handleChange(Number(e.target.value));
+                      }}
+                    />
+                  </Label>
+                )}
+              </form.Field>
+              <form.Field name="discovery_interval_minutes">
+                {(field) => (
+                  <Label className="block text-sm font-medium">
+                    Model discovery interval (minutes)
+                    <Input
+                      className="mt-1"
+                      type="number"
+                      min={0}
+                      step={1}
+                      required
+                      value={field.state.value}
+                      onBlur={field.handleBlur}
+                      onChange={(e) => {
+                        draftStarted.current = true;
+                        field.handleChange(Number(e.target.value));
+                      }}
+                    />
+                  </Label>
+                )}
+              </form.Field>
+            </div>
+          </Card>
+
+          <div>
+            <Button type="submit" disabled={busy}>
+              {busy ? "Saving…" : "Save settings"}
+            </Button>
+          </div>
+        </form>
       )}
     </main>
   );

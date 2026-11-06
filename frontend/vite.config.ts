@@ -36,7 +36,7 @@ function dashboardAuth(): Plugin {
           }),
         };
         const check = http.request(
-          `http://127.0.0.1:8080${["/", "/llm-logs", "/settings", "/keys", "/models/catalog", "/models/providers", "/models/settings"].includes(pathname) ? pathname + url.search : "/"}`,
+          `http://127.0.0.1:8080${["/", "/llm-logs", "/settings", "/keys", "/models/catalog", "/models/providers"].includes(pathname) ? pathname + url.search : "/"}`,
           {
             method: "GET",
             headers,
