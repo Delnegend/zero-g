@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { RefreshCw } from "lucide-react";
 import { message } from "../server/api/client";
 import {
   credentialUsageOptions,
@@ -10,6 +11,14 @@ import { Progress } from "./ui/progress";
 import { CredentialUsageSkeleton } from "./providers/ProviderSkeletons";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
+export const USAGE_PROVIDERS = [
+  "codex",
+  "agy",
+  "claude",
+  "go",
+  "zen",
+  "openrouter",
+] as const;
 function ResetTime({ reset }: { reset: Date }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -149,22 +158,54 @@ export function CredentialUsage({
           </span>
         </p>
       )}
-      {connected && (usage.data || usage.isError) && (
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={usage.isFetching}
-          onClick={() => void usage.refetch()}
-        >
-          {usage.isFetching
-            ? usage.isError
-              ? "Retrying…"
-              : "Refreshing…"
-            : usage.isError
-              ? "Retry"
-              : "Refresh usage"}
-        </Button>
-      )}
     </div>
+  );
+}
+
+export function CredentialUsageRefreshButton({
+  providerId,
+  credentialId,
+  credentialName,
+  connected = true,
+  disabled = false,
+}: {
+  providerId: string;
+  credentialId: string;
+  credentialName?: string;
+  connected?: boolean;
+  disabled?: boolean;
+}) {
+  const usage = useQuery(
+    credentialUsageOptions(providerId, credentialId, connected),
+  );
+
+  if (!connected || (!usage.data && !usage.isError)) {
+    return null;
+  }
+
+  const label = usage.isFetching
+    ? usage.isError
+      ? "Retrying…"
+      : "Refreshing…"
+    : usage.isError
+      ? "Retry"
+      : "Refresh usage";
+
+  return (
+    <Button
+      variant="outline"
+      size="icon"
+      aria-label={label}
+      title={credentialName ? `${label} for ${credentialName}` : label}
+      disabled={disabled || usage.isFetching}
+      onClick={() => void usage.refetch()}
+    >
+      <RefreshCw
+        aria-hidden="true"
+        className={
+          usage.isFetching ? "animate-spin motion-reduce:animate-none" : ""
+        }
+      />
+    </Button>
   );
 }

@@ -883,6 +883,13 @@ test("Zen console configuration sits with credential actions and can be saved", 
     configure.parentElement,
     screen.getByRole("button", { name: "Delete Account" }).parentElement,
   );
+  const refresh = await screen.findByRole("button", {
+    name: "Refresh usage",
+  });
+  assert.equal(
+    refresh.parentElement,
+    screen.getByRole("button", { name: "Delete Account" }).parentElement,
+  );
   await user.click(configure);
   await user.type(screen.getByLabelText("Workspace ID"), "workspace");
   await user.type(screen.getByLabelText("Console session"), "test-session");

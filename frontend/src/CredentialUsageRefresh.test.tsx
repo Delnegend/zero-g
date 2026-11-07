@@ -7,6 +7,7 @@ import type * as CredentialUsageModule from "./components/CredentialUsage";
 let originalFetch: typeof fetch;
 let testingLibrary: typeof TestingLibrary;
 let CredentialUsage: typeof CredentialUsageModule.CredentialUsage;
+let CredentialUsageRefreshButton: typeof CredentialUsageModule.CredentialUsageRefreshButton;
 
 beforeEach(async () => {
   document.body.innerHTML = "";
@@ -18,7 +19,8 @@ beforeEach(async () => {
   });
   // Testing Library binds its global screen to the document at module load.
   testingLibrary = await import("@testing-library/react/pure");
-  ({ CredentialUsage } = await import("./components/CredentialUsage"));
+  ({ CredentialUsage, CredentialUsageRefreshButton } =
+    await import("./components/CredentialUsage"));
 });
 
 afterEach(() => {
@@ -38,6 +40,12 @@ function mount(connected = true) {
         credentialId="account"
         credentialName="Account"
         providerKind="zen"
+        connected={connected}
+      />
+      <CredentialUsageRefreshButton
+        providerId="zen"
+        credentialId="account"
+        credentialName="Account"
         connected={connected}
       />
     </QueryClientProvider>,

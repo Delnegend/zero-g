@@ -1,4 +1,8 @@
-import { CredentialUsage } from "@/components/CredentialUsage";
+import {
+  CredentialUsage,
+  CredentialUsageRefreshButton,
+  USAGE_PROVIDERS,
+} from "@/components/CredentialUsage";
 import { CredentialsSkeleton } from "@/components/providers/ProviderSkeletons";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -108,8 +112,8 @@ export function CredentialsCard({
                   {credential.connected ? "Connected" : "Not connected"}
                 </p>
               </div>
-              {["codex", "agy", "claude", "go", "zen", "openrouter"].includes(
-                provider.kind,
+              {USAGE_PROVIDERS.includes(
+                provider.kind as (typeof USAGE_PROVIDERS)[number],
               ) &&
                 credential.connected && (
                   <CredentialUsage
@@ -142,6 +146,17 @@ export function CredentialsCard({
                 >
                   <Trash2 />
                 </Button>
+                {USAGE_PROVIDERS.includes(
+                  provider.kind as (typeof USAGE_PROVIDERS)[number],
+                ) && (
+                  <CredentialUsageRefreshButton
+                    providerId={provider.id}
+                    credentialId={credential.id}
+                    credentialName={credential.name}
+                    connected={credential.connected}
+                    disabled={loginBusy}
+                  />
+                )}
                 {(provider.kind === "zen" ||
                   provider.kind === "openrouter") && (
                   <CredentialConfiguration
