@@ -96,6 +96,7 @@ const originalFetch = globalThis.fetch;
 afterEach(() => {
   cleanup();
   globalThis.fetch = originalFetch;
+  document.body.innerHTML = "";
 });
 
 function mount(element: React.ReactNode) {

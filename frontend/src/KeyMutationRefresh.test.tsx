@@ -61,6 +61,7 @@ const originalFetch = globalThis.fetch;
 afterEach(() => {
   cleanup();
   globalThis.fetch = originalFetch;
+  document.body.innerHTML = "";
 });
 
 function setup(operation: "create" | "revoke" | "expiration") {
