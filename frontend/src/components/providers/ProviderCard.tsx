@@ -67,22 +67,16 @@ export function ProviderCard({
                     provider.kind !== "openrouter" &&
                     provider.kind !== "chatjimmy") ||
                     kind.fixed_name === null) && (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Button
-                            variant="outline"
-                            size="icon"
-                            aria-label={`Edit ${provider.name}`}
-                            disabled={busy || deleting}
-                            onClick={onEdit}
-                          >
-                            <Pencil />
-                          </Button>
-                        }
-                      />
-                      <TooltipContent>Edit provider</TooltipContent>
-                    </Tooltip>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      tooltip="Edit provider"
+                      aria-label={`Edit ${provider.name}`}
+                      disabled={busy || deleting}
+                      onClick={onEdit}
+                    >
+                      <Pencil />
+                    </Button>
                   )}
                 {!provider.keyless && (
                   <Tooltip>

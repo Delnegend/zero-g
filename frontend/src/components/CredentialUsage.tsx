@@ -190,28 +190,20 @@ export function CredentialUsageRefreshButton({
       : "Refresh usage";
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            variant="outline"
-            size="icon"
-            aria-label={label}
-            disabled={disabled || usage.isFetching}
-            onClick={() => void usage.refetch()}
-          >
-            <RefreshCw
-              aria-hidden="true"
-              className={
-                usage.isFetching
-                  ? "animate-spin motion-reduce:animate-none"
-                  : ""
-              }
-            />
-          </Button>
+    <Button
+      variant="outline"
+      size="icon"
+      tooltip={label}
+      aria-label={label}
+      disabled={disabled || usage.isFetching}
+      onClick={() => void usage.refetch()}
+    >
+      <RefreshCw
+        aria-hidden="true"
+        className={
+          usage.isFetching ? "animate-spin motion-reduce:animate-none" : ""
         }
       />
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
+    </Button>
   );
 }

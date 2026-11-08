@@ -7,11 +7,6 @@ import { CredentialsSkeleton } from "@/components/providers/ProviderSkeletons";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -130,41 +125,29 @@ export function CredentialsCard({
                   />
                 )}
               <div className="flex flex-wrap gap-2">
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        aria-label={`Edit ${credential.name}`}
-                        disabled={loginBusy}
-                        onClick={() => edit(credential)}
-                      >
-                        <Pencil />
-                      </Button>
-                    }
-                  />
-                  <TooltipContent>Edit credential</TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        aria-label={`Delete ${credential.name}`}
-                        disabled={loginBusy}
-                        onClick={() => {
-                          setError("");
-                          setDeleteTarget(credential);
-                        }}
-                      >
-                        <Trash2 />
-                      </Button>
-                    }
-                  />
-                  <TooltipContent>Delete credential</TooltipContent>
-                </Tooltip>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  tooltip="Edit credential"
+                  aria-label={`Edit ${credential.name}`}
+                  disabled={loginBusy}
+                  onClick={() => edit(credential)}
+                >
+                  <Pencil />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  tooltip="Delete credential"
+                  aria-label={`Delete ${credential.name}`}
+                  disabled={loginBusy}
+                  onClick={() => {
+                    setError("");
+                    setDeleteTarget(credential);
+                  }}
+                >
+                  <Trash2 />
+                </Button>
                 {USAGE_PROVIDERS.includes(
                   provider.kind as (typeof USAGE_PROVIDERS)[number],
                 ) && (
