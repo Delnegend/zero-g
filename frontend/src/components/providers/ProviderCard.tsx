@@ -67,15 +67,22 @@ export function ProviderCard({
                     provider.kind !== "openrouter" &&
                     provider.kind !== "chatjimmy") ||
                     kind.fixed_name === null) && (
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      aria-label={`Edit ${provider.name}`}
-                      disabled={busy || deleting}
-                      onClick={onEdit}
-                    >
-                      <Pencil />
-                    </Button>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            aria-label={`Edit ${provider.name}`}
+                            disabled={busy || deleting}
+                            onClick={onEdit}
+                          >
+                            <Pencil />
+                          </Button>
+                        }
+                      />
+                      <TooltipContent>Edit provider</TooltipContent>
+                    </Tooltip>
                   )}
                 {!provider.keyless && (
                   <Tooltip>
@@ -121,11 +128,11 @@ export function ProviderCard({
                       <Trash2 />
                     </Button>
                   </TooltipTrigger>
-                  {!provider.keyless && hasCredentials && (
-                    <TooltipContent>
-                      Remove all credentials before deleting this provider.
-                    </TooltipContent>
-                  )}
+                  <TooltipContent>
+                    {!provider.keyless && hasCredentials
+                      ? "Remove all credentials before deleting this provider."
+                      : "Delete provider"}
+                  </TooltipContent>
                 </Tooltip>
               </div>
             </div>

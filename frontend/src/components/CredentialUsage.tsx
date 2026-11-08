@@ -165,13 +165,11 @@ export function CredentialUsage({
 export function CredentialUsageRefreshButton({
   providerId,
   credentialId,
-  credentialName,
   connected = true,
   disabled = false,
 }: {
   providerId: string;
   credentialId: string;
-  credentialName?: string;
   connected?: boolean;
   disabled?: boolean;
 }) {
@@ -192,20 +190,28 @@ export function CredentialUsageRefreshButton({
       : "Refresh usage";
 
   return (
-    <Button
-      variant="outline"
-      size="icon"
-      aria-label={label}
-      title={credentialName ? `${label} for ${credentialName}` : label}
-      disabled={disabled || usage.isFetching}
-      onClick={() => void usage.refetch()}
-    >
-      <RefreshCw
-        aria-hidden="true"
-        className={
-          usage.isFetching ? "animate-spin motion-reduce:animate-none" : ""
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="outline"
+            size="icon"
+            aria-label={label}
+            disabled={disabled || usage.isFetching}
+            onClick={() => void usage.refetch()}
+          >
+            <RefreshCw
+              aria-hidden="true"
+              className={
+                usage.isFetching
+                  ? "animate-spin motion-reduce:animate-none"
+                  : ""
+              }
+            />
+          </Button>
         }
       />
-    </Button>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   );
 }

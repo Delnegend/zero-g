@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type * as TestingLibrary from "@testing-library/react/pure";
 import type * as CredentialUsageModule from "./components/CredentialUsage";
+import { TooltipProvider } from "./components/ui/tooltip";
 
 let originalFetch: typeof fetch;
 let testingLibrary: typeof TestingLibrary;
@@ -35,19 +36,20 @@ function mount(connected = true) {
   });
   return testingLibrary.render(
     <QueryClientProvider client={client}>
-      <CredentialUsage
-        providerId="zen"
-        credentialId="account"
-        credentialName="Account"
-        providerKind="zen"
-        connected={connected}
-      />
-      <CredentialUsageRefreshButton
-        providerId="zen"
-        credentialId="account"
-        credentialName="Account"
-        connected={connected}
-      />
+      <TooltipProvider>
+        <CredentialUsage
+          providerId="zen"
+          credentialId="account"
+          credentialName="Account"
+          providerKind="zen"
+          connected={connected}
+        />
+        <CredentialUsageRefreshButton
+          providerId="zen"
+          credentialId="account"
+          connected={connected}
+        />
+      </TooltipProvider>
     </QueryClientProvider>,
   );
 }

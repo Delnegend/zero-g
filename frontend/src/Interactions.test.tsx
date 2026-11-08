@@ -104,7 +104,9 @@ function mount(element: React.ReactNode) {
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
   return render(
-    <QueryClientProvider client={client}>{element}</QueryClientProvider>,
+    <QueryClientProvider client={client}>
+      <TooltipProvider>{element}</TooltipProvider>
+    </QueryClientProvider>,
   );
 }
 
