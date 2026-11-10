@@ -51,19 +51,6 @@ fn model_forbidden() -> Response {
         .into_response()
 }
 
-/// Reports output limits unsupported by the `ChatGPT` Codex endpoint.
-fn unsupported_output_limit(field: &str) -> Response {
-    (
-        StatusCode::BAD_REQUEST,
-        Json(crate::server::error_body(
-            &format!("{field} is not supported by the Codex upstream"),
-            "invalid_request_error",
-            Some("unsupported_parameter"),
-        )),
-    )
-        .into_response()
-}
-
 /// Removes a recognized Codex provider prefix from a model identifier.
 fn strip_codex_prefix(model: &str) -> String {
     model
@@ -230,12 +217,8 @@ async fn chat_handler(
     if !permissions.allows_model(&req.model) {
         return model_forbidden();
     }
-    if req.max_completion_tokens.is_some() {
-        return unsupported_output_limit("max_completion_tokens");
-    }
-    if req.max_tokens.is_some() {
-        return unsupported_output_limit("max_tokens");
-    }
+    // Codex upstream does not honor OpenAI output-token limits; the payload
+    // builder already omits them. Accept and ignore for client compatibility.
     let client = &state.providers.codex_client;
     let req = &req;
     let session = &session.id;
@@ -274,9 +257,8 @@ async fn responses_handler(
     if !permissions.allows_model(&req.model) {
         return model_forbidden();
     }
-    if req.max_output_tokens.is_some() {
-        return unsupported_output_limit("max_output_tokens");
-    }
+    // Codex upstream does not honor OpenAI output-token limits; the payload
+    // builder already omits them. Accept and ignore for client compatibility.
     let client = &state.providers.codex_client;
     let req = &req;
     let session = &session.id;
@@ -306,73 +288,6 @@ async fn responses_handler(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-
-    #[tokio::test]
-    async fn output_limits_are_rejected_for_both_api_modes() {
-        let database = crate::database::Database::open(":memory:").await.unwrap();
-        let settings = SettingsStore::new(
-            database.clone(),
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-        )
-        .await
-        .unwrap();
-        let state = AppState {
-            providers: crate::provider::Providers::new(),
-            settings,
-            logs: crate::server::observability::LogStore::new(database),
-            dashboard_auth: crate::server::dashboard_auth_config::test_auth().await,
-        };
-        let permissions = Permissions {
-            providers: vec![],
-            models: vec![],
-        };
-        let provider = Provider {
-            id: "codex".into(),
-            name: "Codex".into(),
-            kind: "codex".into(),
-            base_url: String::new(),
-            keyless: false,
-        };
-        let session = RequestSession { id: "test".into() };
-        for stream in [false, true] {
-            for field in ["max_tokens", "max_completion_tokens", "max_output_tokens"] {
-                let mut input = if field == "max_output_tokens" {
-                    serde_json::json!({"model":"test","input":"hello","stream":stream})
-                } else {
-                    serde_json::json!({"model":"test","messages":[{"role":"user","content":"hello"}],"stream":stream})
-                };
-                input[field] = serde_json::json!(10);
-                let response = if field == "max_output_tokens" {
-                    responses_handler(
-                        State(state.clone()),
-                        Extension(permissions.clone()),
-                        Extension(provider.clone()),
-                        Extension(session.clone()),
-                        None,
-                        Json(serde_json::from_value(input).unwrap()),
-                    )
-                    .await
-                } else {
-                    chat_handler(
-                        State(state.clone()),
-                        Extension(permissions.clone()),
-                        Extension(provider.clone()),
-                        Extension(session.clone()),
-                        None,
-                        Json(serde_json::from_value(input).unwrap()),
-                    )
-                    .await
-                };
-                assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-                let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
-                    .await
-                    .unwrap();
-                let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-                assert_eq!(body["error"]["code"], "unsupported_parameter");
-                assert!(body["error"]["message"].as_str().unwrap().contains(field));
-            }
-        }
-    }
 
     #[tokio::test]
     async fn exhausted_pool_returns_last_upstream_status() {
