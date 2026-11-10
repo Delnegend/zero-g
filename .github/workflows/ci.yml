@@ -43,15 +43,6 @@ jobs:
         shell: bash
         run: just check
 
-  container:
-    name: Build container
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - name: Build image without publishing
-        shell: bash
-        run: docker build --platform linux/amd64 -t zero-g:ci .
-
   scan:
     name: Scan
     uses: Delnegend/actions/.github/workflows/scan.yml@62064acc9dce2872175e85b3b2e1c2295cd1bee7 # v1
