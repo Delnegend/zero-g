@@ -57,7 +57,7 @@ const comparison = {
   retentionCutoff: 0,
 };
 
-test("comparison preserves sparse bucket positions, exact previous values and unknown tokens", () => {
+test("comparison preserves sparse bucket positions and unknown tokens", () => {
   const html = renderToStaticMarkup(
     <ObservabilityCharts
       interval="hour"
@@ -67,17 +67,10 @@ test("comparison preserves sparse bucket positions, exact previous values and un
     />,
   );
   assert.match(html, /not reported/);
-  assert.match(
-    html,
-    /1970-01-01 02:00 UTC \(aligned with 1970-01-01 05:00 UTC\)/,
-  );
-  assert.match(
-    html,
-    /1970-01-01 05:00 UTC \(aligned with 1970-01-01 05:00 UTC\)/,
-  );
+  assert.match(html, /1970-01-01 03:00 UTC/);
+  assert.match(html, /1970-01-01 05:00 UTC/);
   assert.match(html, /12\.3456 ms/);
   assert.match(html, /Request volume: 100% higher/);
-  assert.match(html, /Previous period data/i);
 });
 
 test("input and output panels show independent reported totals and gaps", () => {
@@ -127,26 +120,10 @@ test("input and output panels show independent reported totals and gaps", () => 
       "",
     /0 tokens.*6 tokens/,
   );
-  assert.match(
-    input.querySelector('[aria-label="Input tokens previous period data"]')
-      ?.textContent ?? "",
-    /7 tokens.*not reported/,
-  );
-  assert.match(
-    output.querySelector('[aria-label="Output tokens previous period data"]')
-      ?.textContent ?? "",
-    /not reported.*9 tokens/,
-  );
   assert.equal(charts[2].querySelectorAll("rect[fill]").length, 1);
   assert.equal(charts[3].querySelectorAll("rect[fill]").length, 2);
-  assert.equal(
-    charts[2].querySelectorAll("g.ts-chart__line circle[fill]").length,
-    1,
-  );
-  assert.equal(
-    charts[3].querySelectorAll("g.ts-chart__line circle[fill]").length,
-    1,
-  );
+  assert.equal(charts[2].querySelectorAll("g.ts-chart__line").length, 0);
+  assert.equal(charts[3].querySelectorAll("g.ts-chart__line").length, 0);
 });
 
 test("unavailable and zero-baseline comparisons are distinguished", () => {
@@ -178,23 +155,20 @@ test("unavailable and zero-baseline comparisons are distinguished", () => {
   assert.match(zero, /not reported/);
 });
 
-test("seven-day previous points overlay their matching bars despite missing current days", () => {
+test("seven-day current points render their matching bars cleanly", () => {
   const day = 86400;
   const current = [0, 3, 6].map((i) => ({
     ...bucket((i + 7) * day, i + 3, i + 10),
     successes: i + 2,
     errors: 1,
   }));
-  const prior = Array.from({ length: 7 }, (_, i) =>
-    bucket(i * day, i + 1, i + 5),
-  );
   const html = renderToStaticMarkup(
     <ObservabilityCharts
       interval="day"
       buckets={current}
       breakdown={breakdown}
       comparison={{
-        data: { ...previous, interval: "day", buckets: prior },
+        data: { ...previous, interval: "day", buckets: [] },
         currentSince: 7 * day,
         currentUntil: 14 * day - 1,
         previousSince: 0,
@@ -207,20 +181,8 @@ test("seven-day previous points overlay their matching bars despite missing curr
   const chart = document.querySelector(".request-chart");
   assert.ok(chart);
   const bars = [...chart.querySelectorAll("rect[fill]")];
-  const points = [...chart.querySelectorAll("circle[fill]")];
   assert.equal(bars.length, 6);
-  for (const bar of bars) {
-    const center =
-      Number(bar.getAttribute("x")) + Number(bar.getAttribute("width")) / 2;
-    const matching = points.filter(
-      (point) => point.getAttribute("fill") === bar.getAttribute("fill"),
-    );
-    assert.ok(
-      matching.some(
-        (point) => Math.abs(Number(point.getAttribute("cx")) - center) < 0.02,
-      ),
-    );
-  }
+  assert.equal(chart.querySelectorAll("g.ts-chart__line").length, 0);
   const firstSeries = bars
     .slice(0, 3)
     .map((bar) => Number(bar.getAttribute("x")));
@@ -228,17 +190,9 @@ test("seven-day previous points overlay their matching bars despite missing curr
     .slice(3)
     .map((bar) => Number(bar.getAttribute("x")));
   assert.deepEqual(firstSeries, secondSeries);
-  for (let index = 0; index < 3; index++) {
-    const success = bars[index];
-    const error = bars[index + 3];
-    const successTop = Number(success.getAttribute("y"));
-    const errorBottom =
-      Number(error.getAttribute("y")) + Number(error.getAttribute("height"));
-    assert.ok(Math.abs(successTop - errorBottom) < 0.02);
-  }
 });
 
-test("sparse periods align selected boundaries rather than first activity", () => {
+test("charts render bar series for current period without dashed line series", () => {
   const day = 86400;
   const current = [8, 11, 13].map((i) => bucket(i * day, i, i));
   const prior = [0, 2, 4, 6].map((i) => bucket(i * day, i + 1, i));
@@ -260,116 +214,14 @@ test("sparse periods align selected boundaries rather than first activity", () =
   const document = parseDocument(html);
   const chart = document.querySelector(".request-chart");
   assert.ok(chart);
-  const bars = [...chart.querySelectorAll("rect[fill]")].slice(0, 3);
-  const points = [
-    ...chart.querySelectorAll("g.ts-chart__line circle[fill]"),
-  ].filter(
-    (point) => point.getAttribute("fill") === bars[0].getAttribute("fill"),
-  );
-  assert.equal(points.length, 4);
-  assert.ok(
-    Number(points[0].getAttribute("cx")) < Number(bars[0].getAttribute("x")),
-  );
-  const firstCenter =
-    Number(bars[0].getAttribute("x")) +
-    Number(bars[0].getAttribute("width")) / 2;
-  assert.ok(Number(points[1].getAttribute("cx")) > firstCenter);
-  assert.ok(
-    Number(points[1].getAttribute("cx")) < Number(bars[1].getAttribute("x")),
-  );
-  for (const [point, index] of [
-    [points[2], 1],
-    [points[3], 2],
-  ] as const) {
-    const bar = bars[index];
-    const center =
-      Number(bar.getAttribute("x")) + Number(bar.getAttribute("width")) / 2;
-    assert.ok(Math.abs(Number(point.getAttribute("cx")) - center) < 0.02);
-  }
-  const previousRows = document.querySelector(
-    '[aria-label="Request volume previous period data"]',
-  );
-  assert.ok(
-    previousRows?.textContent?.includes(
-      "1970-01-01 UTC (aligned with 1970-01-08 UTC)",
+  const lines = chart.querySelectorAll("g.ts-chart__line");
+  assert.equal(lines.length, 0);
+  assert.equal(
+    document.querySelector(
+      '[aria-label="Request volume previous period data"]',
     ),
+    null,
   );
-  assert.ok(
-    previousRows?.textContent?.includes(
-      "1970-01-07 UTC (aligned with 1970-01-14 UTC)",
-    ),
-  );
-});
-
-test("extra previous buckets retain their offsets beyond the current boundary", () => {
-  const day = 86400;
-  const html = renderToStaticMarkup(
-    <ObservabilityCharts
-      interval="day"
-      buckets={[bucket(7 * day, 1, 1), bucket(9 * day, 1, 1)]}
-      breakdown={breakdown}
-      comparison={{
-        data: {
-          ...previous,
-          interval: "day",
-          buckets: [bucket(3 * day, 1, 1)],
-        },
-        currentSince: 7 * day,
-        currentUntil: 10 * day - 1,
-        previousSince: 0,
-        previousUntil: 4 * day - 1,
-        retentionCutoff: 0,
-      }}
-    />,
-  );
-  const document = parseDocument(html);
-  const previousRows = document.querySelector(
-    '[aria-label="Request volume previous period data"]',
-  );
-  assert.ok(
-    previousRows?.textContent?.includes(
-      "1970-01-04 UTC (aligned with 1970-01-11* UTC)",
-    ),
-  );
-  assert.match(html, /Dates marked \* are outside the selected range/);
-});
-
-test("inclusive one-second edge buckets do not shift the previous series", () => {
-  const hour = 3600;
-  const html = renderToStaticMarkup(
-    <ObservabilityCharts
-      interval="hour"
-      buckets={[bucket(12 * hour, 2, 1)]}
-      breakdown={breakdown}
-      comparison={{
-        data: {
-          ...previous,
-          buckets: [bucket(10 * hour, 1, 1), bucket(11 * hour, 1, 1)],
-        },
-        currentSince: 12 * hour,
-        currentUntil: 13 * hour,
-        previousSince: 11 * hour - 1,
-        previousUntil: 12 * hour - 1,
-        retentionCutoff: 0,
-      }}
-    />,
-  );
-  const document = parseDocument(html);
-  const previousRows = document.querySelector(
-    '[aria-label="Request volume previous period data"]',
-  );
-  assert.ok(
-    previousRows?.textContent?.includes(
-      "1970-01-01 10:00 UTC (aligned with 1970-01-01 11:00* UTC)",
-    ),
-  );
-  assert.ok(
-    previousRows?.textContent?.includes(
-      "1970-01-01 11:00 UTC (aligned with 1970-01-01 12:00 UTC)",
-    ),
-  );
-  assert.match(html, /aligned by offsets from the selected period boundaries/);
-  assert.doesNotMatch(html, /first (recorded buckets|activity)/);
 });
 
 test("model usage stacks only current models without previous period content", () => {

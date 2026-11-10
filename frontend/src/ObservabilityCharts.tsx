@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { barY, defineChart, lineY } from "@tanstack/charts";
+import { barY, defineChart } from "@tanstack/charts";
 import { motion } from "@tanstack/charts/motion";
 import { Chart } from "@tanstack/charts/react/core";
 import { scaleBand } from "@tanstack/charts/scales/band";
@@ -29,7 +29,6 @@ type Breakdown = { name: string; requests: number }[];
 type Point = {
   label: string;
   value: number;
-  previous?: boolean;
 };
 type Series = { name: string; color: string; points: Point[] };
 type Row = { label: string; value: string };
@@ -38,32 +37,6 @@ type Comparison = {
   previous: number | null;
   detail: string;
 };
-
-function bucketIndex(start: number, interval: Interval) {
-  const date = new Date(start * 1000);
-  if (interval === "hour") return Math.floor(start / 3600);
-  if (interval === "day") return Math.floor(start / 86400);
-  if (interval === "month")
-    return date.getUTCFullYear() * 12 + date.getUTCMonth();
-  return date.getUTCFullYear();
-}
-
-function bucketStart(index: number, interval: Interval) {
-  if (interval === "hour" || interval === "day")
-    return index * (interval === "hour" ? 3600 : 86400);
-  const date = new Date(0);
-  const year = interval === "month" ? Math.floor(index / 12) : index;
-  const month = interval === "month" ? ((index % 12) + 12) % 12 : 0;
-  date.setUTCFullYear(year, month, 1);
-  date.setUTCHours(0, 0, 0, 0);
-  return date.getTime() / 1000;
-}
-
-function bucketPhase(start: number, interval: Interval) {
-  const index = bucketIndex(start, interval);
-  const boundary = bucketStart(index, interval);
-  return (start - boundary) / (bucketStart(index + 1, interval) - boundary);
-}
 
 function formatChartPeriod(label: string) {
   return `Current: ${label} UTC`;
@@ -119,22 +92,6 @@ function GraphTrend({
 const chartRenderer = motion({
   transition: { type: "spring", stiffness: 170, damping: 18, mass: 1 },
 });
-const currentTooltip: typeof tooltip = {
-  ...tooltip,
-  create(context) {
-    const instance = tooltip.create(context);
-    return {
-      ...instance,
-      paint(paintContext) {
-        if ((paintContext.point.datum as Point).previous) {
-          instance.hide();
-        } else {
-          instance.paint(paintContext);
-        }
-      },
-    };
-  },
-};
 const number = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
 const compact = new Intl.NumberFormat(undefined, {
   notation: "compact",
@@ -155,8 +112,6 @@ function GraphPanel({
   unit,
   series,
   alternative,
-  previousSeries = [],
-  previousRows = [],
   domain,
   comparison,
   summary,
@@ -169,8 +124,6 @@ function GraphPanel({
   unit: string;
   series: Series[];
   alternative: Row[];
-  previousSeries?: Series[];
-  previousRows?: Row[];
   domain: string[];
   comparison?: Comparison;
   summary: string;
@@ -190,7 +143,7 @@ function GraphPanel({
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
   }, []);
-  const pointCount = [...series, ...previousSeries].reduce(
+  const pointCount = series.reduce(
     (total, item) => total + item.points.length,
     0,
   );
@@ -213,34 +166,6 @@ function GraphPanel({
         color: item.color,
       })),
     );
-    const lines = (items: Series[]) => {
-      return items.flatMap((item) => {
-        const points = new Map(
-          item.points.map((point) => [point.label, point]),
-        );
-        const segments: Point[][] = [];
-        let segment: Point[] = [];
-        for (const label of domain) {
-          const point = points.get(label);
-          if (point) {
-            segment.push({ ...point, previous: true });
-          } else if (segment.length) {
-            segments.push(segment);
-            segment = [];
-          }
-        }
-        if (segment.length) segments.push(segment);
-        return segments.map((part) =>
-          lineY(part, {
-            x: (point) => slot(point.label, item.name),
-            y: "value",
-            stroke: item.color,
-            points: true,
-            strokeDasharray: "5 4",
-          }),
-        );
-      });
-    };
     return defineChart({
       marks: [
         barY(bars, {
@@ -252,14 +177,13 @@ function GraphPanel({
           fillOpacity: 0.55,
           maxThickness: 30,
         }),
-        ...lines(previousSeries),
       ],
       scales: {
         x: {
           scale: scaleBand().domain(chartDomain).padding(0.18),
           axis: {
             ticks: {
-              spacing: 70,
+              spacing: 60,
               format: (value) => {
                 const label = labels.get(String(value)) ?? String(value);
                 return timeSeries
@@ -288,7 +212,7 @@ function GraphPanel({
         },
       },
       tooltip: {
-        use: currentTooltip,
+        use: tooltip,
         items: [
           ...(timeSeries
             ? [
@@ -309,7 +233,7 @@ function GraphPanel({
         ],
       },
     });
-  }, [series, previousSeries, unit, domain, timeSeries, stacked]);
+  }, [series, unit, domain, timeSeries, stacked]);
 
   return (
     <Card className="flex min-w-0 flex-col gap-0 p-3 shadow-none sm:p-5">
@@ -320,7 +244,7 @@ function GraphPanel({
         </div>
         {comparison && <GraphTrend title={title} comparison={comparison} />}
       </div>
-      <div className="request-chart h-[135px] min-w-0 shrink-0 overflow-hidden text-foreground sm:h-[205px]">
+      <div className="request-chart h-[135px] w-full min-w-0 shrink-0 overflow-hidden text-foreground sm:h-[205px]">
         {pointCount === 0 ? (
           <p className="pt-8 text-center text-xs text-muted-foreground">
             {emptyMessage}
@@ -331,11 +255,11 @@ function GraphPanel({
             renderer={chartRenderer}
             height={desktop ? 205 : 135}
             ariaLabel={title}
-            ariaDescription={`${description}${previousSeries.some((item) => item.points.length > 0) ? " Previous values are aligned by offsets from the selected period boundaries." : ""} Exact values follow the chart.`}
+            ariaDescription={`${description} Exact values follow the chart.`}
           />
         )}
       </div>
-      {(series.length > 0 || previousSeries.length > 0) && (
+      {series.length > 0 && (
         <div className="flex min-w-0 shrink-0 flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
           {series.map((item) => (
             <span
@@ -351,29 +275,11 @@ function GraphPanel({
               <span className="max-w-24 truncate">{item.name}</span>
             </span>
           ))}
-          {previousSeries.some((item) => item.points.length > 0) && (
-            <span className="inline-flex items-center gap-1">
-              <span
-                aria-hidden="true"
-                className="w-4 border-t-2 border-dashed border-current"
-              />
-              Previous period
-            </span>
-          )}
         </div>
       )}
       {alternative.length > 0 && (
         <ul className="sr-only" aria-label={`${title} data`}>
           {alternative.map((row, index) => (
-            <li key={`${row.label}-${index}`}>
-              {row.label}: {row.value}
-            </li>
-          ))}
-        </ul>
-      )}
-      {previousRows.length > 0 && (
-        <ul className="sr-only" aria-label={`${title} previous period data`}>
-          {previousRows.map((row, index) => (
             <li key={`${row.label}-${index}`}>
               {row.label}: {row.value}
             </li>
@@ -395,68 +301,25 @@ export function ObservabilityCharts({
   breakdown: { providers: Breakdown; models: Breakdown };
   comparison?: ObservabilityComparison;
 }) {
-  const firstStart = buckets.reduce(
-    (first, bucket) => Math.min(first, bucket.start),
-    Infinity,
-  );
-  const currentBase = bucketIndex(
-    comparison?.currentSince ?? (Number.isFinite(firstStart) ? firstStart : 0),
-    interval,
-  );
-  const positionLabel = (position: number) => {
-    const index = currentBase + position;
-    const seconds = bucketStart(index, interval);
-    const outside =
-      comparison &&
-      (index < currentBase ||
-        index > bucketIndex(comparison.currentUntil, interval));
-    return `${bucketLabel(seconds, interval)}${outside ? "*" : ""}`;
-  };
-  const previousData = comparison?.data ?? null;
-  const previousSince = comparison?.previousSince ?? 0;
-  const phaseDifference = comparison
-    ? bucketPhase(previousSince, interval) -
-      bucketPhase(comparison.currentSince, interval)
-    : 0;
-  // Align the closest bucket boundaries, including tiny partial edge buckets.
-  const previousBase =
-    bucketIndex(previousSince, interval) +
-    (phaseDifference > 0.5 ? 1 : phaseDifference < -0.5 ? -1 : 0);
-  const makePeriods = (items: Bucket[], base: number) =>
-    [...items]
-      .sort((a, b) => a.start - b.start)
-      .map((bucket) => ({
-        ...bucket,
-        position: bucketIndex(bucket.start, interval) - base,
-        label: positionLabel(bucketIndex(bucket.start, interval) - base),
-        date: bucketLabel(bucket.start, interval),
-      }));
-  const periods = makePeriods(buckets, currentBase);
-  const previous =
-    previousData && previousData.interval === interval
-      ? makePeriods(previousData.buckets, previousBase)
-      : [];
-  const positions = [
-    ...new Set([...periods, ...previous].map((p) => p.position)),
-  ].sort((a, b) => a - b);
-  const domain = positions.length
-    ? Array.from(
-        { length: positions[positions.length - 1] - positions[0] + 1 },
-        (_, index) => positionLabel(positions[0] + index),
-      )
-    : [];
+  const periods = [...buckets]
+    .sort((a, b) => a.start - b.start)
+    .map((bucket) => ({
+      ...bucket,
+      label: bucketLabel(bucket.start, interval),
+      date: bucketLabel(bucket.start, interval),
+    }));
+  const domain = periods.map((p) => p.label);
   const rows = (
     items: typeof periods,
     value: (bucket: (typeof periods)[number]) => string,
   ) =>
     items.map((bucket) => ({
-      label: `${bucket.date} UTC (aligned with ${bucket.label} UTC)`,
+      label: `${bucket.date} UTC`,
       value: value(bucket),
     }));
   const periodRows = (value: (bucket: (typeof periods)[number]) => string) =>
     rows(periods, value);
-  const previousRows = (value: (bucket: (typeof periods)[number]) => string) =>
-    rows(previous, value);
+  const previousData = comparison?.data ?? null;
   const previousRequests = previousData
     ? previousData.buckets.reduce((sum, p) => sum + p.requests, 0)
     : null;
@@ -496,22 +359,11 @@ export function ObservabilityCharts({
     current: number | null,
     previous: number | null,
     unit: string,
-    timeSeries = false,
   ): Comparison => ({
     current,
     previous: unavailable ? null : previous,
     detail: `${unavailable ?? (previous === null ? `${period}: not reported.` : `${period}: ${number.format(previous)} ${unit}.${current === null ? " The current value was not reported." : ""}`)}${
       previousData ? " Older data may be missing." : ""
-    }${
-      timeSeries && previousData && previousData.interval !== interval
-        ? " The dashed line is unavailable because the periods use different time intervals."
-        : timeSeries &&
-            previousData &&
-            previous !== null &&
-            previousData.buckets.length > 0 &&
-            periods.length > 0
-          ? ` The dashed line aligns bucket offsets from the start of each selected period.${domain.some((label) => label.endsWith("*")) ? " Dates marked * are outside the selected range." : ""}`
-          : ""
     }`,
   });
   const requestComparison = compare(
@@ -521,18 +373,6 @@ export function ObservabilityCharts({
   );
   const volumeRows = (p: (typeof periods)[number]) =>
     `${number.format(p.requests)} requests; ${number.format(p.successes)} successful, ${number.format(p.errors)} errors`;
-  const historical = (
-    name: string,
-    color: string,
-    value: (p: (typeof periods)[number]) => number | null,
-  ): Series => ({
-    name,
-    color,
-    points: previous.flatMap((p) => {
-      const result = value(p);
-      return result === null ? [] : [{ label: p.label, value: result }];
-    }),
-  });
   const requests = periods.reduce((sum, p) => sum + p.requests, 0);
   const tokenTotal = (field: "input_tokens" | "output_tokens") => {
     const reported = periods
@@ -567,33 +407,21 @@ export function ObservabilityCharts({
         value: otherModels.reduce((sum, name) => sum + modelCount(p, name), 0),
       })),
     });
-  const providers = [
-    ...new Set(
-      [
-        ...breakdown.providers,
-        ...(previousData?.breakdown.providers ?? []),
-      ].map((item) => item.name),
-    ),
-  ];
+  const providers = breakdown.providers.map((item) => item.name);
   const providerLabel = (name: string) => name || "(not provided)";
   const providerCount = (items: Breakdown, name: string) =>
     items.find((item) => item.name === name)?.requests ?? 0;
-  const dateDescription = `Recorded requests grouped by UTC ${interval}. Buckets are aligned by their offsets from the selected period boundaries; gaps remain in their original positions. Edge buckets can cover different durations.`;
+  const dateDescription = `Recorded requests grouped by UTC ${interval}.`;
 
   return (
-    <div className="grid min-w-0 grid-cols-1 gap-3 @min-[672px]:grid-cols-2">
+    <div className="grid min-w-0 grid-cols-1 gap-3 @min-[768px]:grid-cols-2">
       <GraphPanel
         title="Request volume"
         timeSeries
         stacked
         summary={`${number.format(requests)} requests`}
         domain={domain}
-        comparison={compare(requests, previousRequests, "requests", true)}
-        previousSeries={[
-          historical("Success", "#10b981", (p) => p.successes),
-          historical("Error", "#f43f5e", (p) => p.errors),
-        ]}
-        previousRows={previousRows(volumeRows)}
+        comparison={compare(requests, previousRequests, "requests")}
         description={`${dateDescription} Success: HTTP 200–399; error: HTTP 400 and above.`}
         unit="Requests"
         series={[
@@ -622,12 +450,7 @@ export function ObservabilityCharts({
           averageLatency(periods),
           previousData ? averageLatency(previousData.buckets) : null,
           "ms average",
-          true,
         )}
-        previousSeries={[
-          historical("Latency", "#f59e0b", (p) => p.avg_latency_ms),
-        ]}
-        previousRows={previousRows((p) => `${p.avg_latency_ms} ms`)}
         description={`${dateDescription} Average request latency in milliseconds.`}
         unit="Milliseconds"
         series={[
@@ -658,13 +481,6 @@ export function ObservabilityCharts({
             totalTokens(periods, field),
             previousData ? totalTokens(previousData.buckets, field) : null,
             "tokens",
-            true,
-          )}
-          previousSeries={[historical(name, color, (p) => p[field])]}
-          previousRows={previousRows((p) =>
-            p[field] === null
-              ? "not reported"
-              : `${number.format(p[field])} tokens`,
           )}
           description={`${dateDescription} Unreported token counts are omitted, not zero.`}
           unit="Tokens"
@@ -694,19 +510,7 @@ export function ObservabilityCharts({
         timeSeries
         stacked
         summary={`${number.format(requests)} requests`}
-        domain={
-          periods.length
-            ? Array.from(
-                {
-                  length:
-                    periods[periods.length - 1].position -
-                    periods[0].position +
-                    1,
-                },
-                (_, index) => positionLabel(periods[0].position + index),
-              )
-            : []
-        }
+        domain={domain}
         description={`Recorded requests grouped by UTC ${interval}. Models beyond the four most used are combined as other models.`}
         unit="Requests"
         series={modelSeries}
@@ -725,31 +529,6 @@ export function ObservabilityCharts({
         summary={`${number.format(requests)} requests`}
         domain={providers.map(providerLabel)}
         comparison={requestComparison}
-        previousSeries={
-          previousData
-            ? [
-                {
-                  name: "Requests",
-                  color: "var(--primary)",
-                  points: providers.map((name) => ({
-                    label: providerLabel(name),
-                    value: providerCount(
-                      previousData.breakdown.providers,
-                      name,
-                    ),
-                  })),
-                },
-              ]
-            : []
-        }
-        previousRows={
-          previousData
-            ? providers.map((name) => ({
-                label: providerLabel(name),
-                value: `${number.format(providerCount(previousData.breakdown.providers, name))} requests`,
-              }))
-            : []
-        }
         description="Request distribution across providers in the selected range."
         unit="Requests"
         series={[

@@ -63,7 +63,7 @@ export function LlmLogsPage({
         </div>
       </header>
       <ObservabilityError error={error} refetch={refetch} />
-      <div className="flex min-w-0 flex-col gap-4 md:flex-row md:items-start">
+      <div className="flex min-w-0 flex-col gap-4 xl:flex-row xl:items-start">
         <ObservabilityFilters
           filters={filters}
           options={data?.filter_options}

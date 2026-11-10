@@ -193,7 +193,7 @@ export function ObservabilityPage({
         </div>
       </header>
       <ObservabilityError error={error} refetch={refetch} />
-      <div className="flex min-w-0 flex-col gap-4 md:flex-row md:items-start">
+      <div className="flex min-w-0 flex-col gap-4 xl:flex-row xl:items-start">
         <ObservabilityFilters
           filters={filters}
           options={data?.filter_options}
@@ -205,7 +205,7 @@ export function ObservabilityPage({
             <>
               <section
                 aria-label="Request summary"
-                className="mb-3 grid min-w-0 grid-cols-2 gap-3 @min-[1008px]:grid-cols-4"
+                className="mb-3 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 @min-[960px]:grid-cols-4"
               >
                 {cards.map(
                   ({

@@ -211,7 +211,8 @@ function FilterContents({
             size="icon"
             className="size-7"
             onClick={onHide}
-            aria-label="Hide filters"
+            label="Hide filters"
+            tooltip="Hide filters"
           >
             <PanelLeftClose className="size-4" />
           </Button>
@@ -280,7 +281,7 @@ export function ObservabilityFilters(props: Props) {
   );
   return (
     <>
-      <div className="sticky top-2 z-10 mb-3 self-start md:hidden">
+      <div className="sticky top-2 z-10 mb-3 self-start xl:hidden">
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
           <SheetTrigger render={<Button variant="outline" size="sm" />}>
             <PanelLeftOpen className="size-4" /> Filters
@@ -299,7 +300,7 @@ export function ObservabilityFilters(props: Props) {
           </SheetContent>
         </Sheet>
       </div>
-      <div className="hidden shrink-0 md:sticky md:top-4 md:block">
+      <div className="hidden shrink-0 xl:sticky xl:top-4 xl:block">
         {visible ? (
           <aside
             aria-label="Observability filters"
