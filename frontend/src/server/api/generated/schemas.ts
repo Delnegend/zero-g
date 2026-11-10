@@ -3,7 +3,7 @@
  * Do not edit manually.
  * zero-g
  * OpenAI-compatible AI gateway for multiple providers
- * OpenAPI spec version: 0.8.0
+ * OpenAPI spec version: 0.8.1
  */
 import * as zod from "zod";
 
