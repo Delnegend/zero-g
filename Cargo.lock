@@ -242,9 +242,8 @@ dependencies = [
 
 [[package]]
 name = "axum-auth-gate"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b3be7053940d9893c5862fe6030771c7705c7557681c37761b792bd390f8631"
+version = "0.1.1"
+source = "git+https://github.com/Delnegend/axum-auth-gate?rev=7b889cab1fdcb3580aae4907247f99051100d303#7b889cab1fdcb3580aae4907247f99051100d303"
 dependencies = [
  "axum",
  "base64 0.22.1",

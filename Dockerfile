@@ -5,7 +5,7 @@ RUN bun install --frozen-lockfile && bun run tsc -b && bun run --bun vite build
 
 # Build stage
 FROM rust:alpine AS chef
-RUN apk add --no-cache musl-dev clang-dev cmake make
+RUN apk add --no-cache git musl-dev clang-dev cmake make
 RUN cargo install cargo-chef --locked --version 0.1.78
 WORKDIR /app
 
