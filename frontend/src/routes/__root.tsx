@@ -1,14 +1,6 @@
-import {
-  createRootRoute,
-  HeadContent,
-  Link,
-  Outlet,
-  useRouterState,
-} from "@tanstack/react-router";
-import { Activity, Boxes, KeyRound, Moon, Settings, Sun } from "lucide-react";
-import { useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
 import { NavUser } from "@/components/NavUser";
+import { Button } from "@/components/ui/button";
+import { Toaster } from "@/components/ui/toast";
 import {
   Sidebar,
   SidebarContent,
@@ -26,6 +18,15 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
+import {
+  createRootRoute,
+  HeadContent,
+  Link,
+  Outlet,
+  useRouterState,
+} from "@tanstack/react-router";
+import { Activity, Boxes, KeyRound, Moon, Settings, Sun } from "lucide-react";
+import { useEffect, useState } from "react";
 
 export const Route = createRootRoute({ component: App });
 
@@ -193,7 +194,7 @@ function App() {
           <Button
             variant="ghost"
             size="icon"
-            aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
+            label={dark ? "Switch to light mode" : "Switch to dark mode"}
             onClick={() => setDark(!dark)}
           >
             {dark ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
@@ -201,6 +202,7 @@ function App() {
         </header>
         <Outlet />
       </SidebarInset>
+      <Toaster />
     </SidebarProvider>
   );
 }

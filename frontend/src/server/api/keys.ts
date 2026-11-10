@@ -27,3 +27,7 @@ export function revokeKey(id: string) {
 export function updateKey(id: string, body: UpdateKey) {
   return api.updateKey(id, body);
 }
+
+export function unrevokeKey(id: string) {
+  return api.unrevokeKey(id);
+}

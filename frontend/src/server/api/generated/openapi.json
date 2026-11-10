@@ -94,7 +94,7 @@
     "/api/keys/{id}": {
       "patch": {
         "tags": [],
-        "summary": "Changes or clears the expiration of a non-revoked key.",
+        "summary": "Changes configuration or expiration of a non-revoked key.",
         "operationId": "updateKey",
         "parameters": [
           {
@@ -119,10 +119,10 @@
         },
         "responses": {
           "204": {
-            "description": "Expiration updated"
+            "description": "Key updated"
           },
           "400": {
-            "description": "Expiration must be in the future"
+            "description": "Invalid key configuration or past expiration"
           },
           "404": {
             "description": "Key not found"
@@ -158,6 +158,35 @@
           },
           "404": {
             "description": "Key not found"
+          },
+          "500": {
+            "description": "Settings store error"
+          }
+        }
+      }
+    },
+    "/api/keys/{id}/unrevoke": {
+      "post": {
+        "tags": [],
+        "summary": "Restores a revoked virtual key by ID.",
+        "operationId": "unrevokeKey",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Virtual key ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Key restored"
+          },
+          "404": {
+            "description": "Key not found or not revoked"
           },
           "500": {
             "description": "Settings store error"
@@ -3406,13 +3435,31 @@
       },
       "UpdateKey": {
         "type": "object",
-        "description": "Replacement expiration for a virtual key.",
-        "required": ["expires_at"],
+        "description": "Replacement configuration for a virtual key.",
         "properties": {
           "expires_at": {
             "type": ["integer", "null"],
             "format": "int64",
             "description": "Expiration time in Unix seconds, or null to clear it."
+          },
+          "models": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "string"
+            },
+            "description": "List of model IDs permitted for this key."
+          },
+          "name": {
+            "type": ["string", "null"],
+            "description": "Human-friendly name.",
+            "minLength": 1
+          },
+          "providers": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "string"
+            },
+            "description": "List of provider IDs permitted for this key."
           }
         }
       },

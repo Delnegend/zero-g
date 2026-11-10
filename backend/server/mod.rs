@@ -91,6 +91,10 @@ pub(crate) fn create_router(state: AppState) -> Router {
             "/api/keys/{id}/revoke",
             axum::routing::post(settings::revoke_key).with_state(state.settings.clone()),
         )
+        .route(
+            "/api/keys/{id}/unrevoke",
+            axum::routing::post(settings::unrevoke_key).with_state(state.settings.clone()),
+        )
         .route("/api/auth/user", get(dashboard_auth::current_user))
         .merge(registry::router(state.settings.clone()))
         .merge(provider::dashboard_router(&state))

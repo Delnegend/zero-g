@@ -1780,10 +1780,19 @@ export const UpdateKey = zod
   .object({
     expires_at: zod
       .int()
-      .nullable()
+      .nullish()
       .describe("Expiration time in Unix seconds, or null to clear it."),
+    models: zod
+      .array(zod.string())
+      .nullish()
+      .describe("List of model IDs permitted for this key."),
+    name: zod.string().min(1).nullish().describe("Human-friendly name."),
+    providers: zod
+      .array(zod.string())
+      .nullish()
+      .describe("List of provider IDs permitted for this key."),
   })
-  .describe("Replacement expiration for a virtual key.");
+  .describe("Replacement configuration for a virtual key.");
 
 export type UpdateKey = zod.input<typeof UpdateKey>;
 export type UpdateKeyOutput = zod.output<typeof UpdateKey>;
@@ -1865,10 +1874,19 @@ export const UpdateKeyBody = zod
   .object({
     expires_at: zod
       .int()
-      .nullable()
+      .nullish()
       .describe("Expiration time in Unix seconds, or null to clear it."),
+    models: zod
+      .array(zod.string())
+      .nullish()
+      .describe("List of model IDs permitted for this key."),
+    name: zod.string().min(1).nullish().describe("Human-friendly name."),
+    providers: zod
+      .array(zod.string())
+      .nullish()
+      .describe("List of provider IDs permitted for this key."),
   })
-  .describe("Replacement expiration for a virtual key.");
+  .describe("Replacement configuration for a virtual key.");
 
 export type UpdateKeyBody = zod.input<typeof UpdateKeyBody>;
 export type UpdateKeyBodyOutput = zod.output<typeof UpdateKeyBody>;

@@ -206,10 +206,7 @@ for (const operation of ["revoke", "expiration"] as const) {
     await screen.findByText("CI key");
     await user.click(
       screen.getByRole("button", {
-        name:
-          operation === "revoke"
-            ? "Revoke CI key"
-            : "Edit expiration for CI key",
+        name: operation === "revoke" ? "Revoke CI key" : "Edit CI key",
       }),
     );
     const dialog = await screen.findByRole("dialog");
@@ -223,7 +220,7 @@ for (const operation of ["revoke", "expiration"] as const) {
     }
     await user.click(
       within(dialog).getByRole("button", {
-        name: operation === "revoke" ? "Revoke" : "Save expiration",
+        name: operation === "revoke" ? "Revoke" : "Save key",
       }),
     );
     await screen.findByText(/key list could not be refreshed/);
@@ -232,7 +229,7 @@ for (const operation of ["revoke", "expiration"] as const) {
       screen.getByText(
         operation === "revoke"
           ? "Key revoked successfully."
-          : "Key expiration updated successfully.",
+          : "Key updated successfully.",
       ),
     );
     assert.equal(screen.queryByRole("button", { name: "Revoke CI key" }), null);

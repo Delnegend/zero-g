@@ -134,7 +134,7 @@ export const getUpdateKeyUrl = (id: string) => {
 };
 
 /**
- * @summary Changes or clears the expiration of a non-revoked key.
+ * @summary Changes configuration or expiration of a non-revoked key.
  */
 export const updateKey = async (
   id: string,
@@ -185,6 +185,23 @@ export const revokeKey = async (
   options?: Parameters<typeof request>[1],
 ): Promise<void> => {
   return request<void>(getRevokeKeyUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getUnrevokeKeyUrl = (id: string) => {
+  return `/api/keys/${encodeURIComponent(String(id))}/unrevoke`;
+};
+
+/**
+ * @summary Restores a revoked virtual key by ID.
+ */
+export const unrevokeKey = async (
+  id: string,
+  options?: Parameters<typeof request>[1],
+): Promise<void> => {
+  return request<void>(getUnrevokeKeyUrl(id), {
     ...options,
     method: "POST",
   });

@@ -1530,6 +1530,14 @@ test("create restricted keys, edit expiration, and retain revoked metadata", asy
             error: null,
             models: [card("model-a"), card("model-b")],
           },
+          {
+            id: "beta",
+            name: "Beta",
+            kind: "openai",
+            base_url: "",
+            error: null,
+            models: [card("model-c")],
+          },
         ],
       });
     if (path === "/api/keys" && method === "POST") {
@@ -1541,11 +1549,27 @@ test("create restricted keys, edit expiration, and retain revoked metadata", asy
     }
     if (path === "/api/keys/key-1" && method === "PATCH") {
       const body = JSON.parse(String(options?.body));
-      keys = [{ ...keys[0], expires_at: body.expires_at }];
+      keys = [
+        {
+          ...keys[0],
+          ...(body.name !== undefined ? { name: body.name } : {}),
+          ...(body.providers !== undefined
+            ? { providers: body.providers }
+            : {}),
+          ...(body.models !== undefined ? { models: body.models } : {}),
+          ...(body.expires_at !== undefined
+            ? { expires_at: body.expires_at }
+            : {}),
+        },
+      ];
       return new Response(null, { status: 204 });
     }
     if (path === "/api/keys/key-1/revoke" && method === "POST") {
       keys = [{ ...keys[0], revoked_at: 1 }];
+      return new Response(null, { status: 204 });
+    }
+    if (path === "/api/keys/key-1/unrevoke" && method === "POST") {
+      keys = [{ ...keys[0], revoked_at: null }];
       return new Response(null, { status: 204 });
     }
     if (path === "/api/keys") return Response.json({ keys });
@@ -1561,12 +1585,17 @@ test("create restricted keys, edit expiration, and retain revoked metadata", asy
   await user.click(screen.getByRole("button", { name: "Create key" }));
   const dialog = await screen.findByRole("dialog");
   await user.type(within(dialog).getByLabelText("Name"), "CI key");
+  assert.ok(within(dialog).getByRole("checkbox", { name: "model-c" }));
   await user.type(
     await within(dialog).findByLabelText("Search Providers"),
     "Alpha",
   );
   await user.click(
     within(dialog).getByRole("checkbox", { name: "Alpha (alpha)" }),
+  );
+  assert.equal(
+    within(dialog).queryByRole("checkbox", { name: "model-c" }),
+    null,
   );
   await user.type(within(dialog).getByLabelText("Search Models"), "model-a");
   await user.click(within(dialog).getByRole("checkbox", { name: "model-a" }));
@@ -1625,9 +1654,7 @@ test("create restricted keys, edit expiration, and retain revoked metadata", asy
   await screen.findByText("secret-once");
   await user.click(screen.getByRole("button", { name: "Dismiss" }));
   assert.ok(screen.getByRole("button", { name: /Expires in/ }));
-  await user.click(
-    screen.getByRole("button", { name: "Edit expiration for CI key" }),
-  );
+  await user.click(screen.getByRole("button", { name: "Edit CI key" }));
   let edit = await screen.findByRole("dialog");
   await user.click(
     within(edit).getByRole("button", { name: /Choose expiration date/ }),
@@ -1636,33 +1663,41 @@ test("create restricted keys, edit expiration, and retain revoked metadata", asy
     target: { value: "12:30:00" },
   });
   await user.click(screen.getByRole("button", { name: "Done" }));
-  await user.click(
-    within(edit).getByRole("button", { name: "Save expiration" }),
-  );
+  await user.click(within(edit).getByRole("button", { name: "Save key" }));
   await waitFor(() => assert.equal(screen.queryByRole("dialog"), null));
-  await user.click(
-    screen.getByRole("button", { name: "Edit expiration for CI key" }),
-  );
+  await user.click(screen.getByRole("button", { name: "Edit CI key" }));
   edit = await screen.findByRole("dialog");
+  assert.equal(within(edit).getByText("Edit key").tagName, "H2");
+  await user.clear(within(edit).getByLabelText("Name"));
+  await user.type(within(edit).getByLabelText("Name"), "CI key updated");
   await user.click(
     within(edit).getByRole("button", { name: /Choose expiration date/ }),
   );
   await user.click(screen.getByRole("button", { name: "Clear expiration" }));
-  await user.click(
-    within(edit).getByRole("button", { name: "Save expiration" }),
-  );
+  await user.click(within(edit).getByRole("button", { name: "Save key" }));
   await screen.findByText("Never expires");
-  await user.click(screen.getByRole("button", { name: "Revoke CI key" }));
+  await screen.findByText("CI key updated");
+  await user.click(
+    screen.getByRole("button", { name: "Revoke CI key updated" }),
+  );
   const confirmation = await screen.findByRole("dialog");
   await user.click(
     within(confirmation).getByRole("button", { name: "Revoke" }),
   );
   await screen.findByText("Revoked");
-  assert.ok(screen.getByText("CI key"));
+  await screen.findByText("Key revoked successfully.");
+  const undoButton = screen.getByRole("button", { name: "Undo" });
+  await user.click(undoButton);
+  await screen.findByText("Key restored successfully.");
+  await waitFor(() => assert.equal(screen.queryByText("Revoked"), null));
+  assert.ok(screen.getByText("CI key updated"));
   assert.equal(
-    (screen.getByRole("button", { name: "Revoke CI key" }) as HTMLButtonElement)
-      .disabled,
-    true,
+    (
+      screen.getByRole("button", {
+        name: "Revoke CI key updated",
+      }) as HTMLButtonElement
+    ).disabled,
+    false,
   );
 });
 

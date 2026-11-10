@@ -44,3 +44,43 @@ pub(in crate::server) async fn revoke_key(
         Err(err) => internal_error(&err.to_string()),
     }
 }
+
+/// Restores a revoked virtual key by ID.
+#[utoipa::path(post, path = "/api/keys/{id}/unrevoke", operation_id = "unrevokeKey",
+    params(("id" = String, Path, description = "Virtual key ID")),
+    responses((status = 204, description = "Key restored"),
+        (status = 404, description = "Key not found or not revoked"), (status = 500, description = "Settings store error")))]
+pub(in crate::server) async fn unrevoke_key(
+    State(store): State<SettingsStore>,
+    Path(id): Path<String>,
+) -> Response {
+    let result = transaction_with_retry!(store.database, |mut tx| {
+        let Some(row) = VirtualKey::filter_by_id(id.as_str())
+            .first()
+            .exec(&mut tx)
+            .await?
+        else {
+            return Ok(false);
+        };
+        if row.revoked_at.is_none() {
+            return Ok(false);
+        }
+        VirtualKey::upsert_by_id(row.id.as_str())
+            .name(row.name)
+            .key_hash(row.key_hash)
+            .providers(row.providers)
+            .models(row.models)
+            .created_at(row.created_at)
+            .expires_at(row.expires_at)
+            .revoked_at(None)
+            .exec(&mut tx)
+            .await?;
+        tx.commit().await?;
+        Ok(true)
+    });
+    match result {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(err) => internal_error(&err.to_string()),
+    }
+}

@@ -1,28 +1,9 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useForm } from "@tanstack/react-form";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
-import { formatDate, formatDateYMD } from "@/lib/date";
-import { CalendarDays } from "lucide-react";
-import { FilterGroup } from "@/components/ObservabilityFilters";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Card } from "@/components/ui/card";
-import { Calendar } from "@/components/ui/calendar";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { Label } from "@/components/ui/label";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { message } from "@/server/api/client";
 import { RowsSkeleton } from "@/components/Loading";
+import { FilterGroup } from "@/components/ObservabilityFilters";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Calendar } from "@/components/ui/calendar";
+import { Card } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -30,15 +11,36 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { toast, Toaster } from "@/components/ui/toast";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { formatDate, formatDateYMD } from "@/lib/date";
+import { message } from "@/server/api/client";
 import {
   createKey,
   keysOptions,
   revokeKey as revokeKeyRequest,
+  unrevokeKey as unrevokeKeyRequest,
   updateKey,
   type VirtualKey,
 } from "@/server/api/keys";
-import { providersOptions } from "@/server/api/providers";
 import { modelCatalogQueryOptions } from "@/server/api/models";
+import { providersOptions } from "@/server/api/providers";
+import { useForm } from "@tanstack/react-form";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute } from "@tanstack/react-router";
+import { Ban, CalendarDays, Clock, Pencil } from "lucide-react";
+import { useEffect, useState } from "react";
 
 export const Route = createFileRoute("/keys")({
   head: () => ({ meta: [{ title: "Virtual keys · Zero-G" }] }),
@@ -147,17 +149,24 @@ function ExpirationField({
           />
           <Label className="mx-3 flex items-center justify-between gap-3 border-t pt-3 text-sm">
             Time (local)
-            <Input
-              className="h-8 w-28"
-              type="text"
-              aria-label="Time (24-hour)"
-              placeholder="HH:MM:SS"
-              disabled={disabled || !selected}
-              value={time}
-              onChange={(event) =>
-                onChange(`${datePart}T${event.target.value}`)
-              }
-            />
+            <div className="relative flex items-center">
+              <Input
+                className="h-8 w-32 pr-7 font-mono text-xs"
+                type="time"
+                step="1"
+                aria-label="Time (24-hour)"
+                placeholder="HH:MM:SS"
+                disabled={disabled || !selected}
+                value={time}
+                onChange={(event) =>
+                  onChange(`${datePart}T${event.target.value}`)
+                }
+              />
+              <Clock
+                aria-hidden="true"
+                className="pointer-events-none absolute right-2 size-3.5 text-muted-foreground"
+              />
+            </div>
           </Label>
           <div className="flex justify-between gap-2 px-3 pb-3">
             <Button
@@ -182,74 +191,161 @@ function ExpirationField({
   );
 }
 
-function EditExpiration({
-  selected,
+function KeyForm({
+  defaultValues,
+  submitLabel,
   busy,
-  error,
-  onClose,
-  onSave,
+  optionsUnavailable,
+  providers,
+  catalogProviders,
+  onCancel,
+  onSubmit,
 }: {
-  selected: VirtualKey;
+  defaultValues: {
+    name: string;
+    providers: string[];
+    models: string[];
+    expiresAt: string;
+  };
+  submitLabel: string;
   busy: boolean;
-  error: string;
-  onClose: () => void;
-  onSave: (value: string) => void;
+  optionsUnavailable: boolean;
+  providers: Array<{ id: string; name: string }>;
+  catalogProviders: Array<{
+    id: string;
+    name: string;
+    models: Array<{ model: { id: string } }>;
+  }>;
+  onCancel: () => void;
+  onSubmit: (value: {
+    name: string;
+    providers: string[];
+    models: string[];
+    expiresAt: string;
+  }) => void;
 }) {
   const form = useForm({
-    defaultValues: { expiresAt: localDateTime(selected.expires_at) },
-    onSubmit: ({ value }) => onSave(value.expiresAt),
+    defaultValues,
+    onSubmit: ({ value }) => onSubmit(value),
   });
+
   return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open && !busy) onClose();
+    <form
+      className="grid gap-5"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void form.handleSubmit();
       }}
     >
-      <DialogContent showCloseButton={!busy}>
-        <DialogHeader>
-          <DialogTitle>Edit expiration</DialogTitle>
-          <DialogDescription>
-            Set or clear the expiration for “{selected.name}”.
-          </DialogDescription>
-        </DialogHeader>
-        {error && (
-          <Alert variant="destructive">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
-        <form
-          className="grid gap-5"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void form.handleSubmit();
-          }}
-        >
-          <form.Field name="expiresAt">
-            {(field) => (
-              <ExpirationField
-                value={field.state.value}
-                onChange={field.handleChange}
-                disabled={busy}
-              />
-            )}
-          </form.Field>
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              variant="outline"
+      <form.Field name="name">
+        {(field) => (
+          <Label className="block text-sm font-medium">
+            Name
+            <Input
+              className="mt-1"
               disabled={busy}
-              onClick={onClose}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" disabled={busy}>
-              Save expiration
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
+              required
+              value={field.state.value}
+              onBlur={field.handleBlur}
+              onChange={(event) => field.handleChange(event.target.value)}
+            />
+          </Label>
+        )}
+      </form.Field>
+      <div>
+        <p className="text-xs text-muted-foreground">
+          Select none to allow all providers.
+        </p>
+        <form.Field name="providers">
+          {(field) => (
+            <FilterGroup
+              title="Providers"
+              values={providers.map((p) => p.id)}
+              identities={providers}
+              selected={field.state.value}
+              onChange={(nextProviders) => {
+                field.handleChange(nextProviders);
+                if (nextProviders.length > 0) {
+                  const validModels = new Set(
+                    catalogProviders
+                      .filter((p) => nextProviders.includes(p.id))
+                      .flatMap((p) => p.models.map((m) => m.model.id)),
+                  );
+                  form.setFieldValue("models", (prev) =>
+                    prev.filter((id) => validModels.has(id)),
+                  );
+                }
+              }}
+              defaultOpen
+              disabled={busy}
+            />
+          )}
+        </form.Field>
+      </div>
+      <div>
+        <p className="text-xs text-muted-foreground">
+          Select none to allow all models. Model IDs are upstream IDs.
+        </p>
+        <form.Subscribe selector={(state) => state.values.providers}>
+          {(selectedProviders) => {
+            const availableModels = [
+              ...new Set(
+                catalogProviders
+                  .filter(
+                    (provider) =>
+                      selectedProviders.length === 0 ||
+                      selectedProviders.includes(provider.id),
+                  )
+                  .flatMap((provider) =>
+                    provider.models.map((model) => model.model.id),
+                  ),
+              ),
+            ];
+            return (
+              <form.Field name="models">
+                {(field) => (
+                  <FilterGroup
+                    title="Models"
+                    values={availableModels}
+                    selected={field.state.value}
+                    onChange={field.handleChange}
+                    defaultOpen
+                    disabled={busy}
+                  />
+                )}
+              </form.Field>
+            );
+          }}
+        </form.Subscribe>
+      </div>
+      {!catalogProviders.some((provider) => provider.models.length > 0) && (
+        <p className="text-sm text-muted-foreground">
+          No models found in the catalog. Selecting no models allows all models.
+        </p>
+      )}
+      <form.Field name="expiresAt">
+        {(field) => (
+          <ExpirationField
+            value={field.state.value}
+            onChange={field.handleChange}
+            disabled={busy}
+          />
+        )}
+      </form.Field>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          disabled={busy}
+          onClick={onCancel}
+        >
+          Cancel
+        </Button>
+        <Button type="submit" disabled={busy || optionsUnavailable}>
+          {busy ? "Working…" : submitLabel}
+        </Button>
+      </div>
+    </form>
   );
 }
 
@@ -260,24 +356,34 @@ export function KeysPage() {
   const catalogQuery = useQuery(modelCatalogQueryOptions());
   const createMutation = useMutation({ gcTime: 0, mutationFn: createKey });
   const revokeMutation = useMutation({ mutationFn: revokeKeyRequest });
+  const unrevokeMutation = useMutation({ mutationFn: unrevokeKeyRequest });
   const updateMutation = useMutation({
     mutationFn: ({
       id,
+      name,
+      providers,
+      models,
       expires_at,
     }: {
       id: string;
-      expires_at: number | null;
-    }) => updateKey(id, { expires_at }),
+      name?: string;
+      providers?: string[];
+      models?: string[];
+      expires_at?: number | null;
+    }) => updateKey(id, { name, providers, models, expires_at }),
   });
   const [newKey, setNewKey] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [mutationSuccess, setMutationSuccess] = useState(false);
   const [busy, setBusy] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [revokeKey, setRevokeKey] = useState<VirtualKey | null>(null);
   const [editKey, setEditKey] = useState<VirtualKey | null>(null);
   const refreshError =
-    success && keysQuery.error ? message(keysQuery.error) : "";
+    (success || mutationSuccess) && keysQuery.error
+      ? message(keysQuery.error)
+      : "";
   const keys = keysQuery.data?.keys ?? [];
   const catalogErrors =
     catalogQuery.data?.providers.filter((provider) => provider.error) ?? [];
@@ -285,15 +391,6 @@ export function KeysPage() {
     providersQuery.isPending ||
     !!providersQuery.error ||
     catalogQuery.isPending;
-  const form = useForm({
-    defaultValues: {
-      name: "",
-      providers: [] as string[],
-      models: [] as string[],
-      expiresAt: "",
-    },
-    onSubmit: ({ value }) => create(value),
-  });
   async function refreshKeys() {
     await queryClient.invalidateQueries({ queryKey: keysOptions().queryKey });
   }
@@ -316,7 +413,7 @@ export function KeysPage() {
       });
       setNewKey(result.key);
       setSuccess("Key created successfully.");
-      form.reset();
+      setMutationSuccess(true);
       await refreshKeys();
     } catch (err) {
       setError(message(err));
@@ -332,25 +429,65 @@ export function KeysPage() {
     try {
       await revokeMutation.mutateAsync(key.id);
       setRevokeKey(null);
-      setSuccess("Key revoked successfully.");
+      setMutationSuccess(true);
       await refreshKeys();
+      const toastId = toast.add({
+        type: "success",
+        title: "Key revoked successfully.",
+        actionProps: {
+          children: "Undo",
+          onClick: async () => {
+            toast.close(toastId);
+            await unrevoke(key);
+          },
+        },
+      });
     } catch (err) {
       setError(message(err));
     } finally {
       setBusy(false);
     }
   }
-  async function saveExpiration(key: VirtualKey, value: string) {
+  async function unrevoke(key: VirtualKey) {
+    setBusy(true);
+    setError("");
+    try {
+      await unrevokeMutation.mutateAsync(key.id);
+      setMutationSuccess(true);
+      await refreshKeys();
+      toast.add({
+        type: "success",
+        title: "Key restored successfully.",
+      });
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function saveKey(
+    key: VirtualKey,
+    value: {
+      name: string;
+      providers: string[];
+      models: string[];
+      expiresAt: string;
+    },
+  ) {
     setBusy(true);
     setError("");
     setSuccess("");
     try {
       await updateMutation.mutateAsync({
         id: key.id,
-        expires_at: expiration(value),
+        name: value.name,
+        providers: value.providers,
+        models: value.models,
+        expires_at: expiration(value.expiresAt),
       });
       setEditKey(null);
-      setSuccess("Key expiration updated successfully.");
+      setSuccess("Key updated successfully.");
+      setMutationSuccess(true);
       await refreshKeys();
     } catch (err) {
       setError(message(err));
@@ -475,108 +612,21 @@ export function KeysPage() {
               </Button>
             </div>
           ) : (
-            <form
-              className="grid gap-5"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void form.handleSubmit();
+            <KeyForm
+              defaultValues={{
+                name: "",
+                providers: [],
+                models: [],
+                expiresAt: "",
               }}
-            >
-              <form.Field name="name">
-                {(field) => (
-                  <Label className="block text-sm font-medium">
-                    Name
-                    <Input
-                      className="mt-1"
-                      disabled={busy}
-                      required
-                      value={field.state.value}
-                      onBlur={field.handleBlur}
-                      onChange={(event) =>
-                        field.handleChange(event.target.value)
-                      }
-                    />
-                  </Label>
-                )}
-              </form.Field>
-              <div>
-                <p className="text-xs text-muted-foreground">
-                  Select none to allow all providers.
-                </p>
-                <form.Field name="providers">
-                  {(field) => (
-                    <FilterGroup
-                      title="Providers"
-                      values={(providersQuery.data?.providers ?? []).map(
-                        (provider) => provider.id,
-                      )}
-                      identities={providersQuery.data?.providers.map(
-                        ({ id, name }) => ({ id, name }),
-                      )}
-                      selected={field.state.value}
-                      onChange={field.handleChange}
-                      defaultOpen
-                      disabled={busy}
-                    />
-                  )}
-                </form.Field>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">
-                  Select none to allow all models. Model IDs are upstream IDs.
-                </p>
-                <form.Field name="models">
-                  {(field) => (
-                    <FilterGroup
-                      title="Models"
-                      values={[
-                        ...new Set(
-                          (catalogQuery.data?.providers ?? []).flatMap(
-                            (provider) =>
-                              provider.models.map((model) => model.model.id),
-                          ),
-                        ),
-                      ]}
-                      selected={field.state.value}
-                      onChange={field.handleChange}
-                      defaultOpen
-                      disabled={busy}
-                    />
-                  )}
-                </form.Field>
-              </div>
-              {catalogQuery.data &&
-                !catalogQuery.data.providers.some(
-                  (provider) => provider.models.length > 0,
-                ) && (
-                  <p className="text-sm text-muted-foreground">
-                    No models found in the catalog. Selecting no models allows
-                    all models.
-                  </p>
-                )}
-              <form.Field name="expiresAt">
-                {(field) => (
-                  <ExpirationField
-                    value={field.state.value}
-                    onChange={field.handleChange}
-                    disabled={busy}
-                  />
-                )}
-              </form.Field>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={busy}
-                  onClick={() => setCreateOpen(false)}
-                >
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={busy || optionsUnavailable}>
-                  {busy ? "Working…" : "Create key"}
-                </Button>
-              </div>
-            </form>
+              submitLabel="Create key"
+              busy={busy}
+              optionsUnavailable={optionsUnavailable}
+              providers={providersQuery.data?.providers ?? []}
+              catalogProviders={catalogQuery.data?.providers ?? []}
+              onCancel={() => setCreateOpen(false)}
+              onSubmit={(value) => void create(value)}
+            />
           )}
         </DialogContent>
       </Dialog>
@@ -591,7 +641,7 @@ export function KeysPage() {
             No keys created yet.
           </p>
         ) : (
-          <ul className="mt-4 divide-y">
+          <ul className="divide-y">
             {keys.map((key) => (
               <li
                 key={key.id}
@@ -615,25 +665,29 @@ export function KeysPage() {
                 <div className="flex flex-wrap gap-2">
                   <Button
                     variant="outline"
+                    size="icon"
                     disabled={busy || key.revoked_at != null}
-                    aria-label={`Edit expiration for ${key.name}`}
+                    tooltip="Edit key"
+                    aria-label={`Edit ${key.name}`}
                     onClick={() => {
                       setError("");
                       setEditKey(key);
                     }}
                   >
-                    Edit expiration
+                    <Pencil />
                   </Button>
                   <Button
                     variant="outline"
+                    size="icon"
                     disabled={busy || key.revoked_at != null}
+                    tooltip="Revoke key"
                     aria-label={`Revoke ${key.name}`}
                     onClick={() => {
                       setError("");
                       setRevokeKey(key);
                     }}
                   >
-                    Revoke
+                    <Ban />
                   </Button>
                 </div>
               </li>
@@ -642,14 +696,45 @@ export function KeysPage() {
         )}
       </Card>
       {editKey && (
-        <EditExpiration
-          key={editKey.id}
-          selected={editKey}
-          busy={busy}
-          error={error}
-          onClose={() => setEditKey(null)}
-          onSave={(value) => void saveExpiration(editKey, value)}
-        />
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open && !busy) setEditKey(null);
+          }}
+        >
+          <DialogContent
+            className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
+            showCloseButton={!busy}
+          >
+            <DialogHeader>
+              <DialogTitle>Edit key</DialogTitle>
+              <DialogDescription>
+                Update permissions and expiration for “{editKey.name}”.
+              </DialogDescription>
+            </DialogHeader>
+            {error && (
+              <Alert variant="destructive">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+            <KeyForm
+              key={editKey.id}
+              defaultValues={{
+                name: editKey.name,
+                providers: editKey.providers,
+                models: editKey.models,
+                expiresAt: localDateTime(editKey.expires_at),
+              }}
+              submitLabel="Save key"
+              busy={busy}
+              optionsUnavailable={optionsUnavailable}
+              providers={providersQuery.data?.providers ?? []}
+              catalogProviders={catalogQuery.data?.providers ?? []}
+              onCancel={() => setEditKey(null)}
+              onSubmit={(value) => void saveKey(editKey, value)}
+            />
+          </DialogContent>
+        </Dialog>
       )}
       <Dialog
         open={revokeKey !== null}
@@ -689,6 +774,7 @@ export function KeysPage() {
           </div>
         </DialogContent>
       </Dialog>
+      <Toaster />
     </main>
   );
 }

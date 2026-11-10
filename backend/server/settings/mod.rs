@@ -35,7 +35,8 @@ pub(super) use list_keys::list_keys;
 use put_settings::__path_put_settings;
 pub(crate) use put_settings::put_settings;
 use revoke_key::__path_revoke_key;
-pub(super) use revoke_key::revoke_key;
+use revoke_key::__path_unrevoke_key;
+pub(super) use revoke_key::{revoke_key, unrevoke_key};
 use update_key::__path_update_key;
 pub(super) use update_key::update_key;
 pub(crate) use virtual_key_auth::virtual_key_auth;
@@ -120,22 +121,31 @@ pub(super) struct CreateKey {
     expires_at: Option<i64>,
 }
 
-/// Replacement expiration for a virtual key.
-#[derive(Deserialize, ToSchema)]
+/// Replacement configuration for a virtual key.
+#[derive(Deserialize, ToSchema, Default)]
+#[allow(clippy::option_option)]
 pub(super) struct UpdateKey {
+    /// Human-friendly name.
+    #[schema(min_length = 1)]
+    name: Option<String>,
+    /// List of provider IDs permitted for this key.
+    #[serde(default)]
+    providers: Option<Vec<String>>,
+    /// List of model IDs permitted for this key.
+    #[serde(default)]
+    models: Option<Vec<String>>,
     /// Expiration time in Unix seconds, or null to clear it.
-    #[serde(deserialize_with = "deserialize_expiration")]
-    #[schema(required = true)]
-    expires_at: Option<i64>,
+    #[serde(default, deserialize_with = "deserialize_optional_expiration")]
+    expires_at: Option<Option<i64>>,
 }
 
-/// Require the field while allowing an explicit null.
-fn deserialize_expiration<'de, D: serde::Deserializer<'de>>(
+/// Allow omitting the field, explicit null, or an integer.
+#[allow(clippy::option_option)]
+fn deserialize_optional_expiration<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
-) -> Result<Option<i64>, D::Error> {
-    Option::<i64>::deserialize(deserializer)
+) -> Result<Option<Option<i64>>, D::Error> {
+    Ok(Some(Option::<i64>::deserialize(deserializer)?))
 }
-
 /// Current Unix time in seconds.
 pub(crate) fn unix_now() -> i64 {
     std::time::SystemTime::now()
@@ -182,6 +192,7 @@ struct CreatedKey {
         list_keys,
         create_key,
         revoke_key,
+        unrevoke_key,
         update_key
     ),
     components(schemas(
@@ -518,6 +529,7 @@ mod tests {
 
     /// Expiration changes govern authentication.
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn key_expiration_lifecycle() {
         let store = SettingsStore::new(Database::open(":memory:").await.unwrap(), &key(1))
             .await
@@ -547,7 +559,8 @@ mod tests {
                 State(store.clone()),
                 Path(id.clone()),
                 Json(UpdateKey {
-                    expires_at: Some(unix_now())
+                    expires_at: Some(Some(unix_now())),
+                    ..Default::default()
                 })
             )
             .await
@@ -558,7 +571,10 @@ mod tests {
             update_key(
                 State(store.clone()),
                 Path(id.clone()),
-                Json(UpdateKey { expires_at: None })
+                Json(UpdateKey {
+                    expires_at: Some(None),
+                    ..Default::default()
+                })
             )
             .await
             .status(),
@@ -573,7 +589,8 @@ mod tests {
                 State(store.clone()),
                 Path(id.clone()),
                 Json(UpdateKey {
-                    expires_at: Some(future)
+                    expires_at: Some(Some(future)),
+                    ..Default::default()
                 })
             )
             .await
@@ -611,7 +628,10 @@ mod tests {
             update_key(
                 State(store.clone()),
                 Path(id.clone()),
-                Json(UpdateKey { expires_at: None })
+                Json(UpdateKey {
+                    expires_at: Some(None),
+                    ..Default::default()
+                })
             )
             .await
             .status(),
@@ -654,24 +674,113 @@ mod tests {
         assert_eq!(
             update_key(
                 State(store.clone()),
-                Path(id),
-                Json(UpdateKey { expires_at: None })
+                Path(id.clone()),
+                Json(UpdateKey {
+                    expires_at: Some(None),
+                    ..Default::default()
+                })
             )
             .await
             .status(),
             StatusCode::CONFLICT
         );
         assert_eq!(
+            unrevoke_key(State(store.clone()), Path(id.clone()))
+                .await
+                .status(),
+            StatusCode::NO_CONTENT
+        );
+        assert!(store.permissions(&token, None).await.unwrap().is_some());
+        let restored = json_body(list_keys(State(store.clone())).await).await;
+        assert!(restored["keys"][0]["revoked_at"].is_null());
+        assert_eq!(
+            unrevoke_key(State(store.clone()), Path(id)).await.status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            unrevoke_key(State(store.clone()), Path("missing".into()))
+                .await
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
             update_key(
                 State(store),
                 Path("missing".into()),
-                Json(UpdateKey { expires_at: None })
+                Json(UpdateKey {
+                    expires_at: Some(None),
+                    ..Default::default()
+                })
             )
             .await
             .status(),
             StatusCode::NOT_FOUND
         );
-        assert!(serde_json::from_value::<UpdateKey>(json!({})).is_err());
+        assert!(serde_json::from_value::<UpdateKey>(json!({})).is_ok());
+    }
+    /// Updating key name, providers, and models updates stored permissions.
+    #[tokio::test]
+    async fn key_configuration_update_lifecycle() {
+        let store = SettingsStore::new(Database::open(":memory:").await.unwrap(), &key(1))
+            .await
+            .unwrap();
+        let created = json_body(
+            create_key(
+                State(store.clone()),
+                Json(CreateKey {
+                    name: "original".into(),
+                    providers: vec![],
+                    models: vec![],
+                    expires_at: None,
+                }),
+            )
+            .await,
+        )
+        .await;
+        let id = created["id"].as_str().unwrap().to_owned();
+        assert_eq!(
+            update_key(
+                State(store.clone()),
+                Path(id.clone()),
+                Json(UpdateKey {
+                    name: Some(String::new()),
+                    ..Default::default()
+                })
+            )
+            .await
+            .status(),
+            StatusCode::BAD_REQUEST
+        );
+        toasty::create!(ProviderRecord {
+            id: "p1".to_string(),
+            name: "p1".to_string(),
+            kind: "codex".to_string(),
+            base_url: String::new(),
+            keyless: false,
+            deleted: false,
+        })
+        .exec(&mut (*store.database.db).clone())
+        .await
+        .unwrap();
+        assert_eq!(
+            update_key(
+                State(store.clone()),
+                Path(id.clone()),
+                Json(UpdateKey {
+                    name: Some("Renamed Key".into()),
+                    providers: Some(vec!["p1".into()]),
+                    models: Some(vec!["m1".into()]),
+                    expires_at: None,
+                })
+            )
+            .await
+            .status(),
+            StatusCode::NO_CONTENT
+        );
+        let updated = json_body(list_keys(State(store.clone())).await).await;
+        assert_eq!(updated["keys"][0]["name"], "Renamed Key");
+        assert_eq!(updated["keys"][0]["providers"], json!(["p1"]));
+        assert_eq!(updated["keys"][0]["models"], json!(["m1"]));
     }
 
     /// Test handler checks model access using attached permissions.
