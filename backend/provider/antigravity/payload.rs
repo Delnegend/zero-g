@@ -470,12 +470,118 @@ impl AntigravityClient {
                 decl["description"] = json!(desc);
             }
             if let Some(params) = &tool.function.parameters {
-                decl["parameters"] = params.clone();
+                decl["parameters"] = gemini_schema(params);
             }
             decls.push(decl);
         }
         decls
     }
+}
+
+/// Rewrites a JSON Schema into the `OpenAPI` subset accepted by Gemini function
+/// declarations, collapsing unions and dropping unsupported keywords.
+// Google's schema proto accepts only a fixed subset; every other keyword is rejected.
+fn gemini_schema(value: &Value) -> Value {
+    let Some(object) = value.as_object() else {
+        return value.clone();
+    };
+    let mut schema = serde_json::Map::new();
+    for (key, value) in object {
+        match key.as_str() {
+            "properties" => {
+                if let Some(properties) = value.as_object() {
+                    let properties = properties
+                        .iter()
+                        .map(|(name, value)| (name.clone(), gemini_schema(value)))
+                        .collect();
+                    schema.insert(key.clone(), Value::Object(properties));
+                }
+            }
+            "items" => {
+                let items = match value {
+                    Value::Array(items) => items.first().map_or(Value::Null, gemini_schema),
+                    _ => gemini_schema(value),
+                };
+                schema.insert(key.clone(), items);
+            }
+            "anyOf" | "oneOf" => {
+                if let Some(branches) = value.as_array() {
+                    let branches = branches.iter().map(gemini_schema).collect();
+                    schema.insert("anyOf".to_owned(), Value::Array(branches));
+                }
+            }
+            "const" => {
+                if let Some(text) = value.as_str() {
+                    schema.insert("enum".to_owned(), json!([text]));
+                }
+            }
+            "enum" => {
+                if let Some(values) = value.as_array() {
+                    let strings: Vec<_> = values.iter().filter_map(Value::as_str).collect();
+                    if !strings.is_empty() && strings.len() == values.len() {
+                        schema.insert(key.clone(), json!(strings));
+                    }
+                }
+            }
+            "required" => {
+                if let Some(values) = value.as_array() {
+                    let strings: Vec<_> = values.iter().filter_map(Value::as_str).collect();
+                    if !strings.is_empty() {
+                        schema.insert(key.clone(), json!(strings));
+                    }
+                }
+            }
+            "description" | "title" | "format" | "pattern" | "default" | "example" | "nullable"
+            | "minimum" | "maximum" | "minItems" | "maxItems" | "minLength" | "maxLength"
+            | "minProperties" | "maxProperties" | "propertyOrdering" => {
+                schema.insert(key.clone(), value.clone());
+            }
+            // `type` is normalized after the loop so unions can add `nullable`.
+            // Other JSON Schema keywords have no Gemini schema field: `$ref`,
+            // `$defs`, `additionalProperties`, `allOf`, `not`, and constraints.
+            _ => {}
+        }
+    }
+
+    let mut nullable = false;
+    let mut kind = match object.get("type") {
+        Some(Value::Array(types)) => {
+            let mut kind = None;
+            for name in types.iter().filter_map(Value::as_str) {
+                if name == "null" {
+                    nullable = true;
+                } else if kind.is_none() {
+                    kind = Some(name.to_owned());
+                }
+            }
+            kind
+        }
+        Some(Value::String(name)) if name == "null" => {
+            nullable = true;
+            None
+        }
+        Some(Value::String(name)) => Some(name.clone()),
+        _ => None,
+    };
+    // Gemini rejects a `type` beside union branches, so only infer one when absent.
+    if !schema.contains_key("anyOf") {
+        if kind.is_none() {
+            if object.contains_key("properties") {
+                kind = Some("object".to_owned());
+            } else if object.contains_key("items") {
+                kind = Some("array".to_owned());
+            } else {
+                kind = Some("string".to_owned());
+            }
+        }
+        if let Some(kind) = kind {
+            schema.insert("type".to_owned(), Value::String(kind));
+        }
+    }
+    if nullable {
+        schema.insert("nullable".to_owned(), Value::Bool(true));
+    }
+    Value::Object(schema)
 }
 
 /// Validates media before model resolution or upstream calls.
@@ -769,5 +875,62 @@ mod tests {
         assert_eq!(parse_data_url("data:image/png,abc"), None);
         assert_eq!(parse_data_url("data:image/png;plain,abc"), None);
         assert_eq!(parse_data_url("image/png;base64,abc"), None);
+    }
+
+    #[test]
+    fn tool_schemas_are_reduced_to_the_gemini_subset() {
+        let req: ChatCompletionRequest = serde_json::from_value(json!({
+            "model": "gemini-3.8-flash",
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [{"type": "function", "function": {
+                "name": "grep",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "skip": {"type": ["number", "null"]},
+                        "mode": {"const": "fast"},
+                        "query": {"anyOf": [{"type": "string"}, {"type": "integer"}]},
+                        "choice": {"type": "string", "anyOf": [{"type": "string"}, {"type": "null"}]},
+                        "nested": {
+                            "type": "object",
+                            "properties": {"value": {"type": ["string", "null"]}},
+                            "additionalProperties": false
+                        }
+                    },
+                    "required": ["query"],
+                    "additionalProperties": false
+                }
+            }}]
+        }))
+        .unwrap();
+        let payload =
+            AntigravityClient::build_request_payload(&req, "p", "gemini-3.8-flash", "s", None);
+        let params = &payload["request"]["tools"][0]["functionDeclarations"][0]["parameters"];
+
+        assert_eq!(params["type"], json!("object"));
+        assert_eq!(params["properties"]["skip"]["type"], json!("number"));
+        assert_eq!(params["properties"]["skip"]["nullable"], json!(true));
+        assert_eq!(params["properties"]["mode"]["enum"], json!(["fast"]));
+        assert_eq!(
+            params["properties"]["query"]["anyOf"][0]["type"],
+            json!("string")
+        );
+        assert!(params["properties"]["query"].get("type").is_none());
+        assert!(params["properties"]["choice"].get("type").is_none());
+        assert_eq!(
+            params["properties"]["nested"]["properties"]["value"]["type"],
+            json!("string")
+        );
+        assert_eq!(
+            params["properties"]["nested"]["properties"]["value"]["nullable"],
+            json!(true)
+        );
+        assert!(params.get("additionalProperties").is_none());
+        assert!(
+            params["properties"]["nested"]
+                .get("additionalProperties")
+                .is_none()
+        );
+        assert_eq!(params["required"], json!(["query"]));
     }
 }
