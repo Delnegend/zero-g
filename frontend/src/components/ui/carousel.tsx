@@ -178,6 +178,7 @@ function CarouselPrevious({
       data-slot="carousel-previous"
       variant={variant}
       size={size}
+      label="Previous slide"
       className={cn(
         "absolute touch-manipulation rounded-full",
         orientation === "horizontal"
@@ -190,7 +191,6 @@ function CarouselPrevious({
       {...props}
     >
       <ChevronLeftIcon />
-      <span className="sr-only">Previous slide</span>
     </Button>
   );
 }
@@ -208,6 +208,7 @@ function CarouselNext({
       data-slot="carousel-next"
       variant={variant}
       size={size}
+      label="Next slide"
       className={cn(
         "absolute touch-manipulation rounded-full",
         orientation === "horizontal"
@@ -220,7 +221,6 @@ function CarouselNext({
       {...props}
     >
       <ChevronRightIcon />
-      <span className="sr-only">Next slide</span>
     </Button>
   );
 }

@@ -339,7 +339,7 @@ export function LogsTable({
         })}
       </div>
       <div className="hidden min-w-0 overflow-x-auto sm:block">
-        <Table className="w-full min-w-[850px] text-left text-sm">
+        <Table className="w-full min-w-212.5 text-left text-sm">
           <TableHeader className="border-b text-xs text-muted-foreground">
             {table.getHeaderGroups().map((group) => (
               <TableRow key={group.id}>

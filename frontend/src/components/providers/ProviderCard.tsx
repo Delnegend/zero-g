@@ -4,11 +4,6 @@ import { Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import {
   credentialsOptions,
   type Provider,
   type ProviderKind,
@@ -16,9 +11,6 @@ import {
 import { CredentialsAddButton } from "./CredentialsAddButton";
 import { CredentialsCard } from "./CredentialsCard";
 import { ProviderSignIn } from "./ProviderSignIn";
-
-const triggerClass =
-  "inline-flex rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
 
 export function ProviderCard({
   provider,
@@ -71,7 +63,7 @@ export function ProviderCard({
                       variant="outline"
                       size="icon"
                       tooltip="Edit provider"
-                      aria-label={`Edit ${provider.name}`}
+                      label={`Edit ${provider.name}`}
                       disabled={busy || deleting}
                       onClick={onEdit}
                     >
@@ -79,55 +71,37 @@ export function ProviderCard({
                     </Button>
                   )}
                 {!provider.keyless && (
-                  <Tooltip>
-                    <TooltipTrigger render={<span />} className={triggerClass}>
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        aria-label="Add credential"
-                        disabled={!kind || busy || loginBusy || deleting}
-                        onClick={() => setAddingCredential(true)}
-                      >
-                        <Plus />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Add credential</TooltipContent>
-                  </Tooltip>
-                )}
-                <Tooltip>
-                  <TooltipTrigger
-                    render={<span />}
-                    tabIndex={hasCredentials ? 0 : -1}
-                    aria-label={
-                      hasCredentials
-                        ? `Why ${provider.name} cannot be deleted`
-                        : undefined
-                    }
-                    className={triggerClass}
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    tooltip="Add credential"
+                    label="Add credential"
+                    disabled={!kind || busy || loginBusy || deleting}
+                    onClick={() => setAddingCredential(true)}
                   >
-                    <Button
-                      variant="destructive"
-                      size="icon"
-                      aria-label={
-                        deleting
-                          ? `Deleting ${provider.name}`
-                          : `Delete ${provider.name}`
-                      }
-                      disabled={busy || deleting || cannotDelete}
-                      className={
-                        hasCredentials ? "pointer-events-none" : undefined
-                      }
-                      onClick={onDelete}
-                    >
-                      <Trash2 />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {!provider.keyless && hasCredentials
+                    <Plus />
+                  </Button>
+                )}
+                <Button
+                  variant="destructive"
+                  size="icon"
+                  tooltip={
+                    !provider.keyless && hasCredentials
                       ? "Remove all credentials before deleting this provider."
-                      : "Delete provider"}
-                  </TooltipContent>
-                </Tooltip>
+                      : "Delete provider"
+                  }
+                  aria-label={
+                    hasCredentials
+                      ? `Why ${provider.name} cannot be deleted`
+                      : deleting
+                        ? `Deleting ${provider.name}`
+                        : `Delete ${provider.name}`
+                  }
+                  disabled={busy || deleting || cannotDelete}
+                  onClick={onDelete}
+                >
+                  <Trash2 />
+                </Button>
               </div>
             </div>
             {!provider.keyless && (

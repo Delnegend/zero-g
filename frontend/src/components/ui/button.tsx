@@ -44,6 +44,7 @@ interface ButtonProps
   extends ButtonPrimitive.Props, VariantProps<typeof buttonVariants> {
   tooltip?: React.ReactNode;
   tooltipSide?: "top" | "right" | "bottom" | "left";
+  label?: React.ReactNode;
 }
 
 function Button({
@@ -52,14 +53,23 @@ function Button({
   size = "default",
   tooltip,
   tooltipSide = "top",
+  label,
+  children,
   ...props
 }: ButtonProps) {
+  const srOnlyLabel =
+    label ??
+    (typeof tooltip === "string" && !props["aria-label"] ? tooltip : null);
+
   const button = (
     <ButtonPrimitive
       data-slot="button"
       className={cn(buttonVariants({ variant, size, className }))}
       {...props}
-    />
+    >
+      {children}
+      {srOnlyLabel && <span className="sr-only">{srOnlyLabel}</span>}
+    </ButtonPrimitive>
   );
 
   if (!tooltip) {

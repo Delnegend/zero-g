@@ -129,7 +129,7 @@ export function CredentialsCard({
                   variant="outline"
                   size="icon"
                   tooltip="Edit credential"
-                  aria-label={`Edit ${credential.name}`}
+                  label={`Edit ${credential.name}`}
                   disabled={loginBusy}
                   onClick={() => edit(credential)}
                 >
@@ -139,7 +139,7 @@ export function CredentialsCard({
                   variant="outline"
                   size="icon"
                   tooltip="Delete credential"
-                  aria-label={`Delete ${credential.name}`}
+                  label={`Delete ${credential.name}`}
                   disabled={loginBusy}
                   onClick={() => {
                     setError("");

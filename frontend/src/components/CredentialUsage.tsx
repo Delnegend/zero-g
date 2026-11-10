@@ -194,7 +194,7 @@ export function CredentialUsageRefreshButton({
       variant="outline"
       size="icon"
       tooltip={label}
-      aria-label={label}
+      label={label}
       disabled={disabled || usage.isFetching}
       onClick={() => void usage.refetch()}
     >

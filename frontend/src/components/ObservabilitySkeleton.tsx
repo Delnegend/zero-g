@@ -47,7 +47,7 @@ function LogsSkeleton() {
         ))}
       </div>
       <div className="hidden min-w-0 overflow-x-auto sm:block">
-        <table className="w-full min-w-[850px] text-left text-sm">
+        <table className="w-full min-w-212.5 text-left text-sm">
           <thead className="border-b">
             <tr>
               <th className="w-1 px-3 py-3" />
