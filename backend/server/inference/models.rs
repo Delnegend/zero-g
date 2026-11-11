@@ -182,7 +182,7 @@ mod tests {
     #[test]
     fn claude_reports_only_gateway_supported_modalities_and_no_input_only_context() {
         let mut model: Model = serde_json::from_value(json!({
-            "id": "fixture", "max_input_tokens": 100000, "max_tokens": 0,
+            "id": "fixture", "max_input_tokens": 100_000, "max_tokens": 0,
             "capabilities": {"image_input": {"supported": true}, "pdf_input": {"supported": true}}
         }))
         .unwrap();

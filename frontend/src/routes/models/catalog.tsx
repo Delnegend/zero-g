@@ -1,25 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fragment, useMemo, useRef, useState } from "react";
-import {
-  AudioLines,
-  File,
-  FileText,
-  FileType,
-  Image,
-  Info,
-  Video,
-  type LucideIcon,
-} from "lucide-react";
-import { message } from "@/server/api/client";
-import {
-  modelCatalogQueryOptions,
-  refreshModelCatalog,
-  type CatalogModel,
-  type Provider,
-} from "@/server/api/models";
 import { CatalogSkeleton } from "@/components/Loading";
-import { RequestBody, requestBodyTheme } from "@/RequestBody";
 import { RefreshButton } from "@/components/RefreshButton";
 import { ScrollingText } from "@/components/ScrollingText";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -34,12 +13,6 @@ import {
 } from "@/components/ui/carousel";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import {
   Popover,
   PopoverContent,
@@ -52,6 +25,33 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { RequestBody, requestBodyTheme } from "@/RequestBody";
+import { message } from "@/server/api/client";
+import {
+  modelCatalogQueryOptions,
+  refreshModelCatalog,
+  type CatalogModel,
+  type Provider,
+} from "@/server/api/models";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute } from "@tanstack/react-router";
+import {
+  AudioLines,
+  File,
+  FileText,
+  FileType,
+  Image,
+  Info,
+  Video,
+  type LucideIcon,
+} from "lucide-react";
+import { Fragment, useMemo, useRef, useState } from "react";
 
 export const Route = createFileRoute("/models/catalog")({
   head: () => ({ meta: [{ title: "Catalog · Zero-G" }] }),
@@ -144,22 +144,26 @@ function ModelCard({
   const title = model.display_name;
   const efforts = model.reasoning_efforts;
   const description = model.description;
-  const pricingNote =
-    model.pricing?.source === "antigravity-reference"
-      ? "These reference API prices come from the configured pricing datasheet and are informational only. They are not Antigravity charges; actual costs depend on your plan and any credit overages."
-      : model.pricing?.source === "claude-reference"
-        ? "These are Anthropic API reference prices from the configured datasheet, not Claude subscription charges. Actual costs depend on your plan."
-        : model.pricing?.source === "codex-reference"
-          ? "These are OpenAI API reference prices from the configured datasheet, not Codex subscription charges. Actual costs depend on your plan."
-          : model.pricing?.source === "opencode-go"
-            ? "These base rates count toward your OpenCode Go subscription allowance. Conditions such as time-of-day multipliers can change the effective rate; see pricing details."
-            : model.pricing?.source === "opencode-zen"
-              ? "These are OpenCode Zen base rates. Conditional pricing and other charges may apply; see pricing details."
-              : model.pricing?.source === "openrouter"
-                ? "These are OpenRouter base token prices. Provider routing, pricing overrides, and other charges can change the actual cost; see pricing details."
-                : model.pricing?.source === "chatjimmy-reference"
-                  ? "ChatJimmy is a free public demo provided by Taalas on custom HC1 silicon. Reference prices are $0.00."
-                  : null;
+  const pricingNote = (() => {
+    switch (model.pricing?.source) {
+      case "antigravity-reference":
+        return "These reference API prices come from the configured pricing datasheet and are informational only. They are not Antigravity charges; actual costs depend on your plan and any credit overages.";
+      case "claude-reference":
+        return "These are Anthropic API reference prices from the configured datasheet, not Claude subscription charges. Actual costs depend on your plan.";
+      case "codex-reference":
+        return "These are OpenAI API reference prices from the configured datasheet, not Codex subscription charges. Actual costs depend on your plan.";
+      case "opencode-go":
+        return "These base rates count toward your OpenCode Go subscription allowance. Conditions such as time-of-day multipliers can change the effective rate; see pricing details.";
+      case "opencode-zen":
+        return "These are OpenCode Zen base rates. Conditional pricing and other charges may apply; see pricing details.";
+      case "openrouter":
+        return "These are OpenRouter base token prices. Provider routing, pricing overrides, and other charges can change the actual cost; see pricing details.";
+      case "chatjimmy-reference":
+        return "ChatJimmy is a free public demo provided by Taalas on custom HC1 silicon. Reference prices are $0.00.";
+      default:
+        return null;
+    }
+  })();
   const capabilities = [
     ...(typeof model.reasoning === "boolean"
       ? [["Reasoning support", model.reasoning ? "Yes" : "No"]]
