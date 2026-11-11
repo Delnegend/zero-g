@@ -25,6 +25,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { formatDate, formatDateYMD } from "@/lib/date";
+import { Page } from "@/routes/__root";
 import { message } from "@/server/api/client";
 import {
   createKey,
@@ -85,7 +86,7 @@ function ExpirationStatus({
   const relative = [
     Math.floor(minutes / 1440) > 0 && `${Math.floor(minutes / 1440)}d`,
     Math.floor((minutes % 1440) / 60) > 0 &&
-      `${Math.floor((minutes % 1440) / 60)}h`,
+    `${Math.floor((minutes % 1440) / 60)}h`,
     minutes % 60 > 0 && `${minutes % 60}m`,
   ]
     .filter(Boolean)
@@ -496,12 +497,20 @@ export function KeysPage() {
     }
   }
   return (
-    <main className="mx-auto w-full max-w-7xl min-w-0 px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
-      <h1 className="text-3xl font-semibold tracking-tight">Virtual keys</h1>
-      <p className="mt-2 text-sm text-muted-foreground">
-        Create keys for inference access and restrict their providers and
-        models.
-      </p>
+    <Page
+      title="Virtual keys"
+      description="Create keys for inference access and restrict their providers and models."
+      actions={
+        <Button
+          onClick={() => {
+            setError("");
+            setCreateOpen(true);
+          }}
+        >
+          Create key
+        </Button>
+      }
+    >
       {success && !createOpen && (
         <p role="status" className="mt-5">
           {success}
@@ -523,15 +532,6 @@ export function KeysPage() {
           </AlertDescription>
         </Alert>
       )}
-      <Button
-        className="mt-6"
-        onClick={() => {
-          setError("");
-          setCreateOpen(true);
-        }}
-      >
-        Create key
-      </Button>
       <Dialog
         open={createOpen}
         onOpenChange={(open) => {
@@ -590,8 +590,8 @@ export function KeysPage() {
                 {catalogQuery.error
                   ? message(catalogQuery.error)
                   : catalogErrors
-                      .map((provider) => `${provider.id}: ${provider.error}`)
-                      .join(", ")}
+                    .map((provider) => `${provider.id}: ${provider.error}`)
+                    .join(", ")}
               </AlertDescription>
             </Alert>
           )}
@@ -775,6 +775,6 @@ export function KeysPage() {
         </DialogContent>
       </Dialog>
       <Toaster />
-    </main>
+    </Page>
   );
 }

@@ -26,9 +26,43 @@ import {
   useRouterState,
 } from "@tanstack/react-router";
 import { Activity, Boxes, KeyRound, Moon, Settings, Sun } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 export const Route = createRootRoute({ component: App });
+
+export function Page({
+  title,
+  description,
+  actions,
+  busy,
+  children,
+}: {
+  title: string;
+  description?: string;
+  actions?: ReactNode;
+  busy?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      aria-busy={busy}
+      className="mx-auto w-full max-w-7xl min-w-0 px-4 py-8 sm:px-6 lg:px-8 lg:py-12"
+    >
+      <header className="mb-8 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-semibold tracking-tight">{title}</h1>
+          {description && (
+            <p className="mt-2 text-sm text-muted-foreground">{description}</p>
+          )}
+        </div>
+        {actions && (
+          <div className="flex flex-wrap items-center gap-2">{actions}</div>
+        )}
+      </header>
+      {children}
+    </div>
+  );
+}
 
 function DashboardSidebar() {
   const path = useRouterState({ select: (state) => state.location.pathname });

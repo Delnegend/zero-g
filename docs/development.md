@@ -55,6 +55,7 @@ zero-g/
 │   ├── src/
 │   │   ├── routes/          # TanStack Router page layouts
 │   │   ├── components/      # Reusable UI widgets (shadcn, charts)
+│   │   ├── routes/__root.tsx # Shared page layout, title, and actions
 │   │   └── server/api/      # Generated fetch client and Zod schemas; separate query wrappers
 └── toasty/                  # Database migrations
 ```

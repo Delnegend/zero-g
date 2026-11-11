@@ -1,5 +1,6 @@
 import { CatalogSkeleton } from "@/components/Loading";
 import { RefreshButton } from "@/components/RefreshButton";
+import { Page } from "@/routes/__root";
 import { ScrollingText } from "@/components/ScrollingText";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card } from "@/components/ui/card";
@@ -58,8 +59,6 @@ export const Route = createFileRoute("/models/catalog")({
   component: ModelCatalogPage,
 });
 
-const pageClass =
-  "mx-auto w-full min-w-0 max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-12";
 const inputClass = "mt-1 w-full";
 
 const modalityIcons: Record<string, LucideIcon> = {
@@ -454,20 +453,17 @@ export function ModelCatalogPage() {
       );
   }, [catalog.data, providerFilter, search]);
   return (
-    <main className={pageClass}>
-      <style>{requestBodyTheme}</style>
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-semibold tracking-tight">Models</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Discover models available from your configured providers.
-          </p>
-        </div>
+    <Page
+      title="Models"
+      description="Discover models available from your configured providers."
+      actions={
         <RefreshButton
           loading={refresh.isPending}
           onClick={() => refresh.mutate()}
         />
-      </div>
+      }
+    >
+      <style>{requestBodyTheme}</style>
       {catalog.error && (
         <Alert variant="destructive" className="mt-5">
           <AlertDescription>{message(catalog.error)}</AlertDescription>
@@ -546,6 +542,6 @@ export function ModelCatalogPage() {
           </Fragment>
         ))}
       </div>
-    </main>
+    </Page>
   );
 }

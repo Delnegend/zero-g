@@ -8,6 +8,7 @@ import {
 import { DateRangePicker } from "@/components/DateRangePicker";
 import { ObservabilitySkeleton } from "@/components/ObservabilitySkeleton";
 import { RefreshButton } from "@/components/RefreshButton";
+import { Page } from "@/routes/__root";
 import {
   formatTokens,
   number,
@@ -181,17 +182,17 @@ export function ObservabilityPage({
       ]
     : [];
   return (
-    <main
-      aria-busy={loading}
-      className="mx-auto w-full max-w-7xl min-w-0 px-4 py-5 sm:px-6 lg:px-8"
-    >
-      <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold tracking-tight">Dashboard</h1>
-        <div className="flex flex-wrap items-center gap-2">
+    <Page
+      busy={loading}
+      title="Dashboard"
+      description="Overview of recorded LLM requests."
+      actions={
+        <>
           <DateRangePicker value={range} onChange={setRange} />
           <RefreshButton loading={loading} onClick={() => void refetch()} />
-        </div>
-      </header>
+        </>
+      }
+    >
       <ObservabilityError error={error} refetch={refetch} />
       <div className="flex min-w-0 flex-col gap-4 xl:flex-row xl:items-start">
         <ObservabilityFilters
@@ -247,6 +248,6 @@ export function ObservabilityPage({
           )}
         </div>
       </div>
-    </main>
+    </Page>
   );
 }

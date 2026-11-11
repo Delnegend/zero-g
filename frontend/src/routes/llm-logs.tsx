@@ -11,6 +11,7 @@ import {
   useObservability,
 } from "@/components/Observability";
 import { RefreshButton } from "@/components/RefreshButton";
+import { Page } from "@/routes/__root";
 import type { ObservabilityFilterValues } from "@/server/api/observability";
 
 export const Route = createFileRoute("/llm-logs")({
@@ -44,24 +45,14 @@ export function LlmLogsPage({
   const observability = useObservability(true, filters);
   const { data, loading, refetch, error } = observability;
   return (
-    <main
-      aria-busy={loading}
-      className="mx-auto w-full max-w-7xl min-w-0 px-4 py-8 sm:px-6 lg:px-8 lg:py-12"
+    <Page
+      busy={loading}
+      title="LLM Logs"
+      description="Search and inspect recorded LLM requests."
+      actions={
+        <RefreshButton loading={loading} onClick={() => void refetch()} />
+      }
     >
-      <header className="mb-8 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <p className="mb-2 text-xs font-semibold tracking-widest text-muted-foreground uppercase">
-            Zero-G
-          </p>
-          <h1 className="text-3xl font-semibold tracking-tight">LLM Logs</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Search and inspect recorded LLM requests.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <RefreshButton loading={loading} onClick={() => void refetch()} />
-        </div>
-      </header>
       <ObservabilityError error={error} refetch={refetch} />
       <div className="flex min-w-0 flex-col gap-4 xl:flex-row xl:items-start">
         <ObservabilityFilters
@@ -77,6 +68,6 @@ export function LlmLogsPage({
           {data?.summary && <RequestLogs {...observability} />}
         </div>
       </div>
-    </main>
+    </Page>
   );
 }

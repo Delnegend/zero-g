@@ -1,9 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import { ProvidersSkeleton } from "@/components/providers/ProviderSkeletons";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderForm } from "@/components/providers/ProviderForm";
+import { ProvidersSkeleton } from "@/components/providers/ProviderSkeletons";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,6 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Page } from "@/routes/__root";
 import { message } from "@/server/api/client";
 import {
   deleteProvider as deleteProviderRequest,
@@ -20,6 +18,9 @@ import {
   providersOptions,
   type Provider,
 } from "@/server/api/providers";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute } from "@tanstack/react-router";
+import { useState } from "react";
 
 export const Route = createFileRoute("/models/providers")({
   head: () => ({ meta: [{ title: "Providers · Zero-G" }] }),
@@ -76,11 +77,18 @@ export function ProvidersPage() {
   }
 
   return (
-    <main className="mx-auto w-full max-w-7xl min-w-0 px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
-      <h1 className="text-3xl font-semibold tracking-tight">Providers</h1>
-      <p className="mt-2 text-sm text-muted-foreground">
-        Configure providers and their weighted keys or sessions.
-      </p>
+    <Page
+      title="Providers"
+      description="Configure providers and their weighted keys or sessions."
+      actions={
+        <Button
+          disabled={!!editing || !providers.data || availableKinds.length === 0}
+          onClick={() => setEditing("new")}
+        >
+          Add provider
+        </Button>
+      }
+    >
       {providers.error && (
         <Alert variant="destructive" className="mt-5">
           <AlertDescription>{message(providers.error)}</AlertDescription>
@@ -93,13 +101,6 @@ export function ProvidersPage() {
           </AlertDescription>
         </Alert>
       )}
-      <Button
-        className="mt-6"
-        disabled={!!editing || !providers.data || availableKinds.length === 0}
-        onClick={() => setEditing("new")}
-      >
-        Add provider
-      </Button>
       {editing && (
         <ProviderForm
           key={editing === "new" ? "new" : editing.id}
@@ -174,6 +175,6 @@ export function ProvidersPage() {
           </DialogContent>
         </Dialog>
       )}
-    </main>
+    </Page>
   );
 }

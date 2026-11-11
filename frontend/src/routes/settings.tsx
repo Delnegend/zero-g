@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { message } from "@/server/api/client";
 import { FormSkeleton } from "@/components/Loading";
+import { Page } from "@/routes/__root";
 import {
   settingsOptions,
   updateSettings,
@@ -125,11 +126,10 @@ export function SettingsPage() {
   }
 
   return (
-    <main className="mx-auto w-full max-w-7xl min-w-0 px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
-      <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
-      <p className="mt-2 text-sm text-muted-foreground">
-        Configure the gateway. Some changes may require a restart.
-      </p>
+    <Page
+      title="Settings"
+      description="Configure the gateway. Some changes may require a restart."
+    >
       {displayError && (
         <Alert variant="destructive" className="mt-5">
           <AlertDescription>{displayError}</AlertDescription>
@@ -237,6 +237,6 @@ export function SettingsPage() {
           </div>
         </form>
       )}
-    </main>
+    </Page>
   );
 }
