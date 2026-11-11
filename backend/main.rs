@@ -99,7 +99,7 @@ async fn main() -> ExitCode {
 
 /// Opens settings and request logs and applies the configured retention.
 async fn open_stores() -> Result<(SettingsStore, LogStore), String> {
-    let path = std::env::var("ZERO_G_LOG_DB").unwrap_or_else(|_| "zero-g-logs.db".into());
+    let path = std::env::var("ZERO_G_LOG_DB").unwrap_or_else(|_| "zero-g.db".into());
     let key = std::env::var("ZERO_G_ENCRYPTION_KEY")
         .map_err(|_| "ZERO_G_ENCRYPTION_KEY is required".to_string())?;
     let database = Database::open(&path).await?;

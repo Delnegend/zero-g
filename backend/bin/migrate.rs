@@ -6,7 +6,7 @@ mod storage;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = toasty_cli::Config::load()?;
-    let path = std::env::var("ZERO_G_LOG_DB").unwrap_or_else(|_| "zero-g-logs.db".into());
+    let path = std::env::var("ZERO_G_LOG_DB").unwrap_or_else(|_| "zero-g.db".into());
     let db = toasty::Db::builder()
         .models(toasty::models!(
             storage::RequestLog,

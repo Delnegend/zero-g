@@ -6,4 +6,4 @@
 node_modules
 /frontend/dist
 .bun
-/zero-g-logs.db*
+/zero-g.db*

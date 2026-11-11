@@ -18,7 +18,7 @@ if (key.length !== 32 || key.toString("base64") !== encodedKey) {
   throw new Error("ZERO_G_ENCRYPTION_KEY must be base64-encoded 32 bytes");
 }
 
-const path = process.env.ZERO_G_LOG_DB ?? "zero-g-logs.db";
+const path = process.env.ZERO_G_LOG_DB ?? "zero-g.db";
 if (!path || path === ":memory:") {
   throw new Error("ZERO_G_LOG_DB must be a file-backed database");
 }

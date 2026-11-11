@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { connect } from "@tursodatabase/database";
 
-const path = process.env.ZERO_G_LOG_DB ?? "zero-g-logs.db";
+const path = process.env.ZERO_G_LOG_DB ?? "zero-g.db";
 if (
   path === ":memory:" ||
   !(await stat(path).then(

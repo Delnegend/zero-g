@@ -10,7 +10,7 @@ Configure Zero-G using environment variables or a `.env` file in the working dir
 |---|---|---|---|
 | `ZERO_G_ENCRYPTION_KEY` | _None_ | **Yes** | 32-byte Base64 secret key (`openssl rand -base64 32`) for encrypting stored credentials. |
 | `ZERO_G_BIND` | `127.0.0.1:8080` | No | Listening address and port. |
-| `ZERO_G_LOG_DB` | `zero-g-logs.db` | No | Path to Turso/SQLite database (container default: `/app/data/zero-g-logs.db`). |
+| `ZERO_G_LOG_DB` | `zero-g.db` | No | Path to Turso/SQLite database (container default: `/app/data/zero-g.db`). |
 | `ZERO_G_DASHBOARD_AUTH` | _None_ | **Yes** | Authentication mode for dashboard: `basic` or `oidc`. |
 | `ZERO_G_DASHBOARD_ORIGIN` | _None_ | **Yes** | Public dashboard URL (e.g. `https://zero-g.example.com` or `http://127.0.0.1:8080`). Used for CSRF checks and OAuth callbacks. |
 

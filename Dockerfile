@@ -35,7 +35,7 @@ WORKDIR /app
 COPY --from=builder /app/target/release/zero-g /usr/local/bin/zero-g
 COPY --from=builder --chown=65532:65532 /app/data /app/data
 
-ENV ZERO_G_LOG_DB=/app/data/zero-g-logs.db
+ENV ZERO_G_LOG_DB=/app/data/zero-g.db
 
 EXPOSE 8080
 USER nonroot:nonroot

@@ -11,7 +11,7 @@ flowchart LR
     Browser[Dashboard Admin] -->|Port 8080| Proxy[Reverse Proxy / Host Loopback]
     Client[AI Gateway / SDK] -->|Port 8080| Proxy
     Proxy -->|127.0.0.1:8080| Container[Zero-G Container]
-    Container --> Volume[(zero-g-data volume\n/app/data/zero-g-logs.db)]
+    Container --> Volume[(zero-g-data volume\n/app/data/zero-g.db)]
 ```
 
 ### 1. Configuration Setup
@@ -46,7 +46,7 @@ services:
       - "127.0.0.1:8080:8080"
     environment:
       - ZERO_G_BIND=0.0.0.0:8080
-      - ZERO_G_LOG_DB=/app/data/zero-g-logs.db
+      - ZERO_G_LOG_DB=/app/data/zero-g.db
     env_file:
       - .env
     volumes:
@@ -86,7 +86,7 @@ flowchart TD
 | Task | Action | Command |
 |---|---|---|
 | **1. Stop container** | Prevent write operations | `docker compose stop zero-g` |
-| **2. Backup database** | Copy SQLite database and journal | `docker run --rm -v zero-g_zero-g-data:/data -v $(pwd):/backup alpine cp /data/zero-g-logs.db /backup/` |
+| **2. Backup database** | Copy SQLite database and journal | `docker run --rm -v zero-g_zero-g-data:/data -v $(pwd):/backup alpine cp /data/zero-g.db /backup/` |
 | **3. Backup key** | Confirm `.env` key is preserved | `cat .env \| grep ZERO_G_ENCRYPTION_KEY` |
 | **4. Pull & Restart** | Run new version | `docker compose pull && docker compose up -d` |
 | **5. Verify status** | Confirm health and auth | `curl -f http://127.0.0.1:8080/health` |
@@ -97,6 +97,6 @@ flowchart TD
 
 | Item | What to Backup | Why it's Critical |
 |---|---|---|
-| **Database File** | `/app/data/zero-g-logs.db` (+ any `-wal` / `-shm` sidecars) | Contains credentials, provider definitions, virtual keys, and request telemetry. |
+| **Database File** | `/app/data/zero-g.db` (+ any `-wal` / `-shm` sidecars) | Contains credentials, provider definitions, virtual keys, and request telemetry. |
 | **Encryption Key** | `ZERO_G_ENCRYPTION_KEY` | Without this key, existing stored credentials and secrets **cannot be decrypted**. |
 | **Dashboard Password / OIDC Config** | `.env` file | Needed for dashboard administrative access. |
