@@ -130,19 +130,6 @@ async fn fetch(client: &reqwest::Client, base: &str, token: &str) -> Result<Vec<
             model.id = id.to_string();
             model.object = Some("model".into());
             model.owned_by = Some("anthropic".into());
-            if model.context_window.is_none() {
-                model.context_window = Some(200_000);
-            }
-            if model.max_output_tokens.is_none() {
-                model.max_output_tokens = Some(if id.contains("3-5") || id.contains("3-7") {
-                    8192
-                } else {
-                    4096
-                });
-            }
-            if model.reasoning.is_none() {
-                model.reasoning = Some(id.contains("3-7"));
-            }
             models.push(model);
         }
         if !value
@@ -298,5 +285,8 @@ mod tests {
             models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
             vec!["first", "second"]
         );
+        assert!(models.iter().all(|model| model.context_window.is_none()
+            && model.max_output_tokens.is_none()
+            && model.reasoning.is_none()));
     }
 }

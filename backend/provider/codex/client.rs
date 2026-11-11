@@ -1635,6 +1635,44 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn reasoning_effort_reaches_upstream_and_default_stays_unspecified() {
+        let (client, mut requests) = fake_client("data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}\n\n").await;
+        for effort in [
+            Some("low"),
+            Some("medium"),
+            Some("high"),
+            Some("xhigh"),
+            Some("unsupported-fixture"),
+            None,
+        ] {
+            let mut request = chat_request();
+            request.reasoning_effort = effort.map(str::to_owned);
+            client
+                .complete_chat_non_streaming(&credentials(), &request, "scoped")
+                .await
+                .unwrap();
+            let (_, payload) = requests.recv().await.unwrap();
+            assert_eq!(
+                payload["reasoning"].get("effort").and_then(Value::as_str),
+                effort
+            );
+            let response: ResponseCreateRequest = serde_json::from_value(serde_json::json!({
+                "model":"test", "input":"hello", "reasoning":{"effort":effort}
+            }))
+            .unwrap();
+            client
+                .complete_responses_non_streaming(&credentials(), &response, "scoped")
+                .await
+                .unwrap();
+            let (_, payload) = requests.recv().await.unwrap();
+            assert_eq!(
+                payload["reasoning"].get("effort").and_then(Value::as_str),
+                effort
+            );
+        }
+    }
+
     /// Tool arguments and matching results survive a complete upstream round trip.
     #[tokio::test]
     async fn tool_calls_round_trip_without_changing_arguments() {

@@ -151,6 +151,9 @@ async fn discover_models() -> Result<Vec<Model>, String> {
         if model.reasoning.is_none() {
             model.reasoning = Some(false);
         }
+        model.input_modalities = Some(vec!["text".to_owned()]);
+        model.output_modalities = Some(vec!["text".to_owned()]);
+        model.supports_tools = Some(false);
     }
     Ok(models)
 }
@@ -167,6 +170,9 @@ fn fallback_models() -> Vec<Model> {
         context_window: Some(6064),
         max_output_tokens: Some(2048),
         reasoning: Some(false),
+        input_modalities: Some(vec!["text".to_owned()]),
+        output_modalities: Some(vec!["text".to_owned()]),
+        supports_tools: Some(false),
         ..Default::default()
     }]
 }
@@ -412,6 +418,27 @@ async fn chat_handler(
                 .into_response();
         }
     };
+    if req.tools.as_ref().is_some_and(|tools| !tools.is_empty())
+        || req
+            .tool_choice
+            .as_ref()
+            .is_some_and(|choice| !choice.is_null() && choice != "none")
+        || req.messages.iter().any(|message| {
+            message.role == "tool"
+                || message
+                    .tool_calls
+                    .as_ref()
+                    .is_some_and(|calls| !calls.is_empty())
+        })
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "ChatJimmy does not support tool calls",
+            "invalid_request_error",
+            "unsupported_tools",
+        )
+        .into_response();
+    }
 
     let mut system_prompts = Vec::new();
     let mut chat_messages = Vec::new();
@@ -611,6 +638,43 @@ async fn chat_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn tool_request_is_rejected_before_upstream() {
+        let database = crate::database::Database::open(":memory:").await.unwrap();
+        let settings = SettingsStore::new(
+            database.clone(),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )
+        .await
+        .unwrap();
+        let state = AppState {
+            providers: crate::provider::Providers::new(),
+            settings,
+            logs: crate::server::observability::LogStore::new(database),
+            dashboard_auth: crate::server::dashboard_auth_config::test_auth().await,
+        };
+        let provider = registry::Provider {
+            id: "chatjimmy".into(),
+            name: "ChatJimmy".into(),
+            kind: "chatjimmy".into(),
+            base_url: String::new(),
+            keyless: true,
+        };
+        let body = Bytes::from(serde_json::json!({"model":"test", "messages":[{"role":"user","content":"hi"}], "tools":[{"type":"function","function":{"name":"lookup"}}]}).to_string());
+        let response = chat_handler(
+            State(state),
+            Extension(Permissions {
+                providers: vec![],
+                models: vec![],
+            }),
+            Extension(provider),
+            None,
+            body,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
 
     #[test]
     fn parse_upstream_with_stats() {

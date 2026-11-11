@@ -756,6 +756,29 @@ mod tests {
     }
 
     #[test]
+    fn reasoning_effort_precedence_is_identical_for_both_apis() {
+        let chat: ChatCompletionRequest = serde_json::from_value(json!({
+            "model":"fixture", "messages":[{"role":"user", "content":"hello"}],
+            "reasoning_effort":"high", "reasoning":{"effort":"low", "summary":"detailed"}
+        }))
+        .unwrap();
+        let responses: ResponseCreateRequest = serde_json::from_value(json!({
+            "model":"fixture", "input":"hello",
+            "reasoning_effort":"high", "reasoning":{"effort":"low", "summary":"detailed"}
+        }))
+        .unwrap();
+        for payload in [
+            build_codex_payload_from_chat(&chat),
+            build_codex_payload_from_responses(&responses),
+        ] {
+            assert_eq!(
+                payload["reasoning"],
+                json!({"effort":"high", "summary":"detailed"})
+            );
+        }
+    }
+
+    #[test]
     fn test_responses_function_call_arguments_are_strings() {
         let req: ResponseCreateRequest = serde_json::from_value(json!({
             "model": "gpt-6.1-terra",

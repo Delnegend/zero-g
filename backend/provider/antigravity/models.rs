@@ -52,7 +52,7 @@ pub(crate) fn input_modalities(extra: &serde_json::Map<String, Value>) -> Vec<St
                 continue;
             }
             image_mime |= mime.starts_with("image/");
-            audio |= mime.starts_with("audio/");
+            audio |= mime == "audio/wav" || mime == "audio/mpeg";
             video_mime |= mime.starts_with("video/")
                 && !mime.starts_with("video/videoframe/")
                 && !mime.starts_with("video/audio/")
@@ -186,6 +186,49 @@ impl ModelFamily {
         let mut entry =
             crate::provider::antigravity::routes::to_model_entry(self.id.clone(), (*info).clone());
         if self.grouped {
+            // An effort can select any permitted variant, so only expose limits
+            // and capabilities that remain valid for every selectable route.
+            for (id, variant) in &available {
+                if id == &self.id
+                    && self.resolve(None, permissions).ok().as_deref() != Some(id.as_str())
+                {
+                    continue;
+                }
+                let other = crate::provider::antigravity::routes::to_model_entry(
+                    id.clone(),
+                    variant.clone(),
+                );
+                entry.context_window = entry
+                    .context_window
+                    .zip(other.context_window)
+                    .map(|(a, b)| a.min(b));
+                entry.max_output_tokens = entry
+                    .max_output_tokens
+                    .zip(other.max_output_tokens)
+                    .map(|(a, b)| a.min(b));
+                entry.input_modalities =
+                    entry
+                        .input_modalities
+                        .zip(other.input_modalities)
+                        .map(|(mut a, b)| {
+                            a.retain(|modality| b.contains(modality));
+                            a
+                        });
+                entry.output_modalities =
+                    entry
+                        .output_modalities
+                        .zip(other.output_modalities)
+                        .map(|(mut a, b)| {
+                            a.retain(|modality| b.contains(modality));
+                            a
+                        });
+                if entry.reasoning != other.reasoning {
+                    entry.reasoning = None;
+                }
+                if entry.supports_tools != other.supports_tools {
+                    entry.supports_tools = None;
+                }
+            }
             for name in [&mut entry.name, &mut entry.display_name] {
                 if let Some(value) = name
                     && let Some(base) = [" (Low)", " (Medium)", " (High)"]
@@ -195,7 +238,6 @@ impl ModelFamily {
                     *value = base.to_owned();
                 }
             }
-            entry.reasoning = Some(true);
             entry.supported_reasoning_efforts = Some(efforts);
             entry.default_reasoning_effort =
                 tier(&self.resolve(None, permissions).ok()?).map(|(_, e)| e.to_owned());

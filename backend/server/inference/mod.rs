@@ -172,7 +172,7 @@ mod tests {
     async fn upstream(requests: Arc<AtomicUsize>) -> (String, tokio::task::JoinHandle<()>) {
         let app = Router::new()
             .route("/v1/models", get(|| async {
-                Json(json!({"data":[{"id":"same","object":"model","provider_metadata":{"nested":42}},{"id":"org/nested","object":"model"},{"id":"denied","object":"model"}]}))
+                Json(json!({"data":[{"id":"same","object":"model","supports_tools":true,"provider_metadata":{"nested":42}},{"id":"org/nested","object":"model","supports_tools":false,"input_modalities":["text","image"]},{"id":"denied","object":"model"}]}))
             }))
             .route("/v1/chat/completions", post(|Json(body): Json<Value>| async move {
                 if body["stream"] == true {
@@ -319,6 +319,7 @@ mod tests {
             .find(|model| model["id"] == "first/same")
             .unwrap();
         assert_eq!(first["provider_metadata"]["nested"], 42);
+        assert_eq!(first["supports_tools"], true);
         let models = json_body(
             send("GET", "/v1/models", restricted, Value::Null)
                 .await
@@ -327,6 +328,12 @@ mod tests {
         .await;
         assert_eq!(models["data"].as_array().unwrap().len(), 1);
         assert_eq!(models["data"][0]["id"], "first/org/nested");
+        assert_eq!(models["data"][0]["supports_tools"], false);
+        assert_eq!(
+            models["data"][0]["input_modalities"],
+            json!(["text", "image"])
+        );
+        assert!(models["data"][0].get("output_modalities").is_none());
         for path in ["/v1/chat/completions", "/v1/responses"] {
             let response = send(
                 "POST",

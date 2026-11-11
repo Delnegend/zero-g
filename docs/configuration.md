@@ -41,7 +41,7 @@ flowchart TD
 
 | Variable | Required | Description |
 |---|---|---|
-| `ZERO_G_OIDC_ISSUER` | **Yes** | OpenID Connect discovery URL. |
+| `ZERO_G_OIDC_ISSUER` | **Yes** | OpenID Connect issuer URL. |
 | `ZERO_G_OIDC_CLIENT_ID` | **Yes** | OIDC Client ID. |
 | `ZERO_G_OIDC_CLIENT_SECRET` | **Yes** | OIDC Client Secret. |
 | `ZERO_G_OIDC_REDIRECT_URL` | **Yes** | Exact redirect URL (`${ZERO_G_DASHBOARD_ORIGIN}/auth/callback`). |
@@ -59,12 +59,12 @@ Built-in provider cards show their name without a separate type label. Custom Op
 
 | Provider | Type | ID | Auth Mechanism | Setup / Credentials |
 |---|---|---|---|---|
-| **Antigravity** | Translation | `agy` | Google OAuth (OAuth Device / Web) | Google sign-in; supports remote callback URL paste. |
-| **Codex** | Translation | `codex` | OpenAI Device Code | Device authorization code on `auth0.openai.com`. |
+| **Antigravity** | Translation | `agy` | Google OAuth authorization code / PKCE | Browser sign-in with local callback or pasted callback URL. |
+| **Codex** | Translation | `codex` | OpenAI Device Code | Device authorization at `auth.openai.com/codex/device`. |
 | **Claude Code** | Translation | `claude` | Anthropic OAuth Flow | Paste returned authorization URL/code. |
-| **Cursor** | Translation | `cursor` | Built-in Client | Undocumented agent protocol. |
-| **Grok** | Translation | `grok` | xAI Device Flow | OAuth at `api.x.ai`. |
-| **Grok Build** | Translation | `grok-build` | CLI Proxy | Device code authorization via Grok CLI proxy. |
+| **Cursor** | Translation | `cursor` | OAuth browser login | Sign in through the browser; Zero-G polls for completion. |
+| **Grok** | Translation | `grok` | xAI Device Flow | Device authorization at `auth.x.ai`. |
+| **Grok Build** | Translation | `grok-build` | xAI Device Flow | Device authorization at `auth.x.ai`. |
 | **OpenCode Zen** | Passthrough | `zen` | API Key / Keyless | Keyless upstream supported. Balance check requires console session cookie. |
 | **OpenCode Go** | Passthrough | `go` | API Key | Subscription API key. |
 | **OpenRouter** | Passthrough | `openrouter` | API Key | Standard API key. Account credits check requires a Management Key. |
@@ -75,24 +75,11 @@ Built-in provider cards show their name without a separate type label. Custom Op
 
 ## Credential Pool & Failover Logic
 
-```mermaid
-stateDiagram-v2
-    [*] --> Healthy: Credential Added & Connected
-    Healthy --> InUse: Request Dispatched (Weighted Selection)
-    InUse --> Healthy: Success (200 OK)
-    InUse --> RateLimited: HTTP 429 received
-    InUse --> AuthFailed: HTTP 401 / 403 received
-    
-    RateLimited --> TryNext: Failover to next credential in pool
-    AuthFailed --> TryNext: Failover to next credential in pool
-    
-    TryNext --> InUse: Alternate credential selected
-    TryNext --> Exhausted: No healthy credentials left
-    Exhausted --> [*]: Return error to client
-```
-
-- **Weighted Routing**: Higher weight values receive proportionally more requests (weight 3 = ~3x traffic of weight 1).
-- **Failover Window**: Zero-G only fails over to alternative credentials if the upstream error occurs **before** streaming chunks are emitted.
+Enabled, connected credentials are selected in weighted order without replacement
+for each request. The initial selection is proportional to weight: weight 3 is
+about three times as likely as weight 1. An upstream 401, 403 or 429 before
+streaming causes the next candidate to be tried. Keyless providers bypass the
+credential pool; failover changes the eventual traffic distribution.
 
 ---
 
@@ -104,9 +91,9 @@ Clients authenticate with inference endpoints via `Authorization: Bearer <virtua
 |---|---|
 | **Model Namespacing** | Requests use `<provider-id>/<upstream-model-id>` (e.g. `agy/claude-sonnet-4`). |
 | **Scoped Permissions** | Virtual keys can be restricted to specific provider IDs, models, or expiration dates. |
-| **Session Affinity** | Forward headers (`session_id`, `x-session-id`, `x-opencode-session`) to retain session continuity. |
-| **Storage & Export** | Hashes stored in DB. Keys cannot be read back once generated. |
-| **Exporting Credentials** | Use CLI script `bun run scripts/export-credentials.ts ~/credentials.json` (requires zero-g stopped). |
+| **Session Identity** | `session_id`, `x-session-id`, or `x-opencode-session` derives an upstream session identity scoped to the virtual key and provider; it does not pin a credential. |
+| **Storage** | Virtual-key hashes are stored in the database. Keys cannot be read back once generated. |
+| **Exporting Credentials** | `bun run scripts/export-credentials.ts ~/credentials.json` writes decrypted provider secrets to a new file. Set `ZERO_G_ENCRYPTION_KEY` and, for a non-default database, `ZERO_G_LOG_DB`; protect the output. Virtual keys cannot be recovered this way. |
 
 ---
 
@@ -114,7 +101,7 @@ Clients authenticate with inference endpoints via `Authorization: Bearer <virtua
 
 | Limit | Value | Action on Breach |
 |---|---|---|
-| **Max Request Size** | 20,000,000 bytes (~20 MB) | HTTP 413 Payload Too Large |
+| **Unified inference request size** | 20,000,000 bytes (~20 MB) | HTTP 413 Payload Too Large |
 | **Response Log Truncation** | 256 KiB | Logged body truncated; client stream unimpacted |
 | **Max Pending OIDC Logins** | 1,024 concurrent | HTTP 503 Service Unavailable |
 | **Default Log Retention** | 30 days (range: 1–36,500) | Old records pruned automatically |

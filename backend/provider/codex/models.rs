@@ -54,9 +54,28 @@ struct CodexReasoningLevel {
 /// Extract modalities explicitly advertised by Codex.
 pub(crate) fn catalog_info(model: &Model) -> crate::provider::common::catalog::CatalogInfo {
     crate::provider::common::catalog::CatalogInfo {
-        input_modalities: modalities(model.extra.get("input_modalities")),
+        input_modalities: model
+            .input_modalities
+            .clone()
+            .or_else(|| modalities(model.extra.get("input_modalities"))),
         ..Default::default()
     }
+}
+
+/// Normalize capabilities implemented by the translated Codex route.
+pub(crate) fn public_capabilities(model: &mut Model) {
+    model.input_modalities = catalog_info(model).input_modalities.map(|modalities| {
+        modalities
+            .into_iter()
+            .filter(|m| m == "text" || m == "image")
+            .collect()
+    });
+    model.output_modalities = Some(vec!["text".to_owned()]);
+    // Translation supports function tools, but model support must be explicit.
+    model.supports_tools = model
+        .supports_tools
+        .or_else(|| model.extra.get("supports_tools").and_then(Value::as_bool));
+    model.extra.remove("supports_tools");
 }
 
 /// Extract modalities from the matching `OpenAI` API reference record.
@@ -165,6 +184,7 @@ async fn fetch_models(creds: &CodexCredentials) -> Result<ModelListResponse, Ups
             "supported_reasoning_efforts",
             "context_window",
             "max_output_tokens",
+            "output_modalities",
         ] {
             extra.remove(key);
         }
@@ -209,12 +229,57 @@ async fn fetch_models(creds: &CodexCredentials) -> Result<ModelListResponse, Ups
             supported_reasoning_efforts: supported_efforts,
             context_window: entry.context_window,
             max_output_tokens: None,
+            input_modalities: None,
+            output_modalities: None,
+            supports_tools: None,
             extra,
         };
+        let mut model = model;
+        // The upstream does not publish an output cap and this translator does
+        // not pass client output-limit parameters upstream. Keep it absent.
+        public_capabilities(&mut model);
+        model.extra.remove("input_modalities");
         models.push(model);
     }
     Ok(ModelListResponse {
         object: "list".to_string(),
         data: models,
     })
+}
+
+#[cfg(test)]
+mod public_capability_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn codex_capabilities_keep_unknown_input_and_output_limit() {
+        let mut unknown = Model {
+            id: "fixture".into(),
+            ..Default::default()
+        };
+        public_capabilities(&mut unknown);
+        let value = serde_json::to_value(&unknown).unwrap();
+        assert!(value.get("input_modalities").is_none());
+        assert!(value.get("max_output_tokens").is_none());
+        assert_eq!(value.get("supports_tools"), None);
+        let mut known: Model = serde_json::from_value(
+            json!({"id":"fixture", "input_modalities":["text","image","video"]}),
+        )
+        .unwrap();
+        public_capabilities(&mut known);
+        assert_eq!(
+            known.input_modalities,
+            Some(vec!["text".into(), "image".into()])
+        );
+        for supported in [true, false] {
+            let mut model = Model {
+                id: "fixture".into(),
+                extra: serde_json::Map::from_iter([("supports_tools".into(), json!(supported))]),
+                ..Default::default()
+            };
+            public_capabilities(&mut model);
+            assert_eq!(model.supports_tools, Some(supported));
+        }
+    }
 }

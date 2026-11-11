@@ -169,6 +169,10 @@ export const Model = zod
       .nullish()
       .describe("Optional human-readable display name."),
     id: zod.string().describe("Model identifier used in requests."),
+    input_modalities: zod
+      .array(zod.string())
+      .nullish()
+      .describe("Accepted input types exposed through this route."),
     max_output_tokens: zod
       .int()
       .min(modelMaxOutputTokensMin)
@@ -176,6 +180,10 @@ export const Model = zod
       .describe("Maximum output size in tokens."),
     name: zod.string().nullish().describe("Optional model name."),
     object: zod.string().nullish().describe("Wire object type."),
+    output_modalities: zod
+      .array(zod.string())
+      .nullish()
+      .describe("Output types returned through this route."),
     owned_by: zod.string().nullish().describe("Model owner identifier."),
     reasoning: zod
       .boolean()
@@ -185,6 +193,12 @@ export const Model = zod
       .array(zod.string())
       .nullish()
       .describe("Supported reasoning effort values."),
+    supports_tools: zod
+      .boolean()
+      .nullish()
+      .describe(
+        "Whether OpenAI-compatible tool calls work through this route.",
+      ),
   })
   .catchall(
     zod
@@ -245,6 +259,10 @@ export const CatalogModel = zod
           .nullish()
           .describe("Optional human-readable display name."),
         id: zod.string().describe("Model identifier used in requests."),
+        input_modalities: zod
+          .array(zod.string())
+          .nullish()
+          .describe("Accepted input types exposed through this route."),
         max_output_tokens: zod
           .int()
           .min(catalogModelModelMaxOutputTokensMin)
@@ -252,6 +270,10 @@ export const CatalogModel = zod
           .describe("Maximum output size in tokens."),
         name: zod.string().nullish().describe("Optional model name."),
         object: zod.string().nullish().describe("Wire object type."),
+        output_modalities: zod
+          .array(zod.string())
+          .nullish()
+          .describe("Output types returned through this route."),
         owned_by: zod.string().nullish().describe("Model owner identifier."),
         reasoning: zod
           .boolean()
@@ -261,6 +283,12 @@ export const CatalogModel = zod
           .array(zod.string())
           .nullish()
           .describe("Supported reasoning effort values."),
+        supports_tools: zod
+          .boolean()
+          .nullish()
+          .describe(
+            "Whether OpenAI-compatible tool calls work through this route.",
+          ),
       })
       .catchall(
         zod
@@ -356,6 +384,10 @@ export const CatalogProvider = zod
                   .nullish()
                   .describe("Optional human-readable display name."),
                 id: zod.string().describe("Model identifier used in requests."),
+                input_modalities: zod
+                  .array(zod.string())
+                  .nullish()
+                  .describe("Accepted input types exposed through this route."),
                 max_output_tokens: zod
                   .int()
                   .min(catalogProviderModelsItemModelMaxOutputTokensMin)
@@ -363,6 +395,10 @@ export const CatalogProvider = zod
                   .describe("Maximum output size in tokens."),
                 name: zod.string().nullish().describe("Optional model name."),
                 object: zod.string().nullish().describe("Wire object type."),
+                output_modalities: zod
+                  .array(zod.string())
+                  .nullish()
+                  .describe("Output types returned through this route."),
                 owned_by: zod
                   .string()
                   .nullish()
@@ -375,6 +411,12 @@ export const CatalogProvider = zod
                   .array(zod.string())
                   .nullish()
                   .describe("Supported reasoning effort values."),
+                supports_tools: zod
+                  .boolean()
+                  .nullish()
+                  .describe(
+                    "Whether OpenAI-compatible tool calls work through this route.",
+                  ),
               })
               .catchall(
                 zod
@@ -868,6 +910,10 @@ export const InferenceModelList = zod
               .nullish()
               .describe("Optional human-readable display name."),
             id: zod.string().describe("Model identifier used in requests."),
+            input_modalities: zod
+              .array(zod.string())
+              .nullish()
+              .describe("Accepted input types exposed through this route."),
             max_output_tokens: zod
               .int()
               .min(inferenceModelListDataItemMaxOutputTokensMin)
@@ -875,6 +921,10 @@ export const InferenceModelList = zod
               .describe("Maximum output size in tokens."),
             name: zod.string().nullish().describe("Optional model name."),
             object: zod.string().nullish().describe("Wire object type."),
+            output_modalities: zod
+              .array(zod.string())
+              .nullish()
+              .describe("Output types returned through this route."),
             owned_by: zod
               .string()
               .nullish()
@@ -887,6 +937,12 @@ export const InferenceModelList = zod
               .array(zod.string())
               .nullish()
               .describe("Supported reasoning effort values."),
+            supports_tools: zod
+              .boolean()
+              .nullish()
+              .describe(
+                "Whether OpenAI-compatible tool calls work through this route.",
+              ),
           })
           .catchall(
             zod
@@ -1118,6 +1174,12 @@ export const ModelCatalog = zod
                         id: zod
                           .string()
                           .describe("Model identifier used in requests."),
+                        input_modalities: zod
+                          .array(zod.string())
+                          .nullish()
+                          .describe(
+                            "Accepted input types exposed through this route.",
+                          ),
                         max_output_tokens: zod
                           .int()
                           .min(
@@ -1133,6 +1195,12 @@ export const ModelCatalog = zod
                           .string()
                           .nullish()
                           .describe("Wire object type."),
+                        output_modalities: zod
+                          .array(zod.string())
+                          .nullish()
+                          .describe(
+                            "Output types returned through this route.",
+                          ),
                         owned_by: zod
                           .string()
                           .nullish()
@@ -1145,6 +1213,12 @@ export const ModelCatalog = zod
                           .array(zod.string())
                           .nullish()
                           .describe("Supported reasoning effort values."),
+                        supports_tools: zod
+                          .boolean()
+                          .nullish()
+                          .describe(
+                            "Whether OpenAI-compatible tool calls work through this route.",
+                          ),
                       })
                       .catchall(
                         zod

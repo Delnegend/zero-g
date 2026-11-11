@@ -8,6 +8,9 @@
 | **Bun** | 1.4.4 | Frontend package manager and task execution. |
 | **just** | Latest | Task runner for builds, tests, checks, and code generation. |
 
+Copy `.env.example` to `.env` and set `ZERO_G_ENCRYPTION_KEY` and the dashboard
+authentication settings before starting the backend.
+
 ---
 
 ## Quick Start & Daily Workflow
@@ -25,12 +28,12 @@ flowchart LR
 
 | Command | Action | Notes |
 |---|---|---|
-| `just dev` | Start backend & frontend with HMR | Vite proxies `/api` to backend. Accessible at `http://127.0.0.1:5173`. |
+| `just dev` | Start backend and frontend | Builds the frontend first, then runs the backend with `cargo run` and Vite with frontend HMR. Vite proxies `/api` to the backend at `http://127.0.0.1:5173`. |
 | `just check` | Single CI gate check | Formats, lints, frontend tests, Rust test suite, OpenAPI checks. |
 | `just test` | Run all test suites | Unit and integration tests for Rust and frontend. |
-| `just fmt` | Format code | Runs `cargo fmt` and `bun run prettier/biome`. |
+| `just lint` | Lint and format code | Runs Oxlint, `cargo fmt` and `bun fmt`. |
 | `just build` | Compile release binary | Builds frontend assets and embeds them into `target/release/zero-g`. |
-| `just seed` | Populate mock data | Appends 140 synthetic requests and test keys to development DB. |
+| `just seed` | Populate mock data | Adds example providers, keys and logs to an initialized development database; stop the server first. |
 | `just api-generate` | Sync frontend API clients | Regenerates Orval clients from OpenAPI spec. |
 
 ---
@@ -52,7 +55,7 @@ zero-g/
 │   ├── src/
 │   │   ├── routes/          # TanStack Router page layouts
 │   │   ├── components/      # Reusable UI widgets (shadcn, charts)
-│   │   └── server/api/      # Orval-generated query hooks & schemas
+│   │   └── server/api/      # Generated fetch client and Zod schemas; separate query wrappers
 └── toasty/                  # Database migrations
 ```
 
@@ -72,7 +75,7 @@ sequenceDiagram
     Note over Dev,DB: When modifying API contracts:
     Dev->>Rust: Update Request/Response Structs
     Dev->>Spec: just api-generate
-    Spec->>Client: Generate Zod schemas & React query hooks
+    Spec->>Client: Generate fetch client and Zod schemas
     Dev->>Client: Commit generated files in frontend/src/server/api/generated/
 
     Note over Dev,DB: When modifying DB models:

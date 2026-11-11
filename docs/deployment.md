@@ -54,6 +54,7 @@ services:
 
 volumes:
   zero-g-data:
+    name: zero-g-data
 ```
 
 ### 3. Startup & Health Verification
@@ -61,8 +62,8 @@ volumes:
 | Step | Command | Expected Output |
 |---|---|---|
 | **Start Service** | `docker compose up -d` | Container starts in background |
-| **Check Health** | `curl -f http://127.0.0.1:8080/health` | `HTTP 200 OK` |
-| **Inspect Logs** | `docker compose logs -f zero-g` | Migration status and listening banner |
+| **Check Health** | `curl -f http://127.0.0.1:8080/health` | Successful exit; the response body is empty |
+| **Inspect Logs** | `docker compose logs -f zero-g` | Listening address and inference route |
 
 ---
 
@@ -86,10 +87,10 @@ flowchart TD
 | Task | Action | Command |
 |---|---|---|
 | **1. Stop container** | Prevent write operations | `docker compose stop zero-g` |
-| **2. Backup database** | Copy SQLite database and journal | `docker run --rm -v zero-g_zero-g-data:/data -v $(pwd):/backup alpine cp /data/zero-g.db /backup/` |
-| **3. Backup key** | Confirm `.env` key is preserved | `cat .env \| grep ZERO_G_ENCRYPTION_KEY` |
+| **2. Backup database** | Archive the stopped container's database and any journal sidecars to a protected location | `docker run --rm -v zero-g-data:/data:ro -v "$(pwd)":/backup alpine tar -C /data -czf /backup/zero-g-data.tar.gz .` |
+| **3. Backup key** | Securely back up `.env` separately from the database; do not print the key | Store an encrypted copy in your secret manager. |
 | **4. Pull & Restart** | Run new version | `docker compose pull && docker compose up -d` |
-| **5. Verify status** | Confirm health and auth | `curl -f http://127.0.0.1:8080/health` |
+| **5. Verify status** | Confirm the server responds | `curl -f http://127.0.0.1:8080/health` |
 
 ---
 

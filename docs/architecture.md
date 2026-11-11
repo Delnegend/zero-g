@@ -23,6 +23,7 @@ flowchart TD
         Dispatch --> Claude[Claude Code]
         Dispatch --> Cursor[Cursor]
         Dispatch --> Grok[Grok / Grok Build]
+        Dispatch --> ChatJimmy[ChatJimmy]
     end
 
     subgraph Passthrough ["Passthrough / Forwarded"]
@@ -32,8 +33,8 @@ flowchart TD
         Dispatch --> Custom[Custom OpenAI-Compatible]
     end
 
-    AGY -->|Upstream SSE / gRPC| Google[Google Cloud Code Assist]
-    Codex -->|ChatGPT Backend| OpenAI[OpenAI API]
+    AGY -->|HTTP SSE| Google[Google Cloud Code Assist]
+    Codex -->|ChatGPT Backend| OpenAI[ChatGPT Backend]
     Claude -->|Interleaved Thinking| Anthropic[Anthropic API]
     
     V1 -.->|Log Request / Response| Logs[Observability Engine]
@@ -50,8 +51,8 @@ flowchart TD
 | **Dashboard Auth** | `backend/server/dashboard_auth_config.rs` | Maps configuration to `axum-auth-gate` (Basic and OIDC + PKCE). |
 | **Protocol Types** | `backend/openai.rs`, `backend/responses.rs` | Strongly typed Serde models for Chat Completions and Responses API. |
 | **Auth Managers** | `backend/provider/*/auth.rs` | Token lifecycle, credential locking, and provider-specific refreshes. |
-| **Provider System** | `backend/provider/common/`, `backend/provider/*/` | `Provider` trait for routing, discovery, streaming, and error normalization. |
-| **Credential Pools** | `backend/provider/credentials.rs` | Encrypted credential storage, weighted load-balancing, and automatic failover on 401/403/429. |
+| **Provider System** | `backend/provider/common/`, `backend/provider/*/` | Provider traits for routing and model discovery. |
+| **Credential Pools** | `backend/provider/credentials.rs` | Encrypted credential storage and weighted selection; eligible requests retry on 401/403/429. |
 | **Catalog & Datasheets** | `backend/provider/catalog.rs`, `backend/server/model_setting/` | Model metadata, pricing synchronization, and background discovery polling. |
 | **Storage & Migrations** | `backend/database.rs`, `backend/storage.rs` | Toasty ORM over SQLite/Turso with retry-aware transactions and startup migrations. |
 
@@ -72,8 +73,8 @@ sequenceDiagram
     Client->>V1: POST /v1/chat/completions (model: "agy/claude-sonnet-4")
     V1->>Auth: Verify Virtual Key & Model Permissions
     Auth-->>V1: Authorized
-    V1->>Pool: Borrow weighted connected credential
-    Pool-->>V1: Credential (with OAuth access token)
+    V1->>Pool: Select credential when required
+    Pool-->>V1: Credential (OAuth token or API key)
     
     alt Needs Token Refresh (expires in < 60s)
         V1->>Upstream: Refresh OAuth token
@@ -85,7 +86,7 @@ sequenceDiagram
     
     alt Upstream Error (401, 403, 429 before streaming)
         Upstream-->>Engine: Failover status code
-        Engine->>Pool: Mark credential temporary failure, request next
+        Engine->>Pool: Request next eligible credential
         Pool-->>Engine: Alternative Credential
         Engine->>Upstream: Retry request
     end
@@ -93,7 +94,7 @@ sequenceDiagram
     Upstream-->>Engine: Stream chunks (SSE)
     Engine-->>V1: Translate to OpenAI stream chunks
     V1-->>Client: Stream SSE chunks
-    V1-)Auth: Async log request & response metadata (capped at 256 KiB)
+    V1-)Auth: Async logging (response body capture capped at 256 KiB)
 ```
 
 ---
@@ -108,4 +109,4 @@ sequenceDiagram
 | **Contiguous Tool Turns** | Cloud Code Assist | Successive tool output turns are merged into a single contiguous `user` role turn. |
 | **Interrupted Streams** | Antigravity, Codex | Broken streams without terminal response raise a clean downstream error instead of a truncated success marker. |
 | **Claude Wire Handling** | Claude (via AGY) | Includes `anthropic-beta: interleaved-thinking-2025-05-14`; tool mode defaults to `VALIDATED`; output tokens capped to catalog limit. |
-| **Payload Size Limit** | All `/v1` Endpoints | Requests capped at 20,000,000 bytes. Responses logged up to 256 KiB. |
+| **Payload Size Limit** | Unified inference POST requests | Request bodies capped at 20,000,000 bytes. Response body capture capped at 256 KiB. |

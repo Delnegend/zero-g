@@ -3002,6 +3002,13 @@
             "type": "string",
             "description": "Model identifier used in requests."
           },
+          "input_modalities": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "string"
+            },
+            "description": "Accepted input types exposed through this route."
+          },
           "max_output_tokens": {
             "type": ["integer", "null"],
             "format": "int32",
@@ -3015,6 +3022,13 @@
           "object": {
             "type": ["string", "null"],
             "description": "Wire object type."
+          },
+          "output_modalities": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "string"
+            },
+            "description": "Output types returned through this route."
           },
           "owned_by": {
             "type": ["string", "null"],
@@ -3030,6 +3044,10 @@
               "type": "string"
             },
             "description": "Supported reasoning effort values."
+          },
+          "supports_tools": {
+            "type": ["boolean", "null"],
+            "description": "Whether OpenAI-compatible tool calls work through this route."
           }
         },
         "additionalProperties": {

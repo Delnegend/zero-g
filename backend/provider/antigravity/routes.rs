@@ -302,15 +302,11 @@ async fn models_handler(
 /// `maxOutputTokens`; callers that only see `max_output_tokens` fall back to
 /// their own defaults, so both are carried through.
 pub(crate) fn to_model_entry(id: String, info: AntigravityModelInfo) -> Model {
-    let reasoning = info.supports_thinking.unwrap_or(false);
-    let effort_tier = [("-low", "low"), ("-medium", "medium"), ("-high", "high")]
-        .into_iter()
-        .find(|(suffix, _)| id.ends_with(suffix))
-        .map(|(_, effort)| effort.to_string());
-    let supported_efforts = effort_tier.as_ref().map_or_else(
-        || reasoning.then(|| vec!["low".to_string(), "medium".to_string(), "high".to_string()]),
-        |effort| Some(vec![effort.clone()]),
-    );
+    let reasoning = info.supports_thinking;
+    // Standalone IDs ignore an effort parameter, so no selectable levels or
+    // default effort can be advertised for them.
+    let effort_tier = None;
+    let supported_efforts = None;
 
     let mut extra: serde_json::Map<String, serde_json::Value> = info.extra.into_iter().collect();
     for key in [
@@ -325,6 +321,9 @@ pub(crate) fn to_model_entry(id: String, info: AntigravityModelInfo) -> Model {
         "supported_reasoning_efforts",
         "context_window",
         "max_output_tokens",
+        "input_modalities",
+        "output_modalities",
+        "supports_tools",
     ] {
         extra.remove(key);
     }
@@ -346,11 +345,17 @@ pub(crate) fn to_model_entry(id: String, info: AntigravityModelInfo) -> Model {
         owned_by: Some("google-antigravity".to_string()),
         name: info.display_name.clone(),
         display_name: info.display_name,
-        reasoning: if reasoning { Some(true) } else { None },
+        reasoning,
         default_reasoning_effort: effort_tier,
         supported_reasoning_efforts: supported_efforts,
         context_window: info.max_tokens,
         max_output_tokens: info.max_output_tokens,
+        input_modalities: Some(crate::provider::antigravity::models::input_modalities(
+            &extra,
+        )),
+        // Cloud Code Assist is translated to OpenAI chat/responses text output.
+        output_modalities: Some(vec!["text".to_owned()]),
+        supports_tools: None,
         extra,
     }
 }
@@ -800,6 +805,80 @@ mod tests {
     }
 
     #[test]
+    fn public_modalities_follow_provider_metadata_and_route_support() {
+        let info: AntigravityModelInfo = serde_json::from_value(serde_json::json!({
+            "supportsImages": true,
+            "supportedMimeTypes": {"image/png": true, "audio/wav": true, "video/mp4": true, "application/pdf": true}
+        })).unwrap();
+        let entry = to_model_entry("fixture".into(), info);
+        assert_eq!(
+            entry.input_modalities,
+            Some(vec![
+                "text".into(),
+                "image".into(),
+                "audio".into(),
+                "video".into(),
+                "pdf".into()
+            ])
+        );
+        assert_eq!(entry.output_modalities, Some(vec!["text".into()]));
+        assert_eq!(entry.supports_tools, None);
+    }
+
+    #[test]
+    fn alias_metadata_comes_from_the_effective_permitted_default() {
+        let low: AntigravityModelInfo = serde_json::from_value(serde_json::json!({
+            "maxTokens": 1000, "maxOutputTokens": 100, "supportsImages": false,
+            "supportsThinking": true, "marker": "low"
+        }))
+        .unwrap();
+        let high: AntigravityModelInfo = serde_json::from_value(serde_json::json!({
+            "maxTokens": 2000, "maxOutputTokens": 200, "supportsImages": true,
+            "supportsThinking": true, "marker": "high"
+        }))
+        .unwrap();
+        let variants = vec![("model-low".into(), low), ("model-high".into(), high)];
+        let family = normalize_models(variants);
+        for (permission, limit, image, marker) in [
+            ("model-low", 100, false, "low"),
+            ("model-high", 200, true, "high"),
+        ] {
+            let entry = family[0].entry(&permissions(&[permission])).unwrap().0;
+            assert_eq!(entry.id, "model");
+            assert_eq!(entry.max_output_tokens, Some(limit));
+            assert_eq!(entry.extra["marker"], marker);
+            assert_eq!(
+                entry.input_modalities.unwrap().iter().any(|m| m == "image"),
+                image
+            );
+            assert_eq!(
+                family[0]
+                    .resolve(None, &permissions(&[permission]))
+                    .unwrap(),
+                permission
+            );
+        }
+        let entry = family[0].entry(&permissions(&["model"])).unwrap().0;
+        assert_eq!(entry.context_window, Some(1000));
+        assert_eq!(entry.max_output_tokens, Some(100));
+        assert_eq!(entry.input_modalities, Some(vec!["text".into()]));
+        assert_eq!(entry.reasoning, Some(true));
+        assert_eq!(
+            entry.supported_reasoning_efforts,
+            Some(vec!["low".into(), "high".into()])
+        );
+        let variants = vec![
+            ("other-low".into(), serde_json::from_value(serde_json::json!({"maxTokens":1000,"maxOutputTokens":100,"supportsThinking":true})).unwrap()),
+            ("other-high".into(), serde_json::from_value(serde_json::json!({})).unwrap()),
+        ];
+        let family = normalize_models(variants);
+        let entry = family[0].entry(&permissions(&["other"])).unwrap().0;
+        assert_eq!(entry.context_window, None);
+        assert_eq!(entry.max_output_tokens, None);
+        assert_eq!(entry.reasoning, None);
+    }
+
+    #[test]
     fn grouped_discovery_and_permissions_match_routing() {
         let ids = ["model-high", "model-low", "model-medium", "unrelated-low"];
         let groups = normalize_models(models(&ids));
@@ -934,8 +1013,8 @@ mod tests {
             Ok("other-high".into())
         );
         let entry = groups[2].entry(&permissions(&[])).expect("visible").0;
-        assert_eq!(entry.supported_reasoning_efforts, Some(vec!["high".into()]));
-        assert_eq!(entry.default_reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(entry.supported_reasoning_efforts, None);
+        assert_eq!(entry.default_reasoning_effort, None);
         assert_eq!(entry.display_name.as_deref(), Some("Model (High)"));
     }
 
@@ -1157,6 +1236,37 @@ mod tests {
             payload["request"]["toolConfig"]["functionCallingConfig"]["allowedFunctionNames"],
             json!(["lookup"])
         );
+        for (effort, expected_model, expected_level) in [
+            (Some("low"), "model-low", "LOW"),
+            (Some("high"), "model-high", "HIGH"),
+            (None, "model-low", "LOW"),
+        ] {
+            let result = app
+                .clone()
+                .oneshot(request(json!({
+                    "model": "model", "reasoning_effort": effort,
+                    "messages": [{"role":"user", "content":"hello"}]
+                })))
+                .await
+                .unwrap();
+            assert_eq!(result.status(), StatusCode::OK);
+            let sent = rx.recv().await.unwrap();
+            assert_eq!(sent["model"], expected_model);
+            assert_eq!(
+                sent["request"]["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+                expected_level
+            );
+        }
+        let invalid = app
+            .clone()
+            .oneshot(request(json!({
+                "model":"model", "reasoning_effort":"unsupported-fixture",
+                "messages":[{"role":"user", "content":"hello"}]
+            })))
+            .await
+            .unwrap();
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+        assert!(rx.try_recv().is_err());
         let stream_identity = RequestIdentity::default();
         let streamed = app
             .clone()
