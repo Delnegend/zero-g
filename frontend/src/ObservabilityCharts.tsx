@@ -168,19 +168,27 @@ function GraphPanel({
       })),
     );
     const timeStarts = timeSeries
-      ? [...new Set(bars.map((point) => point.start).filter((v): v is number => v !== undefined))]
+      ? [
+          ...new Set(
+            bars
+              .map((point) => point.start)
+              .filter((v): v is number => v !== undefined),
+          ),
+        ]
       : [];
     const timeMin = timeStarts.length ? Math.min(...timeStarts) : 0;
     const timeMax = timeStarts.length ? Math.max(...timeStarts) : 1;
     const timeLabelFor = (value: number) => {
       const date = new Date(value * 1000).toISOString();
-      return date.includes("T") ? `${date.slice(0, 10)} ${date.slice(11, 16)}` : date.slice(0, 10);
+      return date.includes("T")
+        ? `${date.slice(0, 10)} ${date.slice(11, 16)}`
+        : date.slice(0, 10);
     };
     return defineChart({
       marks: [
         barY(bars, {
           x: timeSeries
-            ? (point) => (point.start ?? 0)
+            ? (point) => point.start ?? 0
             : (point) => slot(point.label, point.series),
           y: "value",
           z: "series",
@@ -212,9 +220,7 @@ function GraphPanel({
                   spacing: 60,
                   format: (value) => {
                     const label = labels.get(String(value)) ?? String(value);
-                    return label.length > 12
-                      ? `${label.slice(0, 11)}…`
-                      : label;
+                    return label.length > 12 ? `${label.slice(0, 11)}…` : label;
                   },
                 },
                 tickLabels: { fontSize: 10, thin: true },
@@ -416,7 +422,8 @@ export function ObservabilityCharts({
     name: model.name || "(not provided)",
     color: modelColors[index],
     points: periods.map((p) => ({
-      label: p.label, start: p.start,
+      label: p.label,
+      start: p.start,
       value: modelCount(p, model.name),
     })),
   }));
@@ -425,7 +432,8 @@ export function ObservabilityCharts({
       name: "Other models",
       color: modelColors[4],
       points: periods.map((p) => ({
-        label: p.label, start: p.start,
+        label: p.label,
+        start: p.start,
         value: otherModels.reduce((sum, name) => sum + modelCount(p, name), 0),
       })),
     });
@@ -451,14 +459,19 @@ export function ObservabilityCharts({
             name: "Success",
             color: "#10b981",
             points: periods.map((p) => ({
-              label: p.label, start: p.start,
+              label: p.label,
+              start: p.start,
               value: p.successes,
             })),
           },
           {
             name: "Error",
             color: "#f43f5e",
-            points: periods.map((p) => ({ label: p.label, start: p.start, value: p.errors })),
+            points: periods.map((p) => ({
+              label: p.label,
+              start: p.start,
+              value: p.errors,
+            })),
           },
         ]}
         alternative={periodRows(volumeRows)}
@@ -480,7 +493,8 @@ export function ObservabilityCharts({
             name: "Latency",
             color: "#f59e0b",
             points: periods.map((p) => ({
-              label: p.label, start: p.start,
+              label: p.label,
+              start: p.start,
               value: p.avg_latency_ms,
             })),
           },
@@ -516,7 +530,9 @@ export function ObservabilityCharts({
               name,
               color,
               points: periods.flatMap((p) =>
-                p[field] === null ? [] : [{ label: p.label, start: p.start, value: p[field] }],
+                p[field] === null
+                  ? []
+                  : [{ label: p.label, start: p.start, value: p[field] }],
               ),
             },
           ]}
