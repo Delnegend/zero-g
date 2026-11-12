@@ -74,6 +74,36 @@ test("comparison preserves sparse bucket positions and unknown tokens", () => {
   assert.match(html, /Request volume: 100% higher/);
 });
 
+test("summary charts hide legends while provider and model legends remain", () => {
+  const document = parseDocument(
+    renderToStaticMarkup(
+      <ObservabilityCharts
+        interval="hour"
+        buckets={[bucket(3600, 2, 4)]}
+        breakdown={breakdown}
+      />,
+    ),
+  );
+  const panel = (title: string) => {
+    const heading = [...document.querySelectorAll("h2")].find(
+      (item) => item.textContent === title,
+    );
+    assert.ok(heading);
+    return heading.parentElement!.parentElement!.parentElement!;
+  };
+  assert.equal(
+    panel("Request volume").querySelector('[title="Success"]'),
+    null,
+  );
+  assert.equal(
+    panel("Average latency").querySelector('[title="Latency"]'),
+    null,
+  );
+  assert.equal(panel("Token usage").querySelector('[title="Input"]'), null);
+  assert.ok(panel("Model usage").querySelector('[title="model"]'));
+  assert.ok(panel("Requests by provider").querySelector('[title="provider"]'));
+});
+
 test("token usage combines input and output while preserving totals, trends and missing values", () => {
   const current = [
     { ...bucket(10800, 1, 4), output_tokens: 0 },

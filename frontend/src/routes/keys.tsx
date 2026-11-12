@@ -333,10 +333,10 @@ export function KeysPage() {
             {keys.map((key) => (
               <li
                 key={key.id}
-                className="flex flex-wrap items-center justify-between gap-4 py-4"
+                className="flex items-center justify-between gap-4 py-4"
               >
-                <div>
-                  <h3 className="font-medium">{key.name}</h3>
+                <div className="min-w-0 flex-1">
+                  <h3 className="font-medium break-all">{key.name}</h3>
                   <p className="mt-1 text-sm break-all text-muted-foreground">
                     Providers:{" "}
                     {key.providers.length ? key.providers.join(", ") : "All"} ·
@@ -350,7 +350,7 @@ export function KeysPage() {
                     )}
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex shrink-0 gap-2">
                   <Button
                     variant="outline"
                     size="icon"

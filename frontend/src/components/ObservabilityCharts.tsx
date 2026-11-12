@@ -7,11 +7,7 @@ import { tooltip } from "@tanstack/charts/tooltip";
 import { Minus, TrendingDown, TrendingUp } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Card } from "./ui/card";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "./ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import type { ObservabilityComparison } from "@/server/api/observability";
 
 type Interval = "hour" | "day" | "month" | "year";
@@ -128,6 +124,7 @@ function GraphPanel({
   timeSeries = false,
   timeRange,
   stacked = false,
+  showLegend = true,
   emptyMessage = "No requests to chart.",
 }: {
   title: string;
@@ -142,6 +139,7 @@ function GraphPanel({
   timeSeries?: boolean;
   timeRange?: readonly [number, number];
   stacked?: boolean;
+  showLegend?: boolean;
   emptyMessage?: string;
 }) {
   const [desktop, setDesktop] = useState(
@@ -335,7 +333,7 @@ function GraphPanel({
           />
         )}
       </div>
-      {series.length > 0 && (
+      {showLegend && series.length > 0 && (
         <div className="flex min-w-0 shrink-0 flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
           {series.map((item) => (
             <span
@@ -560,6 +558,7 @@ export function ObservabilityCharts({
       <GraphPanel
         title="Request volume"
         timeSeries
+        showLegend={false}
         timeRange={timeRange}
         stacked
         summary={`${number.format(requests)} requests`}
@@ -592,6 +591,7 @@ export function ObservabilityCharts({
       <GraphPanel
         title="Average latency"
         timeSeries
+        showLegend={false}
         timeRange={timeRange}
         summary={latency}
         domain={domain}
@@ -618,6 +618,7 @@ export function ObservabilityCharts({
       <GraphPanel
         title="Token usage"
         timeSeries
+        showLegend={false}
         timeRange={timeRange}
         stacked
         summary={`Input: ${tokenTotal("input_tokens")}; output: ${tokenTotal("output_tokens")} tokens`}
