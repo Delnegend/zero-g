@@ -17,6 +17,8 @@ pub(in crate::server) struct DashboardQuery {
     pub(super) logs_only: Option<bool>,
     /// Skip fetching recent request logs for aggregate-only dashboard views.
     pub(super) aggregates_only: Option<bool>,
+    /// Fetch the captured bodies for one log instead of a metadata-only list.
+    pub(super) log_id: Option<i64>,
     /// Exact providers encoded as a JSON array.
     #[serde(default, deserialize_with = "deserialize_array")]
     pub(super) providers: Vec<String>,
@@ -56,7 +58,8 @@ fn deserialize_array<'de, D: serde::Deserializer<'de>>(
         ("virtual_key_ids" = Option<String>, Query, description = "JSON array of exact virtual key IDs; empty means all"),
         ("credential_ids" = Option<String>, Query, description = "JSON array of exact provider credential IDs; empty means all"),
         ("logs_only" = Option<bool>, Query, description = "Return recent logs and filter options without calculating dashboard aggregates; aggregate fields are empty"),
-        ("aggregates_only" = Option<bool>, Query, description = "Return aggregates and filter options without fetching request logs; logs is empty")),
+        ("aggregates_only" = Option<bool>, Query, description = "Return aggregates and filter options without fetching request logs; logs is empty"),
+        ("log_id" = Option<i64>, Query, description = "Return the selected log including its captured bodies; ordinary lists omit bodies")),
     responses((status = 200, body = ObservabilityResponse),
         (status = 400, description = "Invalid query"),
         (status = 500, description = "Log query failed")))]

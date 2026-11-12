@@ -212,6 +212,15 @@ impl LogStore {
             };
             let logs = if query.aggregates_only.unwrap_or(false) {
                 Vec::new()
+            } else if let Some(id) = query.log_id {
+                logs_query
+                    .filter(RequestLog::fields().id().eq(id))
+                    .limit(1)
+                    .exec(&mut tx)
+                    .await?
+                    .into_iter()
+                    .map(LogSummary::from)
+                    .collect()
             } else {
                 let logs_query = if since.is_some() || until.is_some() {
                     logs_query.order_by((
@@ -221,7 +230,87 @@ impl LogStore {
                 } else {
                     logs_query.order_by(RequestLog::fields().id().desc())
                 };
-                logs_query.limit(200).exec(&mut tx).await?
+                let metadata = logs_query
+                    .limit(200)
+                    .select((
+                        RequestLog::fields().id(),
+                        RequestLog::fields().created_at(),
+                        RequestLog::fields().provider(),
+                        RequestLog::fields().model(),
+                        RequestLog::fields().path(),
+                        RequestLog::fields().status(),
+                        RequestLog::fields().latency_ms(),
+                        RequestLog::fields().input_tokens(),
+                    ))
+                    .exec(&mut tx)
+                    .await?;
+                let ids: Vec<_> = metadata.iter().map(|row| row.0).collect();
+                let identities = if ids.is_empty() {
+                    Vec::new()
+                } else {
+                    RequestLog::all()
+                        .filter(RequestLog::fields().id().in_list(ids))
+                        .select((
+                            RequestLog::fields().id(),
+                            RequestLog::fields().output_tokens(),
+                            RequestLog::fields().virtual_key_id(),
+                            RequestLog::fields().virtual_key_name(),
+                            RequestLog::fields().credential_id(),
+                            RequestLog::fields().credential_name(),
+                        ))
+                        .exec(&mut tx)
+                        .await?
+                };
+                let mut identities: BTreeMap<_, _> = identities
+                    .into_iter()
+                    .map(|(id, output, key, key_name, credential, credential_name)| {
+                        (id, (output, key, key_name, credential, credential_name))
+                    })
+                    .collect();
+                metadata
+                    .into_iter()
+                    .map(
+                        |(
+                            id,
+                            created_at,
+                            provider,
+                            model,
+                            path,
+                            status,
+                            latency_ms,
+                            input_tokens,
+                        )| {
+                            let (
+                                output_tokens,
+                                virtual_key_id,
+                                virtual_key_name,
+                                credential_id,
+                                credential_name,
+                            ) = identities.remove(&id).ok_or_else(|| {
+                                toasty::Error::from_args(format_args!(
+                                    "log identity missing from transaction"
+                                ))
+                            })?;
+                            Ok(LogSummary {
+                                id,
+                                created_at,
+                                provider,
+                                model,
+                                path,
+                                status,
+                                latency_ms,
+                                input_tokens,
+                                output_tokens,
+                                virtual_key_id,
+                                virtual_key_name,
+                                credential_id,
+                                credential_name,
+                                request_body: None,
+                                response_body: None,
+                            })
+                        },
+                    )
+                    .collect::<Result<Vec<_>, toasty::Error>>()?
             };
             tx.commit().await?;
             Ok((options, rows, logs))
@@ -233,7 +322,6 @@ impl LogStore {
             OptionRows::Dashboard(rows) => collect_filter_options(rows),
             OptionRows::Distinct(rows) => collect_distinct_options(rows)?,
         };
-        let logs = logs.into_iter().map(LogEntry::from).collect();
         Ok(ObservabilityResponse {
             summary,
             logs,
@@ -246,7 +334,50 @@ impl LogStore {
     }
 }
 
-impl From<RequestLog> for LogEntry {
+/// Metadata returned by list queries; bodies are present only for detail queries.
+#[derive(Serialize, utoipa::ToSchema)]
+struct LogSummary {
+    /// Database record identifier.
+    id: i64,
+    /// Completion time in Unix seconds.
+    created_at: i64,
+    /// Provider serving the request.
+    provider: String,
+    /// Requested model.
+    model: String,
+    /// Request URI path.
+    path: String,
+    /// HTTP response status.
+    status: i64,
+    /// Elapsed request time in milliseconds.
+    latency_ms: i64,
+    /// Reported input tokens, if available.
+    #[schema(required = true)]
+    input_tokens: Option<i64>,
+    /// Reported output tokens, if available.
+    #[schema(required = true)]
+    output_tokens: Option<i64>,
+    /// Captured request body, present only for details.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request_body: Option<String>,
+    /// Captured response body, present only for details.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_body: Option<String>,
+    /// Authenticated virtual key ID, if known.
+    #[schema(required = true)]
+    virtual_key_id: Option<String>,
+    /// Virtual key name snapshot, if known.
+    #[schema(required = true)]
+    virtual_key_name: Option<String>,
+    /// Selected provider credential ID, if known.
+    #[schema(required = true)]
+    credential_id: Option<String>,
+    /// Provider credential name snapshot, if known.
+    #[schema(required = true)]
+    credential_name: Option<String>,
+}
+
+impl From<RequestLog> for LogSummary {
     fn from(r: RequestLog) -> Self {
         Self {
             id: r.id,
@@ -258,8 +389,8 @@ impl From<RequestLog> for LogEntry {
             latency_ms: r.latency_ms,
             input_tokens: r.input_tokens,
             output_tokens: r.output_tokens,
-            request_body: r.request_body,
-            response_body: r.response_body,
+            request_body: Some(r.request_body),
+            response_body: Some(r.response_body),
             virtual_key_id: r.virtual_key_id,
             virtual_key_name: r.virtual_key_name,
             credential_id: r.credential_id,
@@ -696,8 +827,8 @@ struct BreakdownEntry {
 struct ObservabilityResponse {
     /// Aggregate metrics.
     summary: ObservabilitySummary,
-    /// Up to 200 recent log entries.
-    logs: Vec<LogEntry>,
+    /// Up to 200 metadata-only entries, or one full entry for `log_id`.
+    logs: Vec<LogSummary>,
     /// Bucket granularity.
     interval: Interval,
     /// Request counts by time bucket.
@@ -724,7 +855,8 @@ struct ObservabilityResponse {
         Breakdown,
         BreakdownEntry,
         Interval,
-        LogEntry
+        LogEntry,
+        LogSummary
     ))
 )]
 pub(crate) struct Api;

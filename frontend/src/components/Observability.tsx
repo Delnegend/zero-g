@@ -14,6 +14,7 @@ import { formatTimestamp } from "@/lib/date";
 import { LogsTable } from "@/components/LogsTable";
 import { RequestBody, requestBodyTheme } from "@/components/RequestBody";
 import {
+  getObservability,
   observabilityQueryOptions,
   type DashboardRange,
   type Log,
@@ -56,6 +57,25 @@ export function useObservability(
   }, []);
 
   const selected = data?.logs.find((log) => log.id === selectedId);
+  const detail = useQuery({
+    queryKey: ["observability-log", selectedId],
+    queryFn: async ({ signal }) => {
+      const result = await getObservability(signal, {
+        logs_only: true,
+        log_id: selectedId!,
+      });
+      const log = result.logs[0];
+      if (!log || log.request_body == null || log.response_body == null) {
+        throw new Error("Request details are no longer available.");
+      }
+      return log;
+    },
+    enabled: selectedId != null,
+    retry: false,
+    gcTime: 0,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
   return {
     range,
     setRange,
@@ -64,6 +84,7 @@ export function useObservability(
     refetch,
     error,
     selected,
+    detail,
     setSelectedId,
     detailsTrigger,
     selectLog,
@@ -100,6 +121,7 @@ export function ObservabilityError({
 export function RequestLogs({
   data,
   selected,
+  detail,
   setSelectedId,
   detailsTrigger,
   selectLog,
@@ -168,18 +190,43 @@ export function RequestLogs({
                     </dd>
                   </div>
                 </dl>
-                <style>{requestBodyTheme}</style>
-                <div className="mt-5 grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
-                  <div className="min-w-0">
-                    <h3 className="mb-2 text-sm font-medium">Request body</h3>
-                    <RequestBody body={selected.request_body} />
-                  </div>
-                  <ResponseBody
-                    key={selected.id}
-                    body={selected.response_body}
-                    status={selected.status}
-                  />
-                </div>
+                {detail.isPending ? (
+                  <p className="mt-5" role="status">
+                    Loading request details…
+                  </p>
+                ) : detail.error ? (
+                  <Alert variant="destructive" className="mt-5">
+                    <AlertDescription>
+                      Unable to load request details.{" "}
+                      <button
+                        type="button"
+                        className="underline"
+                        onClick={() => void detail.refetch()}
+                      >
+                        Try again
+                      </button>
+                    </AlertDescription>
+                  </Alert>
+                ) : (
+                  detail.data && (
+                    <>
+                      <style>{requestBodyTheme}</style>
+                      <div className="mt-5 grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
+                        <div className="min-w-0">
+                          <h3 className="mb-2 text-sm font-medium">
+                            Request body
+                          </h3>
+                          <RequestBody body={detail.data.request_body ?? ""} />
+                        </div>
+                        <ResponseBody
+                          key={selected.id}
+                          body={detail.data.response_body ?? ""}
+                          status={selected.status}
+                        />
+                      </div>
+                    </>
+                  )
+                )}
               </div>
               <DrawerFooter>
                 <DrawerClose render={<Button variant="outline" />}>

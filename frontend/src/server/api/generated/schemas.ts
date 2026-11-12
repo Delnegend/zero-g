@@ -1101,6 +1101,55 @@ export const LogEntry = zod
 export type LogEntry = zod.input<typeof LogEntry>;
 export type LogEntryOutput = zod.output<typeof LogEntry>;
 
+export const LogSummary = zod
+  .object({
+    created_at: zod.int().describe("Completion time in Unix seconds."),
+    credential_id: zod
+      .string()
+      .nullable()
+      .describe("Selected provider credential ID, if known."),
+    credential_name: zod
+      .string()
+      .nullable()
+      .describe("Provider credential name snapshot, if known."),
+    id: zod.int().describe("Database record identifier."),
+    input_tokens: zod
+      .int()
+      .nullable()
+      .describe("Reported input tokens, if available."),
+    latency_ms: zod.int().describe("Elapsed request time in milliseconds."),
+    model: zod.string().describe("Requested model."),
+    output_tokens: zod
+      .int()
+      .nullable()
+      .describe("Reported output tokens, if available."),
+    path: zod.string().describe("Request URI path."),
+    provider: zod.string().describe("Provider serving the request."),
+    request_body: zod
+      .string()
+      .nullish()
+      .describe("Captured request body, present only for details."),
+    response_body: zod
+      .string()
+      .nullish()
+      .describe("Captured response body, present only for details."),
+    status: zod.int().describe("HTTP response status."),
+    virtual_key_id: zod
+      .string()
+      .nullable()
+      .describe("Authenticated virtual key ID, if known."),
+    virtual_key_name: zod
+      .string()
+      .nullable()
+      .describe("Virtual key name snapshot, if known."),
+  })
+  .describe(
+    "Metadata returned by list queries; bodies are present only for detail queries.",
+  );
+
+export type LogSummary = zod.input<typeof LogSummary>;
+export type LogSummaryOutput = zod.output<typeof LogSummary>;
+
 export const ManagementKey = zod
   .object({
     management_key: zod.string().describe("`OpenRouter` management API key."),
@@ -1588,53 +1637,51 @@ export const ObservabilityResponse = zod
             credential_id: zod
               .string()
               .nullable()
-              .describe(
-                "Successfully selected provider credential ID, if any.",
-              ),
+              .describe("Selected provider credential ID, if known."),
             credential_name: zod
               .string()
               .nullable()
-              .describe(
-                "Successfully selected provider credential name snapshot.",
-              ),
+              .describe("Provider credential name snapshot, if known."),
             id: zod.int().describe("Database record identifier."),
             input_tokens: zod
               .int()
               .nullable()
-              .describe("Reported input token count, when available."),
+              .describe("Reported input tokens, if available."),
             latency_ms: zod
               .int()
               .describe("Elapsed request time in milliseconds."),
-            model: zod.string().describe("Model named in the request body."),
+            model: zod.string().describe("Requested model."),
             output_tokens: zod
               .int()
               .nullable()
-              .describe("Reported output token count, when available."),
+              .describe("Reported output tokens, if available."),
             path: zod.string().describe("Request URI path."),
-            provider: zod
+            provider: zod.string().describe("Provider serving the request."),
+            request_body: zod
               .string()
-              .describe("Provider extracted from the request path."),
-            request_body: zod.string().describe("Captured request body."),
-            response_body: zod.string().describe("Captured response body."),
-            status: zod
-              .int()
-              .describe(
-                "HTTP status, or 499 for an incomplete response stream.",
-              ),
+              .nullish()
+              .describe("Captured request body, present only for details."),
+            response_body: zod
+              .string()
+              .nullish()
+              .describe("Captured response body, present only for details."),
+            status: zod.int().describe("HTTP response status."),
             virtual_key_id: zod
               .string()
               .nullable()
-              .describe(
-                "Authenticated virtual key ID and name snapshot, if known.",
-              ),
+              .describe("Authenticated virtual key ID, if known."),
             virtual_key_name: zod
               .string()
               .nullable()
-              .describe("Authenticated virtual key name snapshot."),
+              .describe("Virtual key name snapshot, if known."),
           })
-          .describe("Serialized request log returned by the dashboard."),
+          .describe(
+            "Metadata returned by list queries; bodies are present only for detail queries.",
+          ),
       )
-      .describe("Up to 200 recent log entries."),
+      .describe(
+        "Up to 200 metadata-only entries, or one full entry for `log_id`.",
+      ),
     retention_cutoff: zod
       .int()
       .describe(
@@ -2062,6 +2109,7 @@ export const GetObservabilityParams = zod.object({
   credential_ids: zod.string().optional(),
   logs_only: zod.boolean().optional(),
   aggregates_only: zod.boolean().optional(),
+  log_id: zod.int().optional(),
 });
 
 export type GetObservabilityParams = zod.input<typeof GetObservabilityParams>;

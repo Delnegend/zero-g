@@ -75,6 +75,10 @@ The request log response viewer reconstructs supported streamed and JSON
 responses, with a raw view for the original captured bytes. Captured responses
 are limited to 256 KiB, so the readable view may be incomplete.
 
+The logs page loads metadata for up to 200 matching requests; captured bodies
+are fetched only when a request is opened. Search and pagination apply to those
+200 summaries.
+
 
 
 ---

@@ -69,21 +69,20 @@ export function CredentialsCard({
   }
 
   return (
-    <section className="mt-4">
-      <h3 className="font-medium">Credentials</h3>
+    <section className="flex flex-col gap-4">
       {credentials.isPending && <CredentialsSkeleton />}
       {credentials.error && (
-        <Alert variant="destructive" className="mt-2">
+        <Alert variant="destructive">
           <AlertDescription>{message(credentials.error)}</AlertDescription>
         </Alert>
       )}
       {credentials.data?.credentials.length === 0 && (
-        <p className="mt-2 text-sm text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           No credentials configured.
         </p>
       )}
-      {!credentials.isPending && (
-        <div className="mt-2 grid grid-cols-[repeat(auto-fit,minmax(min(100%,24rem),1fr))] gap-2">
+      {!credentials.isPending && credentials.data?.credentials.length !== 0 && (
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,24rem),1fr))] gap-2">
           {credentials.data?.credentials.map((credential) => (
             <div
               key={credential.id}

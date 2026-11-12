@@ -69,6 +69,30 @@ fn test_build_request_payload_system_and_user() {
 }
 
 #[test]
+fn tool_results_are_objects_without_losing_values() {
+    for (content, expected) in [
+        (r#"{"items":[1,2]}"#, json!({"items": [1, 2]})),
+        (r#"[{"id":1},null]"#, json!({"output": [{"id": 1}, null]})),
+        ("42", json!({"output": 42})),
+        ("true", json!({"output": true})),
+        ("null", json!({"output": null})),
+        (r#""text""#, json!({"output": "text"})),
+        ("[invalid", json!({"output": "[invalid"})),
+    ] {
+        let req: ChatCompletionRequest = serde_json::from_value(json!({
+            "model": "gemini-3.8-flash",
+            "messages": [{"role": "tool", "tool_call_id": "call", "name": "lookup", "content": content}]
+        })).unwrap();
+        let payload =
+            AntigravityClient::build_request_payload(&req, "p", "gemini-3.8-flash", "s", None);
+        assert_eq!(
+            payload["request"]["contents"][0]["parts"][0]["functionResponse"]["response"],
+            expected
+        );
+    }
+}
+
+#[test]
 fn forwards_ordered_chat_media_as_inline_data() {
     let req: ChatCompletionRequest = serde_json::from_value(json!({
             "model": "gemini",

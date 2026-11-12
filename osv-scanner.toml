@@ -1,5 +1,5 @@
-# Toasty's optional MySQL driver is not enabled. Remove this exception when
-# toasty-cli stops enabling Toasty's default features.
+# Toasty's optional MySQL driver is present in the lockfile but not enabled.
+# Remove this exception when the locked RSA dependency is fixed or removed.
 [[PackageOverrides]]
 name = "rsa"
 version = "0.10.0-rc.19"
@@ -17,35 +17,9 @@ vulnerability.ignore = true
 effectiveUntil = 2026-11-28
 reason = "RUSTSEC-2023-0071 concerns private-key timing; OIDC verifies public signatures."
 
-# Review by 2026-11-28 if OIDC begins performing secret elliptic-curve arithmetic.
-[[PackageOverrides]]
-name = "crypto-bigint"
-version = "0.5.5"
-ecosystem = "crates.io"
-vulnerability.ignore = true
-effectiveUntil = 2026-11-28
-reason = "RUSTSEC-2026-0387 concerns secret integers; OIDC uses public verification keys."
-
-# The shadcn tool uses deepmerge; it is absent from the built dashboard.
-[[PackageOverrides]]
-name = "deepmerge"
-version = "4.3.1"
-ecosystem = "npm"
-vulnerability.ignore = true
-effectiveUntil = 2026-11-28
-reason = "GHSA-gcqx-w48m-w2h4 affects shadcn development tooling, not the built dashboard."
-
-# Review by 2026-11-14. This advisory names minimatch 10.2.6 with optimization
-# level >= 2. The locked 10.x caller uses the default level 1; 5.x lacks the
-# affected preprocessing. Reassess these call paths when dependencies change.
-[[IgnoredVulns]]
-id = "GHSA-g3hv-75wg-m249"
-ignoreUntil = 2026-11-14
-reason = "Current minimatch callers do not use the vulnerable preprocessing; 5.x lacks it."
-
-# fast-xml-parser is a transitive dev dependency of openapi-sampler; the fixed
-# 5.12.0 release is still inside the 14-day supply-chain quarantine window.
+# fast-xml-parser is a transitive dependency of ReDoc's openapi-sampler; the
+# fixed 5.12.0 release is inside the 14-day supply-chain quarantine window.
 [[IgnoredVulns]]
 id = "GHSA-474x-hrwr-fgx4"
 ignoreUntil = 2026-11-28
-reason = "Affects openapi-sampler dev tooling, not the built dashboard; fix quarantined."
+reason = "Affected through ReDoc; fixed release remains quarantined until 2026-11-17."

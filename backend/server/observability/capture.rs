@@ -400,12 +400,17 @@ mod tests {
                 5,
             ),
         ] {
-            let matching: Vec<_> = logs
-                .iter()
-                .filter(|log| log["request_body"] == request)
-                .collect();
-            assert_eq!(matching.len(), 1);
-            let log = matching[0];
+            let summary = logs.iter().find(|log| log["path"] == route).unwrap();
+            let result = store
+                .dashboard(&super::super::DashboardQuery {
+                    logs_only: Some(true),
+                    log_id: summary["id"].as_i64(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            let log = serde_json::to_value(&result.logs[0]).unwrap();
+            assert_eq!(log["request_body"], request);
             assert_eq!(log["provider"], provider);
             assert_eq!(log["model"], model);
             assert_eq!(log["path"], route);
@@ -473,11 +478,21 @@ mod tests {
         .await
         .unwrap();
         for log in logs {
+            let log = store
+                .dashboard(&super::super::DashboardQuery {
+                    logs_only: Some(true),
+                    log_id: Some(log.id),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .logs
+                .remove(0);
             let id = log.path.trim_start_matches('/');
             if id == "anonymous" {
                 assert!(log.virtual_key_id.is_none());
-                assert_eq!(log.request_body, "");
-                assert_eq!(log.response_body, "");
+                assert_eq!(log.request_body.as_deref(), Some(""));
+                assert_eq!(log.response_body.as_deref(), Some(""));
                 assert!(log.credential_id.is_none());
             } else {
                 assert_eq!(log.virtual_key_id.as_deref(), Some(id));
@@ -613,25 +628,43 @@ mod tests {
         })
         .await
         .unwrap();
+        let mut details = Vec::new();
+        for log in logs {
+            details.push(
+                store
+                    .dashboard(&super::super::DashboardQuery {
+                        logs_only: Some(true),
+                        log_id: Some(log.id),
+                        ..Default::default()
+                    })
+                    .await
+                    .unwrap()
+                    .logs
+                    .remove(0),
+            );
+        }
+        let logs = details;
         let large = logs.iter().find(|log| log.path == "/large").unwrap();
         assert_eq!(large.status, 200);
-        assert!(large.response_body.len() <= RESPONSE_CAPTURE_LIMIT);
+        assert!(large.response_body.as_ref().unwrap().len() <= RESPONSE_CAPTURE_LIMIT);
         assert!(
             large
                 .response_body
+                .as_ref()
+                .unwrap()
                 .starts_with(&"a".repeat(RESPONSE_CAPTURE_LIMIT - 1))
         );
         assert_eq!(large.input_tokens, Some(9));
         assert_eq!(large.output_tokens, Some(4));
         let anonymous = logs.iter().find(|log| log.path == "/anonymous").unwrap();
         assert_eq!(anonymous.status, 499);
-        assert_eq!(anonymous.request_body, "");
-        assert_eq!(anonymous.response_body, "");
+        assert_eq!(anonymous.request_body.as_deref(), Some(""));
+        assert_eq!(anonymous.response_body.as_deref(), Some(""));
         assert_eq!(anonymous.provider, "");
         assert_eq!(anonymous.model, "");
         let error = logs.iter().find(|log| log.path == "/error").unwrap();
         assert_eq!(error.status, 499);
-        assert_eq!(error.response_body, "partial");
+        assert_eq!(error.response_body.as_deref(), Some("partial"));
         assert!(error.input_tokens.is_none());
         assert!(error.output_tokens.is_none());
         drop(app);

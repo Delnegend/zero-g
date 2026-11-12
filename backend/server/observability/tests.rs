@@ -87,7 +87,16 @@ async fn migrates_existing_log_filter_options() {
     let result =
         serde_json::to_value(store.dashboard(&DashboardQuery::default()).await.unwrap()).unwrap();
     assert_eq!(result["summary"]["requests"], 2);
-    assert_eq!(result["logs"][1]["request_body"], "old request");
+    assert!(result["logs"][1].get("request_body").is_none());
+    let detail = store
+        .dashboard(&DashboardQuery {
+            log_id: result["logs"][1]["id"].as_i64(),
+            logs_only: Some(true),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(detail.logs[0].request_body.as_deref(), Some("old request"));
     for field in [
         "virtual_key_id",
         "virtual_key_name",
@@ -227,8 +236,24 @@ async fn stores_and_expires_private_request_logs() {
         serde_json::to_value(store.dashboard(&DashboardQuery::default()).await.unwrap()).unwrap();
     assert_eq!(result["summary"]["requests"], 1);
     assert_eq!(result["summary"]["input_tokens"], 10);
-    assert_eq!(result["logs"][0]["request_body"], "private prompt");
-    assert_eq!(result["logs"][0]["response_body"], "private response");
+    assert!(result["logs"][0].get("request_body").is_none());
+    assert!(result["logs"][0].get("response_body").is_none());
+    let detail = store
+        .dashboard(&DashboardQuery {
+            log_id: result["logs"][0]["id"].as_i64(),
+            logs_only: Some(true),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        detail.logs[0].request_body.as_deref(),
+        Some("private prompt")
+    );
+    assert_eq!(
+        detail.logs[0].response_body.as_deref(),
+        Some("private response")
+    );
     drop(store);
     std::fs::remove_file(path).unwrap();
 }
@@ -263,18 +288,28 @@ async fn concurrent_inserts_are_not_duplicated() {
         serde_json::to_value(store.dashboard(&DashboardQuery::default()).await.unwrap()).unwrap();
     assert_eq!(result["summary"]["requests"], 2);
     let logs = result["logs"].as_array().unwrap();
-    assert_eq!(
-        logs.iter()
-            .filter(|row| row["request_body"] == "first")
-            .count(),
-        1
-    );
-    assert_eq!(
-        logs.iter()
-            .filter(|row| row["request_body"] == "second")
-            .count(),
-        1
-    );
+    let mut bodies = Vec::new();
+    for log in logs {
+        let detail = store
+            .dashboard(&DashboardQuery {
+                log_id: log["id"].as_i64(),
+                logs_only: Some(true),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        bodies.push(
+            detail
+                .logs
+                .into_iter()
+                .next()
+                .unwrap()
+                .request_body
+                .unwrap(),
+        );
+    }
+    bodies.sort();
+    assert_eq!(bodies, ["first", "second"]);
     drop(store);
     std::fs::remove_file(path).unwrap();
 }

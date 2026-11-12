@@ -380,6 +380,13 @@ async fn chat_route_preserves_signatures_and_applies_discovered_profile() {
                         "model-high": {"supportsThinking": true, "thinkingLevel": 3, "maxOutputTokens": 200}
                     }})).into_response()
                 } else {
+                    if body.pointer("/request/contents").and_then(Value::as_array).is_some_and(|contents| {
+                        contents.iter().filter_map(|content| content.get("parts").and_then(Value::as_array))
+                            .flatten().filter_map(|part| part.get("functionResponse"))
+                            .any(|response| !response.get("response").is_some_and(Value::is_object))
+                    }) {
+                        return (StatusCode::BAD_REQUEST, "function response must be an object").into_response();
+                    }
                     if let Some(text) = body.pointer("/request/contents/0/parts/0/text").and_then(Value::as_str) {
                         let usage = match text {
                             "missing-total" => Some(json!({"promptTokenCount":10,"candidatesTokenCount":5,"thoughtsTokenCount":3})),
@@ -707,6 +714,41 @@ async fn chat_route_preserves_signatures_and_applies_discovered_profile() {
         parts[2]["functionResponse"]["response"]["output"],
         "second result"
     );
+    let results = app
+        .clone()
+        .oneshot(request(json!({
+            "model": "model-high",
+            "messages": [
+                {"role":"assistant", "tool_calls": [
+                    {"id":"object", "type":"function", "function":{"name":"lookup", "arguments":"{}"}},
+                    {"id":"array", "type":"function", "function":{"name":"lookup", "arguments":"{}"}},
+                    {"id":"scalar", "type":"function", "function":{"name":"lookup", "arguments":"{}"}},
+                    {"id":"malformed", "type":"function", "function":{"name":"lookup", "arguments":"{}"}}
+                ]},
+                {"role":"tool", "tool_call_id":"object", "content":"{\"ok\":true}"},
+                {"role":"tool", "tool_call_id":"array", "content":"[{\"id\":1},null]"},
+                {"role":"tool", "tool_call_id":"scalar", "content":"42"},
+                {"role":"tool", "tool_call_id":"malformed", "content":"[invalid"}
+            ]
+        })))
+        .await
+        .unwrap();
+    assert_eq!(results.status(), StatusCode::OK);
+    let payload = rx.recv().await.unwrap();
+    let parts = payload["request"]["contents"][1]["parts"]
+        .as_array()
+        .unwrap();
+    for (part, (id, expected)) in parts.iter().zip([
+        ("object", json!({"ok": true})),
+        ("array", json!({"output": [{"id": 1}, null]})),
+        ("scalar", json!({"output": 42})),
+        ("malformed", json!({"output": "[invalid"})),
+    ]) {
+        assert_eq!(part["functionResponse"]["id"], id);
+        assert_eq!(part["functionResponse"]["name"], "lookup");
+        assert_eq!(part["functionResponse"]["response"], expected);
+    }
+    assert_eq!(parts.len(), 4);
     let response_request = |body: Value| {
         Request::builder()
             .method("POST")

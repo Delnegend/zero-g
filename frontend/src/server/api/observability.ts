@@ -1,6 +1,11 @@
 import { keepPreviousData, queryOptions } from "@tanstack/react-query";
 import * as api from "./generated/client";
-import type { LogEntry, ObservabilityResponse } from "./generated/schemas";
+import { LogEntry, ObservabilityResponse } from "./generated/schemas";
+import type {
+  LogEntry as GeneratedLogEntry,
+  ObservabilityResponse as GeneratedObservabilityResponse,
+} from "./generated/schemas";
+import { request } from "./client";
 
 type Preset = "1h" | "6h" | "24h" | "7d" | "1m" | "6m" | "1y";
 export type DashboardRange =
@@ -36,7 +41,7 @@ export function rangeStart(range: Preset, now = Date.now()): number {
 }
 
 export type ObservabilityComparison = {
-  data: ObservabilityResponse | null;
+  data: Observability | null;
   currentSince: number;
   currentUntil: number;
   previousSince: number;
@@ -44,7 +49,21 @@ export type ObservabilityComparison = {
   retentionCutoff: number | null;
 };
 
-export type Observability = ObservabilityResponse & {
+const LogSummary = LogEntry.omit({
+  request_body: true,
+  response_body: true,
+}).extend({
+  request_body: LogEntry.shape.request_body.optional(),
+  response_body: LogEntry.shape.response_body.optional(),
+});
+const Response = ObservabilityResponse.extend({ logs: LogSummary.array() });
+
+export type Log = Omit<GeneratedLogEntry, "request_body" | "response_body"> & {
+  request_body?: string | null;
+  response_body?: string | null;
+};
+export type Observability = Omit<GeneratedObservabilityResponse, "logs"> & {
+  logs: Log[];
   comparison?: ObservabilityComparison;
 };
 
@@ -108,8 +127,6 @@ export function observabilityQueryOptions(
   });
 }
 
-export type Log = LogEntry;
-
 export function getObservability(
   signal: AbortSignal,
   range?: {
@@ -117,6 +134,7 @@ export function getObservability(
     until?: number;
     logs_only?: boolean;
     aggregates_only?: boolean;
+    log_id?: number;
   } & ObservabilityFilterValues,
 ) {
   const params = range && {
@@ -124,6 +142,7 @@ export function getObservability(
     until: range.until,
     logs_only: range.logs_only,
     aggregates_only: range.aggregates_only,
+    log_id: range.log_id,
     providers: range.providers?.length
       ? JSON.stringify(range.providers)
       : undefined,
@@ -139,5 +158,9 @@ export function getObservability(
       ? JSON.stringify(range.credential_ids)
       : undefined,
   };
-  return api.getObservability(params, { signal, statusOnlyError: true });
+  return request<Observability>(api.getGetObservabilityUrl(params), {
+    signal,
+    statusOnlyError: true,
+    schema: Response,
+  });
 }

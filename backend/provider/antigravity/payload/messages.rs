@@ -253,8 +253,11 @@ impl AntigravityClient {
             .as_ref()
             .map(MessageContent::as_text)
             .unwrap_or_default();
-        let response_obj: Value =
-            serde_json::from_str(&result_str).unwrap_or_else(|_| json!({ "output": result_str }));
+        let response_obj: Value = match serde_json::from_str::<Value>(&result_str) {
+            Ok(value @ Value::Object(_)) => value,
+            Ok(value) => json!({ "output": value }),
+            Err(_) => json!({ "output": result_str }),
+        };
 
         let mut func_resp = json!({
             "name": tool_name,

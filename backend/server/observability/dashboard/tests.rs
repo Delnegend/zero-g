@@ -10,6 +10,30 @@ use axum::{
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
+/// Check detail retrieval and a missing log independently of list projections.
+async fn check_log_details(app: &Router, id: i64) {
+    let request = |uri: &str| Request::builder().uri(uri).body(Body::empty()).unwrap();
+    let response = app
+        .clone()
+        .oneshot(request(&format!(
+            "/api/observability?logs_only=true&log_id={id}"
+        )))
+        .await
+        .unwrap();
+    let detail: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(detail["logs"][0]["request_body"], "boundary");
+    assert_eq!(detail["logs"][0]["response_body"], "response");
+    let response = app
+        .clone()
+        .oneshot(request("/api/observability?logs_only=true&log_id=-1"))
+        .await
+        .unwrap();
+    let missing: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(missing["logs"], json!([]));
+}
+
 /// Check dashboard responses for bounded time ranges.
 async fn check_bounded_ranges(app: &Router) {
     let request = |uri: &str| Request::builder().uri(uri).body(Body::empty()).unwrap();
@@ -30,7 +54,8 @@ async fn check_bounded_ranges(app: &Router) {
     );
     assert!(bounded.get("daily").is_none());
     assert_eq!(bounded["logs"].as_array().unwrap().len(), 1);
-    assert_eq!(bounded["logs"][0]["request_body"], "boundary");
+    assert!(bounded["logs"][0].get("request_body").is_none());
+    check_log_details(app, bounded["logs"][0]["id"].as_i64().unwrap()).await;
     let response = app
         .clone()
         .oneshot(request(
@@ -56,8 +81,8 @@ async fn check_bounded_ranges(app: &Router) {
         .unwrap();
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let logs: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(logs["logs"][0]["request_body"], "boundary");
-    assert_eq!(logs["logs"][0]["response_body"], "response");
+    assert!(logs["logs"][0].get("request_body").is_none());
+    assert!(logs["logs"][0].get("response_body").is_none());
 
     let response = app
         .clone()
@@ -76,8 +101,8 @@ async fn check_bounded_ranges(app: &Router) {
         ])
     );
     assert_eq!(until_only["logs"].as_array().unwrap().len(), 2);
-    assert_eq!(until_only["logs"][0]["request_body"], "boundary");
-    assert_eq!(until_only["logs"][1]["request_body"], "before");
+    assert_eq!(until_only["logs"][0]["id"], bounded["logs"][0]["id"]);
+    assert_ne!(until_only["logs"][0]["id"], until_only["logs"][1]["id"]);
 
     let response = app
         .clone()
@@ -288,7 +313,7 @@ async fn logs_only_preserves_filters_bounds_and_recent_limit() {
     );
     let identity = fetch("/api/observability?logs_only=true&providers=%5B%22alpha%22%5D&models=%5B%22m1%22%5D&paths=%5B%22%2Fa%22%5D&statuses=%5B%22error%22%5D&virtual_key_ids=%5B%22key-a%22%5D&credential_ids=%5B%22cred-a%22%5D".into()).await;
     assert_eq!(identity["logs"].as_array().unwrap().len(), 1);
-    assert_eq!(identity["logs"][0]["request_body"], "identity match");
+    assert!(identity["logs"][0].get("request_body").is_none());
     let success = fetch(
         "/api/observability?since=100&until=102&logs_only=true&statuses=%5B%22success%22%5D".into(),
     )
@@ -452,9 +477,10 @@ async fn range_filters_all_aggregates_and_latest_logs() {
     );
     let logs = result["logs"].as_array().unwrap();
     assert_eq!(logs.len(), 200);
-    assert_eq!(logs[0]["request_body"], "midnight");
-    assert_eq!(logs[199]["request_body"], "2");
-    assert_eq!(logs[0]["response_body"], "response");
+    assert!(
+        logs.iter()
+            .all(|log| log.get("request_body").is_none() && log.get("response_body").is_none())
+    );
 
     let response = app
         .clone()
@@ -464,7 +490,7 @@ async fn range_filters_all_aggregates_and_latest_logs() {
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let all: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(all["summary"]["requests"], 205);
-    assert_eq!(all["logs"][0]["request_body"], "future");
+    assert!(all["logs"][0].get("request_body").is_none());
     check_bounded_ranges(&app).await;
 
     let response = app
@@ -705,8 +731,8 @@ async fn saved_retention_applies_to_existing_clones() {
     let response = app.clone().oneshot(request()).await.unwrap();
     let body: Value =
         serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
-    assert_eq!(body["logs"][0]["request_body"], "request");
-    assert_eq!(body["logs"][0]["response_body"], "response");
+    assert!(body["logs"][0].get("request_body").is_none());
+    assert!(body["logs"][0].get("response_body").is_none());
     toasty::sql::statement("DROP TABLE log_filter_options")
         .exec(&mut (*store.database.db).clone())
         .await

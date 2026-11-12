@@ -33,15 +33,25 @@ test("search and inspect a request in LLM logs", async () => {
     credential_id: "credential-1",
     credential_name: "Primary account",
   };
+  const requests: URL[] = [];
   globalThis.fetch = (async (url) => {
     const parsed = new URL(String(url), "http://localhost");
+    requests.push(parsed);
     assert.equal(parsed.pathname, "/api/observability");
     assert.equal(parsed.searchParams.has("since"), false);
     return Response.json({
       interval: "hour",
       retention_cutoff: 0,
       buckets: [],
-      logs: [log, { ...log, id: 43, path: "/v1/decisions" }],
+      logs: parsed.searchParams.has("log_id")
+        ? [log]
+        : [log, { ...log, id: 43, path: "/v1/decisions" }].map(
+            ({
+              request_body: _request,
+              response_body: _response,
+              ...summary
+            }) => summary,
+          ),
       filter_options: {
         providers: ["alpha"],
         models: ["model-a"],
@@ -66,6 +76,10 @@ test("search and inspect a request in LLM logs", async () => {
   mount(<RouterProvider router={router} />);
   assert.ok((await screen.findAllByText("Decisions")).length > 0);
   assert.ok(screen.getAllByText("Chat completions").length > 0);
+  assert.equal(
+    requests.some((url) => url.searchParams.has("log_id")),
+    false,
+  );
   await user.type(screen.getByLabelText("Search request logs"), "decisions");
   assert.ok(
     screen.getAllByRole("button", { name: "View request 43" }).length > 0,
@@ -80,8 +94,13 @@ test("search and inspect a request in LLM logs", async () => {
   assert.ok(within(details).getByText("CI key"));
   assert.ok(within(details).getByText("Primary account"));
   assert.ok(within(details).getByText("123 ms"));
-  assert.ok(within(details).getByText(/hello/));
-  assert.ok(within(details).getByText(/world/));
+  assert.ok(await within(details).findByText(/hello/));
+  assert.ok(await within(details).findByText(/world/));
+  assert.equal(
+    requests.filter((url) => url.searchParams.has("log_id")).length,
+    1,
+  );
+  assert.equal(requests.at(-1)?.searchParams.get("log_id"), "42");
   await user.keyboard("{Escape}");
   await waitFor(() => assert.equal(screen.queryByRole("dialog"), null));
 });
