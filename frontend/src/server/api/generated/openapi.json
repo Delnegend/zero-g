@@ -10,6 +10,38 @@
     "version": "0.9.1"
   },
   "paths": {
+    "/": {
+      "get": {
+        "tags": [],
+        "summary": "Serve the dashboard entry point or report a missing build.",
+        "operationId": "dashboard",
+        "responses": {
+          "200": {
+            "description": "Dashboard HTML",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Dashboard authentication required"
+          },
+          "503": {
+            "description": "Dashboard build unavailable",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/user": {
       "get": {
         "tags": [],
@@ -425,6 +457,16 @@
                 }
               }
             }
+          },
+          "500": {
+            "description": "Provider registry error",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       },
@@ -449,6 +491,56 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Provider"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid provider or malformed JSON",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Provider conflicts with existing configuration",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected JSON content type",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Provider registry error",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -491,6 +583,66 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Invalid provider or malformed JSON",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Provider not found",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Provider kind or base URL already exists",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected JSON content type",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Provider registry error",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       },
@@ -513,10 +665,34 @@
             "description": ""
           },
           "404": {
-            "description": "Provider not found"
+            "description": "Provider not found",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "409": {
-            "description": "Remove all credentials before deleting the provider"
+            "description": "Remove all credentials before deleting this provider",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Provider registry error",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }
@@ -543,6 +719,26 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CredentialsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Provider not found",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Credential storage error",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -580,6 +776,56 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Credential"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid credential or malformed JSON",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Provider or credential not found",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected JSON content type",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Credential storage error",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -630,6 +876,56 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Invalid credential or malformed JSON",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Credential not found",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected JSON content type",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Credential storage error",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       },
@@ -658,6 +954,26 @@
         "responses": {
           "204": {
             "description": ""
+          },
+          "404": {
+            "description": "Credential not found",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Credential storage error",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }
@@ -1044,6 +1360,22 @@
         "responses": {
           "204": {
             "description": ""
+          },
+          "400": {
+            "description": "Invalid Console session or workspace ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Provider or credential not found or incompatible"
+          },
+          "500": {
+            "description": "Failed to save Console connection"
           }
         }
       },
@@ -1072,6 +1404,12 @@
         "responses": {
           "204": {
             "description": ""
+          },
+          "404": {
+            "description": "Provider or credential not found or incompatible"
+          },
+          "500": {
+            "description": "Failed to delete Console connection"
           }
         }
       }
@@ -1364,6 +1702,32 @@
         "responses": {
           "204": {
             "description": ""
+          },
+          "400": {
+            "description": "Invalid management key",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Origin or Host rejected",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Provider or credential not found or incompatible"
+          },
+          "500": {
+            "description": "Failed to save management key"
           }
         }
       },
@@ -1392,6 +1756,22 @@
         "responses": {
           "204": {
             "description": ""
+          },
+          "403": {
+            "description": "Origin or Host rejected",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Provider or credential not found or incompatible"
+          },
+          "500": {
+            "description": "Failed to delete management key"
           }
         }
       }
@@ -1426,6 +1806,22 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/QuotaSnapshot"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Provider or credential not found, or usage is unavailable"
+          },
+          "500": {
+            "description": "Failed to load provider or credential"
+          },
+          "502": {
+            "description": "Failed to fetch usage",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -1549,13 +1945,26 @@
       }
     },
     "/auth/logout": {
-      "post": {
+      "get": {
         "tags": [],
         "summary": "Clears session cookies and redirects to the OIDC `end_session_endpoint` or dashboard root.",
-        "operationId": "logout",
+        "operationId": "logoutDashboardGet",
         "responses": {
           "303": {
             "description": "Redirect to end session endpoint or dashboard root after clearing session cookies"
+          }
+        }
+      },
+      "post": {
+        "tags": [],
+        "summary": "Clears session cookies via POST, with the same redirect as GET logout.",
+        "operationId": "logout",
+        "responses": {
+          "303": {
+            "description": "Redirect after clearing session cookies"
+          },
+          "401": {
+            "description": "A virtual key is required by POST authentication"
           }
         }
       }

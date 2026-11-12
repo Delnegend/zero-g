@@ -1307,12 +1307,28 @@ export const oidcCallback = async (
   });
 };
 
-export const getLogoutUrl = () => {
+export const getLogoutDashboardGetUrl = () => {
   return `/auth/logout`;
 };
 
 /**
  * @summary Clears session cookies and redirects to the OIDC `end_session_endpoint` or dashboard root.
+ */
+export const logoutDashboardGet = async (
+  options?: Parameters<typeof request>[1],
+): Promise<unknown> => {
+  return request<unknown>(getLogoutDashboardGetUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getLogoutUrl = () => {
+  return `/auth/logout`;
+};
+
+/**
+ * @summary Clears session cookies via POST, with the same redirect as GET logout.
  */
 export const logout = async (
   options?: Parameters<typeof request>[1],

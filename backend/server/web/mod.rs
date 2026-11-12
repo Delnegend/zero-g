@@ -10,6 +10,7 @@ mod fallback;
 mod index;
 
 pub(super) use fallback::fallback;
+pub(super) use index::__path_index;
 pub(super) use index::index;
 
 /// Dashboard build files embedded in the executable.

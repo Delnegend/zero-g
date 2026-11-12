@@ -23,11 +23,12 @@ mod web;
 
 use axum::Router;
 use axum::routing::get;
-use dashboard_auth::{__path_current_user, __path_logout, DashboardUser};
+use dashboard_auth::{__path_current_user, __path_logout, __path_logout_post, DashboardUser};
 use health::__path_health_handler;
 use openapi::__path_openapi;
 use redoc::__path_redoc;
 use tower_http::cors::{Any, CorsLayer};
+use web::__path_index;
 
 use crate::provider::{self, registry};
 
@@ -47,7 +48,15 @@ pub(crate) struct AppState {
 /// Health and API reference operations.
 #[derive(utoipa::OpenApi)]
 #[openapi(
-    paths(health_handler, redoc, openapi, current_user, logout),
+    paths(
+        index,
+        health_handler,
+        redoc,
+        openapi,
+        current_user,
+        logout,
+        logout_post
+    ),
     components(schemas(DashboardUser))
 )]
 pub(crate) struct Api;
@@ -106,7 +115,7 @@ pub(crate) fn create_router(state: AppState) -> Router {
         .route("/health", get(health::health_handler))
         .route(
             "/auth/logout",
-            get(dashboard_auth::logout).post(dashboard_auth::logout),
+            get(dashboard_auth::logout).post(dashboard_auth::logout_post),
         )
         .merge(inference::router(&state))
         .layer(axum::middleware::from_fn_with_state(
@@ -169,7 +178,7 @@ mod tests {
             logs: observability::LogStore::new(database),
             dashboard_auth: dashboard_auth_config::test_auth().await,
         });
-        for path in ["/redoc", "/api/openapi.json", "/redoc.standalone.js"] {
+        for path in ["/", "/redoc", "/api/openapi.json", "/redoc.standalone.js"] {
             let request = Request::builder()
                 .uri(path)
                 .header(header::HOST, "127.0.0.1:8080")
@@ -179,6 +188,32 @@ mod tests {
                 app.clone().oneshot(request).await.unwrap().status(),
                 StatusCode::UNAUTHORIZED
             );
+        }
+        for method in ["GET", "POST"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri("/auth/logout")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            if method == "GET" {
+                assert_eq!(response.status(), StatusCode::SEE_OTHER);
+                assert_eq!(
+                    response
+                        .headers()
+                        .get_all(header::SET_COOKIE)
+                        .iter()
+                        .count(),
+                    2
+                );
+            } else {
+                assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            }
         }
         let request = Request::builder()
             .uri("/api/openapi.json")

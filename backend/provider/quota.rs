@@ -66,7 +66,7 @@ pub(crate) enum QuotaSnapshot {
 pub(crate) struct Api;
 
 /// Returns usage for an existing provider credential when supported.
-#[utoipa::path(get, path = "/api/providers/{id}/credentials/{credential_id}/usage", operation_id = "getCredentialUsage", params(("id" = String, Path), ("credential_id" = String, Path)), responses((status = 200, body = QuotaSnapshot)))]
+#[utoipa::path(get, path = "/api/providers/{id}/credentials/{credential_id}/usage", operation_id = "getCredentialUsage", params(("id" = String, Path), ("credential_id" = String, Path)), responses((status = 200, body = QuotaSnapshot), (status = 404, description = "Provider or credential not found, or usage is unavailable"), (status = 500, description = "Failed to load provider or credential"), (status = 502, description = "Failed to fetch usage", body = String, content_type = "text/plain")))]
 async fn usage(
     State(store): State<SettingsStore>,
     Path((provider_id, credential_id)): Path<(String, String)>,

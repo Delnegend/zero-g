@@ -4,6 +4,10 @@ use axum::{
 };
 
 /// Serve the dashboard entry point or report a missing build.
+#[utoipa::path(get, path = "/", operation_id = "dashboard",
+    responses((status = 200, description = "Dashboard HTML", body = String, content_type = "text/html"),
+        (status = 401, description = "Dashboard authentication required"),
+        (status = 503, description = "Dashboard build unavailable", body = String, content_type = "text/plain")))]
 pub(in crate::server) async fn index() -> Response {
     super::serve_asset("dist/index.html").unwrap_or_else(|| {
         (

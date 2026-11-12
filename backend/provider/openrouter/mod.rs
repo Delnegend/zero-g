@@ -260,7 +260,7 @@ async fn connection(
 }
 
 /// Save the management key for an `OpenRouter` credential.
-#[utoipa::path(put, path = "/api/providers/{id}/credentials/{credential_id}/openrouter/management-key", operation_id = "saveOpenrouterManagementKey", params(("id" = String, Path), ("credential_id" = String, Path)), request_body = ManagementKey, responses((status = 204)))]
+#[utoipa::path(put, path = "/api/providers/{id}/credentials/{credential_id}/openrouter/management-key", operation_id = "saveOpenrouterManagementKey", params(("id" = String, Path), ("credential_id" = String, Path)), request_body = ManagementKey, responses((status = 204), (status = 400, description = "Invalid management key", body = String, content_type = "text/plain"), (status = 403, description = "Origin or Host rejected", body = String, content_type = "text/plain"), (status = 404, description = "Provider or credential not found or incompatible"), (status = 500, description = "Failed to save management key")))]
 async fn save_management_key(
     State(store): State<SettingsStore>,
     Path((provider, credential)): Path<(String, String)>,
@@ -274,7 +274,7 @@ async fn save_management_key(
 }
 
 /// Delete the management key for an `OpenRouter` credential.
-#[utoipa::path(delete, path = "/api/providers/{id}/credentials/{credential_id}/openrouter/management-key", operation_id = "deleteOpenrouterManagementKey", params(("id" = String, Path), ("credential_id" = String, Path)), responses((status = 204)))]
+#[utoipa::path(delete, path = "/api/providers/{id}/credentials/{credential_id}/openrouter/management-key", operation_id = "deleteOpenrouterManagementKey", params(("id" = String, Path), ("credential_id" = String, Path)), responses((status = 204), (status = 403, description = "Origin or Host rejected", body = String, content_type = "text/plain"), (status = 404, description = "Provider or credential not found or incompatible"), (status = 500, description = "Failed to delete management key")))]
 async fn delete_management_key(
     State(store): State<SettingsStore>,
     Path((provider, credential)): Path<(String, String)>,

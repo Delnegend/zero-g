@@ -58,6 +58,19 @@ mod tests {
         }
     }
 
+    /// Both public logout methods and the dashboard entry are documented.
+    #[test]
+    fn dashboard_entry_and_logout_methods_are_documented() {
+        let document: Value = serde_json::to_value(openapi()).unwrap();
+        assert_eq!(
+            document["paths"]["/"]["get"]["responses"]["200"]["content"]["text/html"]["schema"]["type"],
+            "string"
+        );
+        for method in ["get", "post"] {
+            assert!(document["paths"]["/auth/logout"][method]["responses"]["303"].is_object());
+        }
+    }
+
     /// The shared authentication callback remains part of the dashboard contract.
     #[test]
     fn dashboard_callback_contract_is_merged() {

@@ -53,9 +53,8 @@ pub(crate) fn build_logout_redirect_url(
 /// Clears session cookies and redirects to the OIDC `end_session_endpoint` or dashboard root.
 #[utoipa::path(
     get,
-    post,
     path = "/auth/logout",
-    operation_id = "logout",
+    operation_id = "logoutDashboardGet",
     responses(
         (status = 303, description = "Redirect to end session endpoint or dashboard root after clearing session cookies")
     )
@@ -89,6 +88,14 @@ pub(crate) async fn logout() -> Response {
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
+}
+
+/// Clears session cookies via POST, with the same redirect as GET logout.
+#[utoipa::path(post, path = "/auth/logout", operation_id = "logout",
+    responses((status = 303, description = "Redirect after clearing session cookies"),
+        (status = 401, description = "A virtual key is required by POST authentication")))]
+pub(crate) async fn logout_post() -> Response {
+    logout().await
 }
 
 #[cfg(test)]

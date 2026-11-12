@@ -114,7 +114,7 @@ pub(crate) async fn connection(
 pub(crate) struct Api;
 
 /// Save a Console connection from the dashboard.
-#[utoipa::path(put, path = "/api/providers/{id}/credentials/{credential_id}/console", operation_id = "saveZenConsole", params(("id" = String, Path), ("credential_id" = String, Path)), request_body = ConsoleConnection, responses((status = 204)))]
+#[utoipa::path(put, path = "/api/providers/{id}/credentials/{credential_id}/console", operation_id = "saveZenConsole", params(("id" = String, Path), ("credential_id" = String, Path)), request_body = ConsoleConnection, responses((status = 204), (status = 400, description = "Invalid Console session or workspace ID", body = String, content_type = "text/plain"), (status = 404, description = "Provider or credential not found or incompatible"), (status = 500, description = "Failed to save Console connection")))]
 async fn save_console(
     State(store): State<SettingsStore>,
     Path((provider, credential)): Path<(String, String)>,
@@ -124,7 +124,7 @@ async fn save_console(
 }
 
 /// Remove a Console connection from the dashboard.
-#[utoipa::path(delete, path = "/api/providers/{id}/credentials/{credential_id}/console", operation_id = "deleteZenConsole", params(("id" = String, Path), ("credential_id" = String, Path)), responses((status = 204)))]
+#[utoipa::path(delete, path = "/api/providers/{id}/credentials/{credential_id}/console", operation_id = "deleteZenConsole", params(("id" = String, Path), ("credential_id" = String, Path)), responses((status = 204), (status = 404, description = "Provider or credential not found or incompatible"), (status = 500, description = "Failed to delete Console connection")))]
 async fn delete_console(
     State(store): State<SettingsStore>,
     Path((provider, credential)): Path<(String, String)>,

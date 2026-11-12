@@ -45,24 +45,37 @@ zero-g/
 ├── backend/
 │   ├── database.rs          # Turso / SQLite connection pool
 │   ├── storage.rs           # Toasty models & schemas
-│   ├── server/              # Axum HTTP handlers & dashboard APIs
+│   ├── server/              # Axum handlers, observability, and dashboard APIs
+│   │   └── observability/   # Request storage, retention, aggregation, and tests
 │   └── provider/            # LLM provider translation & passthrough engines
-│       ├── antigravity/     # Google Cloud Code Assist integration
-│       ├── codex/           # ChatGPT backend integration
+│       ├── antigravity/     # Model routing, payload conversion, and OAuth
+│       ├── codex/           # ChatGPT payload and streaming translation
 │       ├── claude/          # Anthropic OAuth integration
-│       └── common/          # Provider trait & credential failover
+│       └── common/          # Provider traits, retry helpers, and shared SSE framing
 ├── frontend/
 │   ├── src/
 │   │   ├── routes/          # TanStack Router page layouts
 │   │   ├── components/      # Reusable UI widgets (shadcn, charts)
 │   │   ├── routes/__root.tsx # Shared page layout, title, and actions
+│   │   ├── components/KeyForm.tsx # Virtual key form and expiration controls
+│   │   ├── *Interactions.cases.tsx # Feature-grouped interaction tests
 │   │   └── server/api/      # Generated fetch client and Zod schemas; separate query wrappers
 └── toasty/                  # Database migrations
 ```
 
+Related Rust implementation and test modules live together in named directories
+with `mod.rs` as their entry point.
+
+
 ---
 
 ## Contract & Schema Lifecycle
+
+Public dashboard and inference operations are documented in the OpenAPI
+contract. Provider-specific inference routes are internal dispatch targets, not
+additional public endpoints. Dashboard assets and the client-side fallback are
+served separately; the root dashboard entry is documented as `GET /`.
+
 
 ```mermaid
 sequenceDiagram
