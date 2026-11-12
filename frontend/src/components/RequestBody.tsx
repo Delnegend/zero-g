@@ -39,18 +39,18 @@ export function RequestBody({ body }: { body: unknown }) {
       <code>
         {content.tokens
           ? content.tokens.map((token, index) => (
-            <span
-              key={index}
-              data-token={token.className}
-              style={
-                token.className
-                  ? { color: `var(--th-${token.className})` }
-                  : undefined
-              }
-            >
-              {token.value}
-            </span>
-          ))
+              <span
+                key={index}
+                data-token={token.className}
+                style={
+                  token.className
+                    ? { color: `var(--th-${token.className})` }
+                    : undefined
+                }
+              >
+                {token.value}
+              </span>
+            ))
           : content.text}
       </code>
     </pre>

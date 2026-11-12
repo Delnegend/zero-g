@@ -294,9 +294,9 @@ test("reports failures and retains unknown events and unrecognized input", () =>
   assert.equal(parsed.status, "failed");
   assert.deepEqual(parsed.error, { message: "broken" });
   assert.deepEqual(parsed.unknown, [mystery]);
-  const unknown = parseResponseBody("<script>alert(1)</script>");
-  assert.equal(unknown.format, "unknown");
-  assert.deepEqual(unknown.unknown, ["<script>alert(1)</script>"]);
+  const unrecognized = parseResponseBody("plain response");
+  assert.equal(unrecognized.format, "unknown");
+  assert.deepEqual(unrecognized.unknown, ["plain response"]);
   assert.equal(
     parseResponseBody(
       frame({

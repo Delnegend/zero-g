@@ -261,9 +261,7 @@ test("dashboard filters graphs and changes the time range without showing logs",
     within(filters).getByLabelText("Search Virtual keys"),
     "CI key",
   );
-  await user.click(
-    within(filters).getByRole("checkbox", { name: "CI key" }),
-  );
+  await user.click(within(filters).getByRole("checkbox", { name: "CI key" }));
   await waitFor(() =>
     assert.deepEqual(
       JSON.parse(requests.at(-1)!.searchParams.get("virtual_key_ids")!),

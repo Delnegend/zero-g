@@ -100,18 +100,18 @@ function ModelCard({
   const architecture = rawModel.architecture;
   const outputModalities =
     architecture &&
-      typeof architecture === "object" &&
-      "output_modalities" in architecture
+    typeof architecture === "object" &&
+    "output_modalities" in architecture
       ? architecture.output_modalities
       : undefined;
   const modalities =
     Array.isArray(outputModalities) &&
-      outputModalities.every((value) => typeof value === "string")
+    outputModalities.every((value) => typeof value === "string")
       ? outputModalities
       : null;
   const endpoints =
     Array.isArray(rawModel.endpoints) &&
-      rawModel.endpoints.every((value) => typeof value === "string")
+    rawModel.endpoints.every((value) => typeof value === "string")
       ? rawModel.endpoints
       : null;
   const hasDecisions =

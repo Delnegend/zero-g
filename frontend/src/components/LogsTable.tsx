@@ -22,11 +22,7 @@ import type { Log } from "@/server/api/observability";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { Input } from "./ui/input";
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-} from "./ui/pagination";
+import { Pagination, PaginationContent, PaginationItem } from "./ui/pagination";
 import {
   Select,
   SelectContent,
