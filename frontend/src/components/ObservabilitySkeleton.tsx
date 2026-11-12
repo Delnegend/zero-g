@@ -135,7 +135,7 @@ export function ObservabilitySkeleton({ logsOnly }: { logsOnly: boolean }) {
                 >
                   <div className="flex min-h-8 items-start justify-between gap-2">
                     <Skeleton className="h-5 w-40 max-w-[70%]" />
-                    {index !== 4 && <Skeleton className="h-4 w-12" />}
+                    {index !== 3 && <Skeleton className="h-4 w-12" />}
                   </div>
                   <Skeleton className="min-h-0 w-full flex-1" />
                   <Skeleton className="mt-1 h-3 w-32" />

@@ -16,7 +16,7 @@ import {
   useObservability,
 } from "@/components/Observability";
 import type { ObservabilityFilterValues } from "@/server/api/observability";
-import { ObservabilityCharts } from "@/ObservabilityCharts";
+import { ObservabilityCharts } from "@/components/ObservabilityCharts";
 import { Card } from "@/components/ui/card";
 import {
   Tooltip,

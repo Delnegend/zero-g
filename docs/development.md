@@ -58,6 +58,7 @@ zero-g/
 │   │   ├── components/      # Reusable UI widgets (shadcn, charts)
 │   │   ├── routes/__root.tsx # Shared page layout, title, and actions
 │   │   ├── components/KeyForm.tsx # Virtual key form and expiration controls
+│   │   ├── components/      # Charts, log table, request/response views and related tests
 │   │   ├── *Interactions.cases.tsx # Feature-grouped interaction tests
 │   │   └── server/api/      # Generated fetch client and Zod schemas; separate query wrappers
 └── toasty/                  # Database migrations
@@ -65,6 +66,15 @@ zero-g/
 
 Related Rust implementation and test modules live together in named directories
 with `mod.rs` as their entry point.
+
+The dashboard shows requests and reported input/output token totals by provider
+over time. Missing counts remain unreported rather than being treated as zero;
+provider totals can be partial when an upstream reports only one token count.
+Time-series charts span the selected date range, including periods without requests.
+The request log response viewer reconstructs supported streamed and JSON
+responses, with a raw view for the original captured bytes. Captured responses
+are limited to 256 KiB, so the readable view may be incomplete.
+
 
 
 ---

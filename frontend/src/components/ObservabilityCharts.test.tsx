@@ -6,7 +6,7 @@ function parseDocument(html: string) {
   return document;
 }
 import { ObservabilityCharts } from "./ObservabilityCharts";
-import type { ObservabilityResponse } from "./server/api/generated/schemas";
+import type { ObservabilityResponse } from "@/server/api/generated/schemas";
 
 const bucket = (
   start: number,
@@ -21,6 +21,7 @@ const bucket = (
   output_tokens: null,
   avg_latency_ms: 12.3456,
   by_model: { model: requests },
+  by_provider: { provider: { requests, input_tokens, output_tokens: null } },
 });
 const breakdown = {
   providers: [{ name: "provider", requests: 2 }],
@@ -73,7 +74,7 @@ test("comparison preserves sparse bucket positions and unknown tokens", () => {
   assert.match(html, /Request volume: 100% higher/);
 });
 
-test("input and output panels show independent reported totals and gaps", () => {
+test("token usage combines input and output while preserving totals, trends and missing values", () => {
   const current = [
     { ...bucket(10800, 1, 4), output_tokens: 0 },
     { ...bucket(14400, 1, null), output_tokens: 6 },
@@ -93,37 +94,27 @@ test("input and output panels show independent reported totals and gaps", () => 
   const document = parseDocument(html);
   const charts = [...document.querySelectorAll(".request-chart")];
   assert.equal(charts.length, 6);
-  const input = charts[2].parentElement!;
-  const output = charts[3].parentElement!;
-  assert.match(
-    input.querySelector("h2")?.parentElement?.parentElement?.textContent ?? "",
-    /4 tokens.*42.86%/,
+  const panel = charts[2].parentElement!;
+  assert.match(panel.textContent ?? "", /Input: 4; output: 6 tokens/);
+  const trends = [...panel.querySelectorAll("button")].map(
+    (button) => button.getAttribute("aria-label") ?? "",
+  );
+  assert.ok(
+    trends.some((label) =>
+      /Input tokens: 42.86% lower.*Previous 3 hours: 7 tokens/.test(label),
+    ),
+  );
+  assert.ok(
+    trends.some((label) =>
+      /Output tokens: 33.33% lower.*Previous 3 hours: 9 tokens/.test(label),
+    ),
   );
   assert.match(
-    input.querySelector("button")?.getAttribute("aria-label") ?? "",
-    /42.86% lower.*Previous 3 hours: 7 tokens/,
+    panel.querySelector('[aria-label="Token usage data"]')?.textContent ?? "",
+    /Input: 4 tokens; output: 0 tokens.*Input: not reported; output: 6 tokens/,
   );
-  assert.match(
-    output.querySelector("h2")?.parentElement?.parentElement?.textContent ?? "",
-    /6 tokens.*33.33%/,
-  );
-  assert.match(
-    output.querySelector("button")?.getAttribute("aria-label") ?? "",
-    /33.33% lower.*Previous 3 hours: 9 tokens/,
-  );
-  assert.match(
-    input.querySelector('[aria-label="Input tokens data"]')?.textContent ?? "",
-    /4 tokens.*not reported/,
-  );
-  assert.match(
-    output.querySelector('[aria-label="Output tokens data"]')?.textContent ??
-      "",
-    /0 tokens.*6 tokens/,
-  );
-  assert.equal(charts[2].querySelectorAll("rect[fill]").length, 1);
-  assert.equal(charts[3].querySelectorAll("rect[fill]").length, 2);
+  assert.equal(charts[2].querySelectorAll("rect[fill]").length, 3);
   assert.equal(charts[2].querySelectorAll("g.ts-chart__line").length, 0);
-  assert.equal(charts[3].querySelectorAll("g.ts-chart__line").length, 0);
 });
 
 test("unavailable and zero-baseline comparisons are distinguished", () => {
@@ -153,6 +144,28 @@ test("unavailable and zero-baseline comparisons are distinguished", () => {
   );
   assert.match(zero, /Request volume: New.*Previous 3 hours: 0 requests/);
   assert.match(zero, /not reported/);
+});
+
+test("sparse and single-bucket charts retain the selected time range", () => {
+  const render = (starts: number[]) => {
+    const html = renderToStaticMarkup(
+      <ObservabilityCharts
+        interval="hour"
+        buckets={starts.map((start) => bucket(start, 1, 5))}
+        breakdown={breakdown}
+        comparison={{ ...comparison, currentSince: 0, currentUntil: 36000 }}
+      />,
+    );
+    return parseDocument(html).querySelector(".request-chart")!;
+  };
+  const two = [...render([3600, 7200]).querySelectorAll("rect[fill]")];
+  const first = Number(two[0].getAttribute("x"));
+  const second = Number(two[1].getAttribute("x"));
+  const single = render([7200]);
+  const singleX = Number(single.querySelector("rect[fill]")!.getAttribute("x"));
+  assert.ok(second > first);
+  assert.ok(Math.abs(singleX - second) < 1);
+  assert.match(single.textContent ?? "", /01-01 0[89]:/);
 });
 
 test("seven-day current points render their matching bars cleanly", () => {
@@ -257,7 +270,7 @@ test("model usage stacks only current models without previous period content", (
   const document = parseDocument(html);
   const panels = [...document.querySelectorAll(".request-chart")];
   assert.equal(panels.length, 6);
-  const chart = panels[4];
+  const chart = panels[3];
   assert.ok(chart);
   const bars = [...chart.querySelectorAll("rect[fill]")];
   assert.equal(bars.length, 2);
@@ -275,4 +288,51 @@ test("model usage stacks only current models without previous period content", (
     null,
   );
   assert.doesNotMatch(chart.textContent ?? "", /1970-01-05/);
+});
+
+test("provider charts stack requests and reported token usage by time", () => {
+  const current: ObservabilityResponse["buckets"] = [
+    {
+      ...bucket(3600, 3, 100),
+      by_provider: {
+        alpha: { requests: 2, input_tokens: 80, output_tokens: 20 },
+        beta: { requests: 1, input_tokens: null, output_tokens: null },
+      },
+    },
+    {
+      ...bucket(7200, 1, 0),
+      by_provider: { beta: { requests: 1, input_tokens: 0, output_tokens: 5 } },
+    },
+  ];
+  const html = renderToStaticMarkup(
+    <ObservabilityCharts
+      interval="hour"
+      buckets={current}
+      breakdown={{
+        providers: [
+          { name: "alpha", requests: 2 },
+          { name: "beta", requests: 2 },
+        ],
+        models: [],
+      }}
+    />,
+  );
+  const document = parseDocument(html);
+  const requests = document.querySelector(
+    '[aria-label="Requests by provider data"]',
+  );
+  const tokens = document.querySelector(
+    '[aria-label="Token usage by provider data"]',
+  );
+  assert.match(
+    requests?.textContent ?? "",
+    /01:00 UTC: alpha: 2, beta: 1.*02:00 UTC: alpha: 0, beta: 1/,
+  );
+  assert.match(
+    tokens?.textContent ?? "",
+    /01:00 UTC: alpha: 100, beta: not reported.*02:00 UTC: alpha: not reported, beta: 5/,
+  );
+  const panel = requests?.parentElement;
+  assert.match(panel?.textContent ?? "", /alpha/);
+  assert.match(panel?.textContent ?? "", /beta/);
 });

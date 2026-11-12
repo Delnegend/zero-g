@@ -3492,6 +3492,7 @@
           "input_tokens",
           "output_tokens",
           "avg_latency_ms",
+          "by_provider",
           "by_model"
         ],
         "properties": {
@@ -3506,6 +3507,16 @@
             "additionalProperties": {
               "type": "integer",
               "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "by_provider": {
+            "type": "object",
+            "description": "Request and token totals by provider in this bucket.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ProviderBucket"
             },
             "propertyNames": {
               "type": "string"
@@ -3661,6 +3672,28 @@
           "name": {
             "type": "string",
             "description": "User-facing instance name."
+          }
+        }
+      },
+      "ProviderBucket": {
+        "type": "object",
+        "description": "Available request and token totals for one provider in a time bucket.",
+        "required": ["requests", "input_tokens", "output_tokens"],
+        "properties": {
+          "input_tokens": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Sum of reported input tokens, or null if none were reported."
+          },
+          "output_tokens": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Sum of reported output tokens, or null if none were reported."
+          },
+          "requests": {
+            "type": "integer",
+            "description": "Number of requests.",
+            "minimum": 0
           }
         }
       },

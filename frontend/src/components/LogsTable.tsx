@@ -16,24 +16,24 @@ import {
   type ColumnDef,
   type SortingState,
 } from "@tanstack/react-table";
-import { formatDistanceToNow, formatTimestamp } from "./lib/date";
+import { formatDistanceToNow, formatTimestamp } from "@/lib/date";
 import { ArrowUpDown, ChevronLeft, ChevronRight, Search } from "lucide-react";
-import type { Log } from "./server/api/observability";
-import { Button } from "./components/ui/button";
-import { Card } from "./components/ui/card";
-import { Input } from "./components/ui/input";
+import type { Log } from "@/server/api/observability";
+import { Button } from "./ui/button";
+import { Card } from "./ui/card";
+import { Input } from "./ui/input";
 import {
   Pagination,
   PaginationContent,
   PaginationItem,
-} from "./components/ui/pagination";
+} from "./ui/pagination";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "./components/ui/select";
+} from "./ui/select";
 import {
   Table,
   TableBody,
@@ -41,7 +41,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "./components/ui/table";
+} from "./ui/table";
 
 const features = tableFeatures({
   columnFilteringFeature,

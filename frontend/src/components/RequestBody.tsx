@@ -1,9 +1,9 @@
-import { useMemo } from "react";
 import { createHighlighter } from "@tanstack/highlight/core";
 import { json } from "@tanstack/highlight/languages/json";
 import { createThemeCss } from "@tanstack/highlight/theme";
 import { githubDarkTheme } from "@tanstack/highlight/themes/github-dark";
 import { githubLightTheme } from "@tanstack/highlight/themes/github-light";
+import { useMemo } from "react";
 
 const highlighter = createHighlighter({ languages: [json] });
 export const requestBodyTheme = createThemeCss({
@@ -35,22 +35,22 @@ export function RequestBody({ body }: { body: unknown }) {
   }, [body]);
 
   return (
-    <pre className="request-body max-h-96 overflow-auto rounded-lg border bg-muted/50 p-4 text-xs leading-relaxed">
+    <pre className="request-body max-h-96 overflow-auto rounded-lg border bg-muted/50 p-4 text-xs leading-relaxed text-wrap">
       <code>
         {content.tokens
           ? content.tokens.map((token, index) => (
-              <span
-                key={index}
-                data-token={token.className}
-                style={
-                  token.className
-                    ? { color: `var(--th-${token.className})` }
-                    : undefined
-                }
-              >
-                {token.value}
-              </span>
-            ))
+            <span
+              key={index}
+              data-token={token.className}
+              style={
+                token.className
+                  ? { color: `var(--th-${token.className})` }
+                  : undefined
+              }
+            >
+              {token.value}
+            </span>
+          ))
           : content.text}
       </code>
     </pre>

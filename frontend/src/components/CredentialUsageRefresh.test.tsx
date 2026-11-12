@@ -2,8 +2,8 @@ import { afterEach, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type * as TestingLibrary from "@testing-library/react/pure";
-import type * as CredentialUsageModule from "./components/CredentialUsage";
-import { TooltipProvider } from "./components/ui/tooltip";
+import type * as CredentialUsageModule from "./CredentialUsage";
+import { TooltipProvider } from "./ui/tooltip";
 
 let originalFetch: typeof fetch;
 let testingLibrary: typeof TestingLibrary;
@@ -21,7 +21,7 @@ beforeEach(async () => {
   // Testing Library binds its global screen to the document at module load.
   testingLibrary = await import("@testing-library/react/pure");
   ({ CredentialUsage, CredentialUsageRefreshButton } =
-    await import("./components/CredentialUsage"));
+    await import("./CredentialUsage"));
 });
 
 afterEach(() => {

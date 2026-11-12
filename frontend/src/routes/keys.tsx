@@ -209,8 +209,7 @@ export function KeysPage() {
           <AlertDescription>
             {refreshError
               ? `The key list could not be refreshed and may be out of date. ${refreshError}`
-              : message(keysQuery.error)}
-            {" "}
+              : message(keysQuery.error)}{" "}
             <button
               type="button"
               className="font-medium underline underline-offset-4"
@@ -247,8 +246,7 @@ export function KeysPage() {
             <Alert variant="destructive">
               <AlertDescription>
                 The key list could not be refreshed and may be out of date.{" "}
-                {refreshError}
-                {" "}
+                {refreshError}{" "}
                 <button
                   type="button"
                   className="font-medium underline underline-offset-4"

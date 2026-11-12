@@ -1,5 +1,31 @@
 use super::*;
 
+/// Provider totals are independent per bucket and retain token availability.
+#[test]
+fn provider_bucket_totals_keep_known_values() {
+    let rows = vec![
+        (200, 1, None, Some(0), 1, "same".into(), "same".into()),
+        (200, 1, Some(3), None, 2, "same".into(), "other".into()),
+        (500, 1, None, None, 3, String::new(), "same".into()),
+        (200, 1, None, Some(7), 3600, "same".into(), "same".into()),
+    ];
+    let (_, buckets, _) = aggregate_rows(&rows, Interval::Hour).unwrap();
+    let buckets = serde_json::to_value(buckets).unwrap();
+    assert_eq!(
+        buckets[0]["by_provider"],
+        serde_json::json!({
+            "": {"requests": 1, "input_tokens": null, "output_tokens": null},
+            "same": {"requests": 2, "input_tokens": 3, "output_tokens": 0}
+        })
+    );
+    assert_eq!(
+        buckets[1]["by_provider"],
+        serde_json::json!({"same": {"requests": 1, "input_tokens": null, "output_tokens": 7}})
+    );
+    let (_, empty, _) = aggregate_rows(&[], Interval::Hour).unwrap();
+    assert!(empty.is_empty());
+}
+
 /// Existing request identities and dimension options survive migration.
 #[tokio::test]
 async fn migrates_existing_log_filter_options() {

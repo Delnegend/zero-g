@@ -1,6 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
-import { formatTimestamp } from "@/lib/date";
-import { useCallback, useRef, useState } from "react";
+import { ResponseBody } from "@/components/ResponseBody";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,14 +10,17 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from "@/components/ui/drawer";
-import { LogsTable } from "@/LogsTable";
-import { RequestBody, requestBodyTheme } from "@/RequestBody";
+import { formatTimestamp } from "@/lib/date";
+import { LogsTable } from "@/components/LogsTable";
+import { RequestBody, requestBodyTheme } from "@/components/RequestBody";
 import {
   observabilityQueryOptions,
-  type ObservabilityFilterValues,
   type DashboardRange,
   type Log,
+  type ObservabilityFilterValues,
 } from "@/server/api/observability";
+import { useQuery } from "@tanstack/react-query";
+import { useCallback, useRef, useState } from "react";
 
 export const number = new Intl.NumberFormat();
 
@@ -169,17 +170,15 @@ export function RequestLogs({
                 </dl>
                 <style>{requestBodyTheme}</style>
                 <div className="mt-5 grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
-                  {(
-                    [
-                      ["Request body", selected.request_body],
-                      ["Response body", selected.response_body],
-                    ] as const
-                  ).map(([title, body]) => (
-                    <div key={title} className="min-w-0">
-                      <h3 className="mb-2 text-sm font-medium">{title}</h3>
-                      <RequestBody body={body} />
-                    </div>
-                  ))}
+                  <div className="min-w-0">
+                    <h3 className="mb-2 text-sm font-medium">Request body</h3>
+                    <RequestBody body={selected.request_body} />
+                  </div>
+                  <ResponseBody
+                    key={selected.id}
+                    body={selected.response_body}
+                    status={selected.status}
+                  />
                 </div>
               </div>
               <DrawerFooter>

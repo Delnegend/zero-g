@@ -318,6 +318,7 @@ fn aggregate_rows(
             input_tokens: None,
             output_tokens: None,
             avg_latency_ms: 0.0,
+            by_provider: BTreeMap::new(),
             by_model: BTreeMap::new(),
         });
         bucket.requests = bucket.requests.saturating_add(1);
@@ -326,6 +327,26 @@ fn aggregate_rows(
             .saturating_add(usize::from((200..400).contains(&row.0)));
         bucket.errors = bucket.errors.saturating_add(usize::from(row.0 >= 400));
         increment_count(&mut bucket.by_model, &row.6);
+        if let Some(provider) = bucket.by_provider.get_mut(&row.5) {
+            provider.requests = provider.requests.saturating_add(1);
+            if let Some(tokens) = row.2 {
+                provider.input_tokens =
+                    Some(provider.input_tokens.unwrap_or(0).saturating_add(tokens));
+            }
+            if let Some(tokens) = row.3 {
+                provider.output_tokens =
+                    Some(provider.output_tokens.unwrap_or(0).saturating_add(tokens));
+            }
+        } else {
+            bucket.by_provider.insert(
+                row.5.clone(),
+                ProviderBucket {
+                    requests: 1,
+                    input_tokens: row.2,
+                    output_tokens: row.3,
+                },
+            );
+        }
         if let Some(tokens) = row.2 {
             bucket.input_tokens = Some(bucket.input_tokens.unwrap_or(0).saturating_add(tokens));
         }
@@ -609,8 +630,23 @@ struct ObservabilityBucket {
     output_tokens: Option<i64>,
     /// Mean latency in milliseconds.
     avg_latency_ms: f64,
+    /// Request and token totals by provider in this bucket.
+    by_provider: BTreeMap<String, ProviderBucket>,
     /// Request counts by model in this bucket.
     by_model: BTreeMap<String, usize>,
+}
+
+/// Available request and token totals for one provider in a time bucket.
+#[derive(Serialize, utoipa::ToSchema)]
+struct ProviderBucket {
+    /// Number of requests.
+    requests: usize,
+    /// Sum of reported input tokens, or null if none were reported.
+    #[schema(required = true)]
+    input_tokens: Option<i64>,
+    /// Sum of reported output tokens, or null if none were reported.
+    #[schema(required = true)]
+    output_tokens: Option<i64>,
 }
 
 /// Available dimensions before applying dimension filters.
@@ -682,6 +718,7 @@ struct ObservabilityResponse {
         ObservabilityResponse,
         ObservabilitySummary,
         ObservabilityBucket,
+        ProviderBucket,
         FilterOptions,
         IdentityOption,
         Breakdown,

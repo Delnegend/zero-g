@@ -1298,7 +1298,35 @@ export const ModelCatalog = zod
 export type ModelCatalog = zod.input<typeof ModelCatalog>;
 export type ModelCatalogOutput = zod.output<typeof ModelCatalog>;
 
+export const providerBucketRequestsMin = 0;
+
+export const ProviderBucket = zod
+  .object({
+    input_tokens: zod
+      .int()
+      .nullable()
+      .describe("Sum of reported input tokens, or null if none were reported."),
+    output_tokens: zod
+      .int()
+      .nullable()
+      .describe(
+        "Sum of reported output tokens, or null if none were reported.",
+      ),
+    requests: zod
+      .int()
+      .min(providerBucketRequestsMin)
+      .describe("Number of requests."),
+  })
+  .describe(
+    "Available request and token totals for one provider in a time bucket.",
+  );
+
+export type ProviderBucket = zod.input<typeof ProviderBucket>;
+export type ProviderBucketOutput = zod.output<typeof ProviderBucket>;
+
 export const observabilityBucketByModelMinOne = 0;
+
+export const observabilityBucketByProviderRequestsMin = 0;
 
 export const observabilityBucketErrorsMin = 0;
 
@@ -1312,6 +1340,33 @@ export const ObservabilityBucket = zod
     by_model: zod
       .record(zod.string(), zod.int().min(observabilityBucketByModelMinOne))
       .describe("Request counts by model in this bucket."),
+    by_provider: zod
+      .record(
+        zod.string(),
+        zod
+          .object({
+            input_tokens: zod
+              .int()
+              .nullable()
+              .describe(
+                "Sum of reported input tokens, or null if none were reported.",
+              ),
+            output_tokens: zod
+              .int()
+              .nullable()
+              .describe(
+                "Sum of reported output tokens, or null if none were reported.",
+              ),
+            requests: zod
+              .int()
+              .min(observabilityBucketByProviderRequestsMin)
+              .describe("Number of requests."),
+          })
+          .describe(
+            "Available request and token totals for one provider in a time bucket.",
+          ),
+      )
+      .describe("Request and token totals by provider in this bucket."),
     errors: zod
       .int()
       .min(observabilityBucketErrorsMin)
@@ -1382,6 +1437,8 @@ export const observabilityResponseBreakdownProvidersItemRequestsMin = 0;
 
 export const observabilityResponseBucketsItemByModelMinOne = 0;
 
+export const observabilityResponseBucketsItemByProviderRequestsMin = 0;
+
 export const observabilityResponseBucketsItemErrorsMin = 0;
 
 export const observabilityResponseBucketsItemRequestsMin = 0;
@@ -1439,6 +1496,35 @@ export const ObservabilityResponse = zod
                 zod.int().min(observabilityResponseBucketsItemByModelMinOne),
               )
               .describe("Request counts by model in this bucket."),
+            by_provider: zod
+              .record(
+                zod.string(),
+                zod
+                  .object({
+                    input_tokens: zod
+                      .int()
+                      .nullable()
+                      .describe(
+                        "Sum of reported input tokens, or null if none were reported.",
+                      ),
+                    output_tokens: zod
+                      .int()
+                      .nullable()
+                      .describe(
+                        "Sum of reported output tokens, or null if none were reported.",
+                      ),
+                    requests: zod
+                      .int()
+                      .min(
+                        observabilityResponseBucketsItemByProviderRequestsMin,
+                      )
+                      .describe("Number of requests."),
+                  })
+                  .describe(
+                    "Available request and token totals for one provider in a time bucket.",
+                  ),
+              )
+              .describe("Request and token totals by provider in this bucket."),
             errors: zod
               .int()
               .min(observabilityResponseBucketsItemErrorsMin)

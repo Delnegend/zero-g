@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, cleanup } from "@testing-library/react/pure";
 import userEvent from "@testing-library/user-event";
-import { NavUser } from "./components/NavUser";
-import { SidebarProvider } from "./components/ui/sidebar";
+import { NavUser } from "./NavUser";
+import { SidebarProvider } from "./ui/sidebar";
 
 let queryClient: QueryClient;
 

@@ -26,7 +26,7 @@ async fn check_bounded_ranges(app: &Router) {
     assert_eq!(bounded["interval"], "hour");
     assert_eq!(
         bounded["buckets"],
-        json!([{"start": -86400, "requests": 1, "successes": 0, "errors": 1, "input_tokens": 2, "output_tokens": 3, "avg_latency_ms": 10.0, "by_model": {"model": 1}}])
+        json!([{"start": -86400, "requests": 1, "successes": 0, "errors": 1, "input_tokens": 2, "output_tokens": 3, "avg_latency_ms": 10.0, "by_model": {"model": 1}, "by_provider": {"codex": {"requests": 1, "input_tokens": 2, "output_tokens": 3}}}])
     );
     assert!(bounded.get("daily").is_none());
     assert_eq!(bounded["logs"].as_array().unwrap().len(), 1);
@@ -71,8 +71,8 @@ async fn check_bounded_ranges(app: &Router) {
     assert_eq!(
         until_only["buckets"],
         json!([
-            {"start": -172_800, "requests": 1, "successes": 0, "errors": 1, "input_tokens": 2, "output_tokens": 3, "avg_latency_ms": 10.0, "by_model": {"model": 1}},
-            {"start": -86400, "requests": 1, "successes": 0, "errors": 1, "input_tokens": 2, "output_tokens": 3, "avg_latency_ms": 10.0, "by_model": {"model": 1}}
+            {"start": -172_800, "requests": 1, "successes": 0, "errors": 1, "input_tokens": 2, "output_tokens": 3, "avg_latency_ms": 10.0, "by_model": {"model": 1}, "by_provider": {"codex": {"requests": 1, "input_tokens": 2, "output_tokens": 3}}},
+            {"start": -86400, "requests": 1, "successes": 0, "errors": 1, "input_tokens": 2, "output_tokens": 3, "avg_latency_ms": 10.0, "by_model": {"model": 1}, "by_provider": {"codex": {"requests": 1, "input_tokens": 2, "output_tokens": 3}}}
         ])
     );
     assert_eq!(until_only["logs"].as_array().unwrap().len(), 2);
@@ -424,8 +424,8 @@ async fn range_filters_all_aggregates_and_latest_logs() {
     assert_eq!(
         result["buckets"],
         json!([
-            {"start": -31_536_000, "requests": 202, "successes": 201, "errors": 1, "input_tokens": 404, "output_tokens": 606, "avg_latency_ms": 10.0, "by_model": {"model": 202}},
-            {"start": 0, "requests": 1, "successes": 1, "errors": 0, "input_tokens": 2, "output_tokens": 3, "avg_latency_ms": 10.0, "by_model": {"model": 1}}
+            {"start": -31_536_000, "requests": 202, "successes": 201, "errors": 1, "input_tokens": 404, "output_tokens": 606, "avg_latency_ms": 10.0, "by_model": {"model": 202}, "by_provider": {"codex": {"requests": 202, "input_tokens": 404, "output_tokens": 606}}},
+            {"start": 0, "requests": 1, "successes": 1, "errors": 0, "input_tokens": 2, "output_tokens": 3, "avg_latency_ms": 10.0, "by_model": {"model": 1}, "by_provider": {"codex": {"requests": 1, "input_tokens": 2, "output_tokens": 3}}}
         ])
     );
     let hourly = serde_json::to_value(
@@ -445,9 +445,9 @@ async fn range_filters_all_aggregates_and_latest_logs() {
     assert_eq!(
         hourly["buckets"],
         json!([
-            {"start": -86400, "requests": 1, "successes": 0, "errors": 1, "input_tokens": 2, "output_tokens": 3, "avg_latency_ms": 10.0, "by_model": {"model": 1}},
-            {"start": -3600, "requests": 201, "successes": 201, "errors": 0, "input_tokens": 402, "output_tokens": 603, "avg_latency_ms": 10.0, "by_model": {"model": 201}},
-            {"start": 0, "requests": 1, "successes": 1, "errors": 0, "input_tokens": 2, "output_tokens": 3, "avg_latency_ms": 10.0, "by_model": {"model": 1}}
+            {"start": -86400, "requests": 1, "successes": 0, "errors": 1, "input_tokens": 2, "output_tokens": 3, "avg_latency_ms": 10.0, "by_model": {"model": 1}, "by_provider": {"codex": {"requests": 1, "input_tokens": 2, "output_tokens": 3}}},
+            {"start": -3600, "requests": 201, "successes": 201, "errors": 0, "input_tokens": 402, "output_tokens": 603, "avg_latency_ms": 10.0, "by_model": {"model": 201}, "by_provider": {"codex": {"requests": 201, "input_tokens": 402, "output_tokens": 603}}},
+            {"start": 0, "requests": 1, "successes": 1, "errors": 0, "input_tokens": 2, "output_tokens": 3, "avg_latency_ms": 10.0, "by_model": {"model": 1}, "by_provider": {"codex": {"requests": 1, "input_tokens": 2, "output_tokens": 3}}}
         ])
     );
     let logs = result["logs"].as_array().unwrap();
@@ -495,7 +495,7 @@ async fn dimension_filters_and_full_dataset_metrics() {
     assert_eq!(value["summary"]["output_tokens"], Value::Null);
     assert_eq!(
         value["buckets"],
-        json!([{"start": 0, "requests": 1, "successes": 1, "errors": 0, "input_tokens": null, "output_tokens": null, "avg_latency_ms": 20.0, "by_model": {"m1": 1}}])
+        json!([{"start": 0, "requests": 1, "successes": 1, "errors": 0, "input_tokens": null, "output_tokens": null, "avg_latency_ms": 20.0, "by_model": {"m1": 1}, "by_provider": {"alpha": {"requests": 1, "input_tokens": null, "output_tokens": null}}}])
     );
     assert_eq!(value["logs"].as_array().unwrap().len(), 1);
     assert_eq!(value["logs"][0]["status"], 399);
@@ -536,6 +536,10 @@ async fn dimension_filters_and_full_dataset_metrics() {
     assert_eq!(value["summary"]["output_tokens"], 409);
     assert_eq!(value["logs"].as_array().unwrap().len(), 200);
     assert_eq!(value["buckets"][0]["by_model"], json!({"m1": 2, "m2": 202}));
+    assert_eq!(
+        value["buckets"][0]["by_provider"],
+        json!({"alpha": {"requests": 2, "input_tokens": 0, "output_tokens": null}, "beta": {"requests": 202, "input_tokens": 201, "output_tokens": 409}})
+    );
     assert_eq!(
         value["breakdown"]["providers"],
         json!([{"name":"alpha","requests":2},{"name":"beta","requests":202}])

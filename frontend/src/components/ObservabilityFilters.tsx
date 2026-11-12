@@ -155,7 +155,9 @@ export function FilterGroup({
                       ? "Successful"
                       : "Error"
                     : identities && names.has(value)
-                      ? `${names.get(value)} (${value})`
+                      ? title === "Virtual keys" || title === "Provider credentials"
+                        ? names.get(value) || value
+                        : `${names.get(value)} (${value})`
                       : value}
                 </span>
               )}

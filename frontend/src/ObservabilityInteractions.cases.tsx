@@ -262,7 +262,7 @@ test("dashboard filters graphs and changes the time range without showing logs",
     "CI key",
   );
   await user.click(
-    within(filters).getByRole("checkbox", { name: "CI key (vk-1)" }),
+    within(filters).getByRole("checkbox", { name: "CI key" }),
   );
   await waitFor(() =>
     assert.deepEqual(
@@ -275,7 +275,7 @@ test("dashboard filters graphs and changes the time range without showing logs",
   );
   await user.click(
     within(filters).getByRole("checkbox", {
-      name: "Primary account (credential-1)",
+      name: "Primary account",
     }),
   );
   await waitFor(() =>

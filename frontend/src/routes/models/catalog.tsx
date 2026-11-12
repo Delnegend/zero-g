@@ -1,6 +1,5 @@
 import { CatalogSkeleton } from "@/components/Loading";
 import { RefreshButton } from "@/components/RefreshButton";
-import { Page } from "@/routes/__root";
 import { ScrollingText } from "@/components/ScrollingText";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card } from "@/components/ui/card";
@@ -32,7 +31,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { RequestBody, requestBodyTheme } from "@/RequestBody";
+import { RequestBody, requestBodyTheme } from "@/components/RequestBody";
+import { Page } from "@/routes/__root";
 import { message } from "@/server/api/client";
 import {
   modelCatalogQueryOptions,
@@ -100,18 +100,18 @@ function ModelCard({
   const architecture = rawModel.architecture;
   const outputModalities =
     architecture &&
-    typeof architecture === "object" &&
-    "output_modalities" in architecture
+      typeof architecture === "object" &&
+      "output_modalities" in architecture
       ? architecture.output_modalities
       : undefined;
   const modalities =
     Array.isArray(outputModalities) &&
-    outputModalities.every((value) => typeof value === "string")
+      outputModalities.every((value) => typeof value === "string")
       ? outputModalities
       : null;
   const endpoints =
     Array.isArray(rawModel.endpoints) &&
-    rawModel.endpoints.every((value) => typeof value === "string")
+      rawModel.endpoints.every((value) => typeof value === "string")
       ? rawModel.endpoints
       : null;
   const hasDecisions =

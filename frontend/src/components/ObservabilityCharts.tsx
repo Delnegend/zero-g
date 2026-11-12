@@ -1,4 +1,3 @@
-import { useEffect, useMemo, useState } from "react";
 import { barY, defineChart } from "@tanstack/charts";
 import { motion } from "@tanstack/charts/motion";
 import { Chart } from "@tanstack/charts/react/core";
@@ -6,13 +5,14 @@ import { scaleBand } from "@tanstack/charts/scales/band";
 import { scaleLinear } from "@tanstack/charts/scales/linear";
 import { tooltip } from "@tanstack/charts/tooltip";
 import { Minus, TrendingDown, TrendingUp } from "lucide-react";
-import { Card } from "./components/ui/card";
+import { useEffect, useMemo, useState } from "react";
+import { Card } from "./ui/card";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "./components/ui/tooltip";
-import type { ObservabilityComparison } from "./server/api/observability";
+} from "./ui/tooltip";
+import type { ObservabilityComparison } from "@/server/api/observability";
 
 type Interval = "hour" | "day" | "month" | "year";
 type Bucket = {
@@ -24,6 +24,14 @@ type Bucket = {
   output_tokens: number | null;
   avg_latency_ms: number;
   by_model: Record<string, number>;
+  by_provider: Record<
+    string,
+    {
+      requests: number;
+      input_tokens: number | null;
+      output_tokens: number | null;
+    }
+  >;
 };
 type Breakdown = { name: string; requests: number }[];
 type Point = {
@@ -115,8 +123,10 @@ function GraphPanel({
   alternative,
   domain,
   comparison,
+  comparisons,
   summary,
   timeSeries = false,
+  timeRange,
   stacked = false,
   emptyMessage = "No requests to chart.",
 }: {
@@ -127,8 +137,10 @@ function GraphPanel({
   alternative: Row[];
   domain: string[];
   comparison?: Comparison;
+  comparisons?: { title: string; value: Comparison }[];
   summary: string;
   timeSeries?: boolean;
+  timeRange?: readonly [number, number];
   stacked?: boolean;
   emptyMessage?: string;
 }) {
@@ -176,8 +188,10 @@ function GraphPanel({
           ),
         ]
       : [];
-    const timeMin = timeStarts.length ? Math.min(...timeStarts) : 0;
-    const timeMax = timeStarts.length ? Math.max(...timeStarts) : 1;
+    const timeMin =
+      timeRange?.[0] ?? (timeStarts.length ? Math.min(...timeStarts) : 0);
+    const timeMax =
+      timeRange?.[1] ?? (timeStarts.length ? Math.max(...timeStarts) : 1);
     const timeLabelFor = (value: number) => {
       const date = new Date(value * 1000).toISOString();
       return date.includes("T")
@@ -188,7 +202,8 @@ function GraphPanel({
       marks: [
         barY(bars, {
           x: timeSeries
-            ? (point) => point.start ?? 0
+            ? (point) =>
+                Math.max(timeMin, Math.min(timeMax, point.start ?? timeMin))
             : (point) => slot(point.label, point.series),
           y: "value",
           z: "series",
@@ -201,10 +216,13 @@ function GraphPanel({
       scales: {
         x: timeSeries
           ? {
-              scale: scaleLinear().domain([timeMin, timeMax]).nice(),
+              scale: scaleLinear().domain([
+                timeMin,
+                timeMax > timeMin ? timeMax : timeMin + 1,
+              ]),
               axis: {
                 ticks: {
-                  count: Math.min(6, Math.max(2, timeStarts.length)),
+                  count: 6,
                   format: (value) => {
                     const label = timeLabelFor(Number(value));
                     return label.includes(" ") ? label.slice(5) : label;
@@ -254,6 +272,23 @@ function GraphPanel({
                 },
               ]
             : [{ channel: "x" as const, label: "Category" }]),
+          ...(stacked
+            ? [
+                {
+                  id: "series",
+                  label: "Series",
+                  text: (point: { datum: unknown }) => {
+                    const datum = point.datum;
+                    return datum &&
+                      typeof datum === "object" &&
+                      "series" in datum &&
+                      typeof datum.series === "string"
+                      ? datum.series
+                      : "";
+                  },
+                },
+              ]
+            : []),
           {
             channel: "y",
             label: unit,
@@ -261,7 +296,7 @@ function GraphPanel({
         ],
       },
     });
-  }, [series, unit, domain, timeSeries, stacked]);
+  }, [series, unit, domain, timeSeries, stacked, timeRange]);
 
   return (
     <Card className="flex min-w-0 flex-col gap-0 p-3 shadow-none sm:p-5">
@@ -271,6 +306,19 @@ function GraphPanel({
           <span className="text-xs text-muted-foreground">{summary}</span>
         </div>
         {comparison && <GraphTrend title={title} comparison={comparison} />}
+        {comparisons && (
+          <div className="flex flex-wrap justify-end">
+            {comparisons.map(({ title: label, value }) => (
+              <span
+                key={label}
+                className="inline-flex items-center gap-1 text-xs text-muted-foreground"
+              >
+                {label}
+                <GraphTrend title={label} comparison={value} />
+              </span>
+            ))}
+          </div>
+        )}
       </div>
       <div className="request-chart h-[135px] w-full min-w-0 shrink-0 overflow-hidden text-foreground sm:h-[205px]">
         {pointCount === 0 ? (
@@ -337,6 +385,9 @@ export function ObservabilityCharts({
       date: bucketLabel(bucket.start, interval),
     }));
   const domain = periods.map((p) => p.label);
+  const timeRange = comparison
+    ? ([comparison.currentSince, comparison.currentUntil] as const)
+    : undefined;
   const rows = (
     items: typeof periods,
     value: (bucket: (typeof periods)[number]) => string,
@@ -437,10 +488,71 @@ export function ObservabilityCharts({
         value: otherModels.reduce((sum, name) => sum + modelCount(p, name), 0),
       })),
     });
-  const providers = breakdown.providers.map((item) => item.name);
+  const providers = [...breakdown.providers].sort(
+    (a, b) => b.requests - a.requests,
+  );
   const providerLabel = (name: string) => name || "(not provided)";
-  const providerCount = (items: Breakdown, name: string) =>
-    items.find((item) => item.name === name)?.requests ?? 0;
+  const topProviders = providers.slice(0, 4);
+  const otherProviders = providers.slice(4);
+  const providerGroups = [
+    ...topProviders.map((provider, index) => ({
+      name: providerLabel(provider.name),
+      ids: [provider.name],
+      color: modelColors[index],
+    })),
+    ...(otherProviders.length
+      ? [
+          {
+            name: "Other providers",
+            ids: otherProviders.map((provider) => provider.name),
+            color: modelColors[4],
+          },
+        ]
+      : []),
+  ];
+  const providerValue = (
+    bucket: Bucket,
+    ids: string[],
+    tokens: boolean,
+  ): number | null => {
+    const entries = ids.flatMap((id) =>
+      bucket.by_provider[id] ? [bucket.by_provider[id]] : [],
+    );
+    if (!tokens) return entries.reduce((sum, entry) => sum + entry.requests, 0);
+    const values = entries
+      .flatMap((entry) => [entry.input_tokens, entry.output_tokens])
+      .filter((value): value is number => value !== null);
+    return values.length ? values.reduce((sum, value) => sum + value, 0) : null;
+  };
+  const providerSeries = (tokens: boolean): Series[] =>
+    providerGroups.map((group) => ({
+      name: group.name,
+      color: group.color,
+      points: periods.flatMap((period) => {
+        const value = providerValue(period, group.ids, tokens);
+        return value === null
+          ? []
+          : [{ label: period.label, start: period.start, value }];
+      }),
+    }));
+  const providerRows = (tokens: boolean) =>
+    periodRows((period) =>
+      providerGroups
+        .map((group) => {
+          const value = providerValue(period, group.ids, tokens);
+          const partial =
+            tokens &&
+            group.ids.some((id) => {
+              const entry = period.by_provider[id];
+              return (
+                entry &&
+                (entry.input_tokens === null || entry.output_tokens === null)
+              );
+            });
+          return `${group.name}: ${value === null ? "not reported" : `${number.format(value)}${partial ? " (partial)" : ""}`}`;
+        })
+        .join(", "),
+    );
   const dateDescription = `Recorded requests grouped by UTC ${interval}.`;
 
   return (
@@ -448,6 +560,7 @@ export function ObservabilityCharts({
       <GraphPanel
         title="Request volume"
         timeSeries
+        timeRange={timeRange}
         stacked
         summary={`${number.format(requests)} requests`}
         domain={domain}
@@ -479,6 +592,7 @@ export function ObservabilityCharts({
       <GraphPanel
         title="Average latency"
         timeSeries
+        timeRange={timeRange}
         summary={latency}
         domain={domain}
         comparison={compare(
@@ -501,51 +615,56 @@ export function ObservabilityCharts({
         ]}
         alternative={periodRows((p) => `${p.avg_latency_ms} ms`)}
       />
-      {(
-        [
-          ["Input", "input_tokens", "#3b82f6"],
-          ["Output", "output_tokens", "#a855f7"],
-        ] as const
-      ).map(([name, field, color]) => (
-        <GraphPanel
-          key={field}
-          title={`${name} tokens`}
-          timeSeries
-          summary={`${tokenTotal(field)} tokens`}
-          domain={domain}
-          comparison={compare(
+      <GraphPanel
+        title="Token usage"
+        timeSeries
+        timeRange={timeRange}
+        stacked
+        summary={`Input: ${tokenTotal("input_tokens")}; output: ${tokenTotal("output_tokens")} tokens`}
+        domain={domain}
+        comparisons={(
+          [
+            ["Input", "input_tokens"],
+            ["Output", "output_tokens"],
+          ] as const
+        ).map(([name, field]) => ({
+          title: `${name} tokens`,
+          value: compare(
             totalTokens(periods, field),
             previousData ? totalTokens(previousData.buckets, field) : null,
             "tokens",
-          )}
-          description={`${dateDescription} Unreported token counts are omitted, not zero.`}
-          unit="Tokens"
-          emptyMessage={
-            periods.length
-              ? `${name} tokens were not reported.`
-              : "No requests to chart."
-          }
-          series={[
-            {
-              name,
-              color,
-              points: periods.flatMap((p) =>
-                p[field] === null
-                  ? []
-                  : [{ label: p.label, start: p.start, value: p[field] }],
-              ),
-            },
-          ]}
-          alternative={periodRows((p) =>
+          ),
+        }))}
+        description={`${dateDescription} Input and output tokens are stacked. Unreported counts are omitted, not zero.`}
+        unit="Tokens"
+        emptyMessage={
+          periods.length
+            ? "Token counts were not reported."
+            : "No requests to chart."
+        }
+        series={(
+          [
+            ["Input", "input_tokens", "#3b82f6"],
+            ["Output", "output_tokens", "#a855f7"],
+          ] as const
+        ).map(([name, field, color]) => ({
+          name,
+          color,
+          points: periods.flatMap((p) =>
             p[field] === null
-              ? "not reported"
-              : `${number.format(p[field])} tokens`,
-          )}
-        />
-      ))}
+              ? []
+              : [{ label: p.label, start: p.start, value: p[field] }],
+          ),
+        }))}
+        alternative={periodRows(
+          (p) =>
+            `Input: ${p.input_tokens === null ? "not reported" : `${number.format(p.input_tokens)} tokens`}; output: ${p.output_tokens === null ? "not reported" : `${number.format(p.output_tokens)} tokens`}`,
+        )}
+      />
       <GraphPanel
         title="Model usage"
         timeSeries
+        timeRange={timeRange}
         stacked
         summary={`${number.format(requests)} requests`}
         domain={domain}
@@ -564,25 +683,33 @@ export function ObservabilityCharts({
       />
       <GraphPanel
         title="Requests by provider"
+        timeSeries
+        timeRange={timeRange}
+        stacked
         summary={`${number.format(requests)} requests`}
-        domain={providers.map(providerLabel)}
+        domain={domain}
         comparison={requestComparison}
-        description="Request distribution across providers in the selected range."
+        description={`${dateDescription} Requests grouped by provider; providers beyond the four most used are combined.`}
         unit="Requests"
-        series={[
-          {
-            name: "Requests",
-            color: "var(--primary)",
-            points: providers.map((name) => ({
-              label: providerLabel(name),
-              value: providerCount(breakdown.providers, name),
-            })),
-          },
-        ]}
-        alternative={breakdown.providers.map((item) => ({
-          label: item.name || "(not provided)",
-          value: `${number.format(item.requests)} requests`,
-        }))}
+        series={providerSeries(false)}
+        alternative={providerRows(false)}
+      />
+      <GraphPanel
+        title="Token usage by provider"
+        timeSeries
+        timeRange={timeRange}
+        stacked
+        summary={`Input: ${tokenTotal("input_tokens")}; output: ${tokenTotal("output_tokens")} tokens`}
+        domain={domain}
+        description={`${dateDescription} Reported input and output tokens combined by provider. Missing counts are not zero.`}
+        unit="Tokens"
+        series={providerSeries(true)}
+        alternative={providerRows(true)}
+        emptyMessage={
+          periods.length
+            ? "Token counts were not reported."
+            : "No requests to chart."
+        }
       />
     </div>
   );
