@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
+import { formatCountdown } from "@/lib/date";
 import { message } from "../server/api/client";
 import {
   credentialUsageOptions,
@@ -26,16 +27,7 @@ function ResetTime({ reset }: { reset: Date }) {
     return () => clearInterval(timer);
   }, []);
   const minutes = Math.ceil((reset.getTime() - now) / 60_000);
-  const days = Math.floor(minutes / 1_440);
-  const hours = Math.floor((minutes % 1_440) / 60);
-  const remainingMinutes = minutes % 60;
-  const relative = [
-    days > 0 && `${days}d`,
-    hours > 0 && `${hours}h`,
-    remainingMinutes > 0 && `${remainingMinutes}m`,
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const relative = formatCountdown(minutes);
   return (
     <Tooltip>
       <TooltipTrigger className="text-left whitespace-nowrap text-muted-foreground underline decoration-dotted underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2">

@@ -16,7 +16,7 @@ import {
   type ColumnDef,
   type SortingState,
 } from "@tanstack/react-table";
-import { formatDistanceToNow } from "./lib/date";
+import { formatDistanceToNow, formatTimestamp } from "./lib/date";
 import { ArrowUpDown, ChevronLeft, ChevronRight, Search } from "lucide-react";
 import type { Log } from "./server/api/observability";
 import { Button } from "./components/ui/button";
@@ -69,11 +69,6 @@ const sortOptions = [
   { value: "path:asc", label: "Path: A–Z" },
   { value: "path:desc", label: "Path: Z–A" },
 ];
-
-function formatDate(value: number): string {
-  const date = new Date(value * 1000);
-  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
-}
 
 function relativeDate(value: number): string {
   const date = new Date(value * 1000);
@@ -137,7 +132,7 @@ export function LogsTable({
             onClick={(event) => onSelect(row.original.id, event.currentTarget)}
           >
             <span className="text-xs tabular-nums">
-              {formatDate(row.original.created_at)}
+              {formatTimestamp(row.original.created_at)}
             </span>
             <span className="text-[11px] text-muted-foreground">
               {relativeDate(row.original.created_at)}
@@ -321,7 +316,7 @@ export function LogsTable({
               </p>
               <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                 <span className="text-muted-foreground">
-                  {formatDate(log.created_at)}
+                  {formatTimestamp(log.created_at)}
                   <span className="block text-[11px]">
                     {relativeDate(log.created_at)}
                   </span>

@@ -55,3 +55,21 @@ export function formatDistanceToNow(
     ? relativeTimeFormat.format(Math.round(diffSec / 31536000), "year")
     : `${absYears} years`;
 }
+
+export function formatTimestamp(value: number): string {
+  const date = new Date(value * 1000);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+}
+
+export function formatCountdown(minutes: number): string {
+  const days = Math.floor(minutes / 1_440);
+  const hours = Math.floor((minutes % 1_440) / 60);
+  const remainingMinutes = minutes % 60;
+  return [
+    days > 0 && `${days}d`,
+    hours > 0 && `${hours}h`,
+    remainingMinutes > 0 && `${remainingMinutes}m`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}

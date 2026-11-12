@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { formatTimestamp } from "@/lib/date";
 import { useCallback, useRef, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -24,11 +25,6 @@ export const number = new Intl.NumberFormat();
 
 export function formatTokens(value: number | null): string {
   return value == null ? "Unknown" : number.format(value);
-}
-
-function formatDate(value: number): string {
-  const date = new Date(value * 1000);
-  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
 }
 
 export function useObservability(
@@ -128,7 +124,7 @@ export function RequestLogs({
                 <DrawerTitle>Request details</DrawerTitle>
                 <DrawerDescription className="break-all">
                   {selected.provider} / {selected.model} ·{" "}
-                  {formatDate(selected.created_at)} · ID {selected.id}
+                  {formatTimestamp(selected.created_at)} · ID {selected.id}
                 </DrawerDescription>
               </DrawerHeader>
               <div className="min-h-0 overflow-y-auto overscroll-contain p-4">
