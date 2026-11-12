@@ -21,7 +21,6 @@ use crate::server::{
 };
 
 /// Translation between chat completions and the upstream Responses API.
-#[path = "translate.rs"]
 mod translate;
 
 /// Shared redirect-free client for OAuth requests.

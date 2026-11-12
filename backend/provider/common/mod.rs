@@ -8,6 +8,8 @@ pub(crate) mod proxy;
 pub(crate) mod request_identity;
 /// Scoped identities for upstream session affinity.
 pub(crate) mod session;
+/// Incremental upstream SSE frame decoding.
+pub(crate) mod stream;
 
 use crate::openai::Model;
 use crate::provider::{quota, registry};

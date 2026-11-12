@@ -19,57 +19,7 @@ fn normalize_model(kind: &str, model: &mut crate::openai::Model) {
         "chatjimmy" => crate::provider::chatjimmy::catalog_info(model),
         _ => return,
     };
-    // Anthropic's max_input_tokens is input-only, not a combined context limit.
-    if kind != "claude" {
-        model.context_window = model
-            .context_window
-            .or(info.context_window)
-            .filter(|n| *n > 0);
-    }
-    model.max_output_tokens = model
-        .max_output_tokens
-        .or(info.max_output_tokens)
-        .filter(|n| *n > 0);
-    model.reasoning = model.reasoning.or(info.reasoning);
-    model.supports_tools = model.supports_tools.or(info.tool_call);
-    if model.input_modalities.is_none() {
-        model.input_modalities = info.input_modalities.map(|modalities| {
-            modalities
-                .into_iter()
-                .filter(|m| {
-                    if kind == "claude" {
-                        m == "text" || m == "image"
-                    } else {
-                        matches!(m.as_str(), "text" | "image" | "audio" | "video" | "pdf")
-                    }
-                })
-                .collect()
-        });
-    }
-    if kind == "claude" {
-        // The translator accepts text and images, but not PDF content parts.
-        if let Some(modalities) = &mut model.input_modalities {
-            modalities.retain(|m| m == "text" || m == "image");
-            if !modalities.iter().any(|m| m == "text") {
-                modalities.insert(0, "text".into());
-            }
-        }
-        model.supported_reasoning_efforts = info.reasoning_efforts;
-        model.output_modalities = Some(vec!["text".into()]);
-    }
-    // A flattened provider field must never shadow a normalized field.
-    for key in [
-        "context_window",
-        "max_output_tokens",
-        "reasoning",
-        "input_modalities",
-        "output_modalities",
-        "supports_tools",
-        "supported_reasoning_efforts",
-        "default_reasoning_effort",
-    ] {
-        model.extra.remove(key);
-    }
+    info.apply_to_route(model, kind == "claude");
 }
 
 /// Aggregate permitted model records, without exposing upstream errors.

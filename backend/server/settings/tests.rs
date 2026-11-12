@@ -1,0 +1,795 @@
+use super::*;
+use crate::storage::ProviderRecord;
+use axum::extract::{Path, Request, State};
+use axum::http::header;
+use axum::response::Json;
+use axum::{
+    Extension, Router,
+    body::{Body, to_bytes},
+    routing::{get, post},
+};
+use serde_json::{Value, json};
+use tower::ServiceExt;
+
+/// Generates a unique temporary database path.
+fn path() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("zero-g-settings-{}.db", uuid::Uuid::new_v4()))
+}
+
+/// Encodes a deterministic 32-byte encryption key for tests.
+fn key(byte: u8) -> String {
+    STANDARD.encode([byte; 32])
+}
+
+/// Parses a response body as JSON.
+async fn json_body(response: Response) -> Value {
+    let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+/// Settings endpoints retain their response and partial-update behavior.
+#[tokio::test]
+async fn settings_endpoints_preserve_response_and_update_behavior() {
+    let path = path();
+    let database = Database::open(path.to_str().unwrap()).await.unwrap();
+    let store = SettingsStore::new(database, &key(1)).await.unwrap();
+    let logs = crate::server::observability::LogStore::new(store.database.clone());
+
+    let input = serde_json::from_value(json!({
+        "log_retention_days": 7,
+        "pricing_interval_hours": 12,
+        "discovery_interval_minutes": 30
+    }))
+    .unwrap();
+    let response = put_settings(State((store.clone(), logs.clone())), Json(input)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["log_retention_days"], 7);
+    assert_eq!(body["pricing_interval_hours"], 12);
+    assert_eq!(body["discovery_interval_minutes"], 30);
+    assert!(body.get("oauth_client_id").is_none());
+    assert!(body.get("oauth_client_secret_set").is_none());
+
+    let input = serde_json::from_value(json!({"log_retention_days": 0})).unwrap();
+    let response = put_settings(State((store.clone(), logs.clone())), Json(input)).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    drop(logs);
+    drop(store);
+    std::fs::remove_file(path).unwrap();
+}
+
+/// Concurrent initialization establishes only one encryption key.
+#[tokio::test]
+async fn concurrent_initialization_accepts_only_one_encryption_key() {
+    let path = path();
+    let database = Database::open(path.to_str().unwrap()).await.unwrap();
+    let first_key = key(1);
+    let second_key = key(2);
+    let (first, second) = tokio::join!(
+        SettingsStore::new(database.clone(), &first_key),
+        SettingsStore::new(database.clone(), &second_key),
+    );
+    assert_ne!(first.is_ok(), second.is_ok());
+    let (store, accepted, rejected) = if let Ok(store) = first {
+        (store, first_key, second_key)
+    } else {
+        (second.unwrap(), second_key, first_key)
+    };
+    store.secret_put("test", "value").await.unwrap();
+    assert!(
+        SettingsStore::new(database.clone(), &rejected)
+            .await
+            .is_err()
+    );
+    let reopened = SettingsStore::new(database.clone(), &accepted)
+        .await
+        .unwrap();
+    assert_eq!(
+        reopened.secret_get("test").await.unwrap().as_deref(),
+        Some("value")
+    );
+    drop((store, reopened, database));
+    std::fs::remove_file(path).unwrap();
+}
+
+/// Concurrent revocations retain one revocation timestamp.
+#[tokio::test]
+async fn concurrent_key_revocations_have_one_winner() {
+    let path = path();
+    let database = Database::open(path.to_str().unwrap()).await.unwrap();
+    let store = SettingsStore::new(database, &key(1)).await.unwrap();
+    let response = create_key(
+        State(store.clone()),
+        Json(CreateKey {
+            name: "test".into(),
+            providers: vec![],
+            models: vec![],
+            expires_at: None,
+        }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let id = json_body(response).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (first, second) = tokio::join!(
+        revoke_key(State(store.clone()), Path(id.clone())),
+        revoke_key(State(store.clone()), Path(id)),
+    );
+    assert!(
+        (first.status() == StatusCode::NO_CONTENT && second.status() == StatusCode::NOT_FOUND)
+            || (second.status() == StatusCode::NO_CONTENT
+                && first.status() == StatusCode::NOT_FOUND)
+    );
+    drop(store);
+    std::fs::remove_file(path).unwrap();
+}
+
+/// Expiration changes govern authentication.
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn key_expiration_lifecycle() {
+    let store = SettingsStore::new(Database::open(":memory:").await.unwrap(), &key(1))
+        .await
+        .unwrap();
+    let make = |expires_at| CreateKey {
+        name: "lifecycle".into(),
+        providers: vec![],
+        models: vec![],
+        expires_at,
+    };
+    assert_eq!(
+        create_key(State(store.clone()), Json(make(Some(unix_now()))))
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    let future = unix_now() + 3600;
+    let created = json_body(create_key(State(store.clone()), Json(make(Some(future)))).await).await;
+    assert_eq!(created["expires_at"], future);
+    assert!(created["revoked_at"].is_null());
+    let id = created["id"].as_str().unwrap().to_owned();
+    let token = created["key"].as_str().unwrap().to_owned();
+    assert!(store.permissions(&token, None).await.unwrap().is_some());
+    assert_eq!(
+        update_key(
+            State(store.clone()),
+            Path(id.clone()),
+            Json(UpdateKey {
+                expires_at: Some(Some(unix_now())),
+                ..Default::default()
+            })
+        )
+        .await
+        .status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        update_key(
+            State(store.clone()),
+            Path(id.clone()),
+            Json(UpdateKey {
+                expires_at: Some(None),
+                ..Default::default()
+            })
+        )
+        .await
+        .status(),
+        StatusCode::NO_CONTENT
+    );
+    assert!(
+        json_body(list_keys(State(store.clone())).await).await["keys"][0]["expires_at"].is_null()
+    );
+    assert_eq!(
+        update_key(
+            State(store.clone()),
+            Path(id.clone()),
+            Json(UpdateKey {
+                expires_at: Some(Some(future)),
+                ..Default::default()
+            })
+        )
+        .await
+        .status(),
+        StatusCode::NO_CONTENT
+    );
+
+    let row = VirtualKey::filter_by_id(id.as_str())
+        .first()
+        .exec(&mut (*store.database.db).clone())
+        .await
+        .unwrap()
+        .unwrap();
+    VirtualKey::upsert_by_id(id.as_str())
+        .name(row.name)
+        .key_hash(row.key_hash)
+        .providers(row.providers)
+        .models(row.models)
+        .created_at(row.created_at)
+        .expires_at(Some(unix_now()))
+        .revoked_at(None)
+        .exec(&mut (*store.database.db).clone())
+        .await
+        .unwrap();
+    let identity = crate::provider::common::request_identity::RequestIdentity::default();
+    assert!(
+        store
+            .permissions(&token, Some(&identity))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(identity.snapshot().virtual_key_id.is_none());
+    assert_eq!(
+        update_key(
+            State(store.clone()),
+            Path(id.clone()),
+            Json(UpdateKey {
+                expires_at: Some(None),
+                ..Default::default()
+            })
+        )
+        .await
+        .status(),
+        StatusCode::NO_CONTENT
+    );
+    assert!(store.permissions(&token, None).await.unwrap().is_some());
+}
+
+/// Revocation blocks authentication and keeps metadata visible.
+#[tokio::test]
+async fn key_revocation_lifecycle() {
+    let store = SettingsStore::new(Database::open(":memory:").await.unwrap(), &key(1))
+        .await
+        .unwrap();
+    let created = json_body(
+        create_key(
+            State(store.clone()),
+            Json(CreateKey {
+                name: "lifecycle".into(),
+                providers: vec![],
+                models: vec![],
+                expires_at: None,
+            }),
+        )
+        .await,
+    )
+    .await;
+    let id = created["id"].as_str().unwrap().to_owned();
+    let token = created["key"].as_str().unwrap().to_owned();
+    assert_eq!(
+        revoke_key(State(store.clone()), Path(id.clone()))
+            .await
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+    assert!(store.permissions(&token, None).await.unwrap().is_none());
+    let listed = json_body(list_keys(State(store.clone())).await).await;
+    assert_eq!(listed["keys"][0]["id"], id);
+    assert!(listed["keys"][0]["revoked_at"].is_i64());
+    assert_eq!(
+        update_key(
+            State(store.clone()),
+            Path(id.clone()),
+            Json(UpdateKey {
+                expires_at: Some(None),
+                ..Default::default()
+            })
+        )
+        .await
+        .status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        unrevoke_key(State(store.clone()), Path(id.clone()))
+            .await
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+    assert!(store.permissions(&token, None).await.unwrap().is_some());
+    let restored = json_body(list_keys(State(store.clone())).await).await;
+    assert!(restored["keys"][0]["revoked_at"].is_null());
+    assert_eq!(
+        unrevoke_key(State(store.clone()), Path(id)).await.status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        unrevoke_key(State(store.clone()), Path("missing".into()))
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        update_key(
+            State(store),
+            Path("missing".into()),
+            Json(UpdateKey {
+                expires_at: Some(None),
+                ..Default::default()
+            })
+        )
+        .await
+        .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert!(serde_json::from_value::<UpdateKey>(json!({})).is_ok());
+}
+/// Updating key name, providers, and models updates stored permissions.
+#[tokio::test]
+async fn key_configuration_update_lifecycle() {
+    let store = SettingsStore::new(Database::open(":memory:").await.unwrap(), &key(1))
+        .await
+        .unwrap();
+    let created = json_body(
+        create_key(
+            State(store.clone()),
+            Json(CreateKey {
+                name: "original".into(),
+                providers: vec![],
+                models: vec![],
+                expires_at: None,
+            }),
+        )
+        .await,
+    )
+    .await;
+    let id = created["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        update_key(
+            State(store.clone()),
+            Path(id.clone()),
+            Json(UpdateKey {
+                name: Some(String::new()),
+                ..Default::default()
+            })
+        )
+        .await
+        .status(),
+        StatusCode::BAD_REQUEST
+    );
+    toasty::create!(ProviderRecord {
+        id: "p1".to_string(),
+        name: "p1".to_string(),
+        kind: "codex".to_string(),
+        base_url: String::new(),
+        keyless: false,
+        deleted: false,
+    })
+    .exec(&mut (*store.database.db).clone())
+    .await
+    .unwrap();
+    assert_eq!(
+        update_key(
+            State(store.clone()),
+            Path(id.clone()),
+            Json(UpdateKey {
+                name: Some("Renamed Key".into()),
+                providers: Some(vec!["p1".into()]),
+                models: Some(vec!["m1".into()]),
+                expires_at: None,
+            })
+        )
+        .await
+        .status(),
+        StatusCode::NO_CONTENT
+    );
+    let updated = json_body(list_keys(State(store.clone())).await).await;
+    assert_eq!(updated["keys"][0]["name"], "Renamed Key");
+    assert_eq!(updated["keys"][0]["providers"], json!(["p1"]));
+    assert_eq!(updated["keys"][0]["models"], json!(["m1"]));
+}
+
+/// Test handler checks model access using attached permissions.
+async fn model(Extension(permissions): Extension<Permissions>, uri: axum::http::Uri) -> StatusCode {
+    if permissions.allows_model(uri.path().rsplit('/').next().unwrap_or_default()) {
+        StatusCode::OK
+    } else {
+        StatusCode::FORBIDDEN
+    }
+}
+
+/// Encrypted secrets and key validation persist across database reopen.
+#[tokio::test]
+async fn encrypted_secrets_and_key_check_survive_reopen() {
+    let path = path();
+    let database = Database::open(path.to_str().unwrap()).await.unwrap();
+    let store = SettingsStore::new(database, &key(1)).await.unwrap();
+    assert!(
+        SettingsStore::new(store.database.clone(), &key(2))
+            .await
+            .is_err()
+    );
+    store
+        .secret_put("provider.codex", "private credential")
+        .await
+        .unwrap();
+    let row = Secret::filter_by_name("provider.codex")
+        .first()
+        .exec(&mut (*store.database.db).clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        !row.value
+            .windows("private credential".len())
+            .any(|w| w == b"private credential")
+    );
+    drop(store);
+
+    let database = Database::open(path.to_str().unwrap()).await.unwrap();
+    assert!(SettingsStore::new(database.clone(), &key(2)).await.is_err());
+    let store = SettingsStore::new(database, &key(1)).await.unwrap();
+    assert_eq!(
+        store.secret_get("provider.codex").await.unwrap().as_deref(),
+        Some("private credential")
+    );
+    drop(store);
+    std::fs::remove_file(path).unwrap();
+}
+
+// Axum route captures use braces; this exercises the full key lifecycle.
+#[allow(clippy::too_many_lines, clippy::literal_string_with_formatting_args)]
+/// Virtual keys persist, enforce restrictions, and stop working after revocation.
+#[tokio::test]
+async fn virtual_keys_persist_enforce_permissions_and_revoke() {
+    let path = path();
+    let database = Database::open(path.to_str().unwrap()).await.unwrap();
+    let store = SettingsStore::new(database, &key(3)).await.unwrap();
+    for (id, kind) in [
+        ("account-a", "codex"),
+        ("account-b", "codex"),
+        ("google", "agy"),
+    ] {
+        toasty::create!(ProviderRecord {
+            id: id.to_string(),
+            name: id.to_string(),
+            kind: kind.to_string(),
+            base_url: String::new(),
+            keyless: false,
+            deleted: false
+        })
+        .exec(&mut (*store.database.db).clone())
+        .await
+        .unwrap();
+    }
+    assert_eq!(
+        create_key(
+            State(store.clone()),
+            Json(CreateKey {
+                name: "invalid".into(),
+                providers: vec!["missing".into()],
+                models: vec![],
+                expires_at: None,
+            })
+        )
+        .await
+        .status(),
+        StatusCode::BAD_REQUEST
+    );
+    let response = create_key(
+        State(store.clone()),
+        Json(CreateKey {
+            name: "limited".into(),
+            providers: vec!["account-a".into()],
+            models: vec!["allowed-model".into()],
+            expires_at: None,
+        }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let created = json_body(response).await;
+    let token = created["key"].as_str().unwrap().to_owned();
+    let id = created["id"].as_str().unwrap().to_owned();
+    let identity = crate::provider::common::request_identity::RequestIdentity::default();
+    assert!(
+        store
+            .permissions(&token, Some(&identity))
+            .await
+            .unwrap()
+            .is_some()
+    );
+    let snapshot = identity.snapshot();
+    assert_eq!(snapshot.virtual_key_id.as_deref(), Some(id.as_str()));
+    assert_eq!(snapshot.virtual_key_name.as_deref(), Some("limited"));
+    let invalid = crate::provider::common::request_identity::RequestIdentity::default();
+    assert!(
+        store
+            .permissions("invalid", Some(&invalid))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(invalid.snapshot().virtual_key_id.is_none());
+    let row = VirtualKey::filter_by_id(id.clone())
+        .first()
+        .exec(&mut (*store.database.db).clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        row.key_hash,
+        digest::digest(&digest::SHA256, token.as_bytes()).as_ref()
+    );
+    let listed = json_body(list_keys(State(store.clone())).await).await;
+    assert!(listed["keys"][0].get("key").is_none());
+    drop(store);
+
+    let database = Database::open(path.to_str().unwrap()).await.unwrap();
+    let store = SettingsStore::new(database, &key(3)).await.unwrap();
+    let app = Router::new()
+        .route("/{id}/models/allowed-model", get(model))
+        .route("/{id}/models/other-model", get(model))
+        .layer(axum::middleware::from_fn_with_state(
+            (store.clone(), "codex"),
+            virtual_key_auth,
+        ))
+        .route("/keys", post(create_key).with_state(store.clone()));
+    let request = |model: &str, token: &str| {
+        Request::builder()
+            .uri(format!("/account-a/models/{model}"))
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+    assert_eq!(
+        app.clone()
+            .oneshot(request("allowed-model", &token))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        app.clone()
+            .oneshot(request("other-model", &token))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    for id in ["google", "missing"] {
+        let req = Request::builder()
+            .uri(format!("/{id}/models/allowed-model"))
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            app.clone().oneshot(req).await.unwrap().status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+    let other_provider = Router::new()
+        .route("/{id}/models/allowed-model", get(model))
+        .layer(axum::middleware::from_fn_with_state(
+            (store.clone(), "codex"),
+            virtual_key_auth,
+        ));
+    assert_eq!(
+        other_provider
+            .oneshot(
+                Request::builder()
+                    .uri("/account-b/models/allowed-model")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap()
+            )
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        revoke_key(State(store.clone()), Path(id)).await.status(),
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        app.oneshot(request("allowed-model", &token))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    drop(store);
+    std::fs::remove_file(path).unwrap();
+}
+/// State shared by the isolated affinity cache and its leak checks.
+type AffinityCacheState = (
+    std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<String>>>,
+    Vec<String>,
+);
+
+/// Isolated upstream reports cache transitions without disclosing the key.
+async fn affinity_cache(
+    State((seen, tokens)): State<AffinityCacheState>,
+    headers: axum::http::HeaderMap,
+) -> &'static str {
+    let Some(id) = headers.get("x-affinity").and_then(|v| v.to_str().ok()) else {
+        return "missing";
+    };
+    if id.contains("session-123") || tokens.iter().any(|token| id.contains(token)) {
+        return "leaked";
+    }
+    if seen.lock().await.insert(id.to_owned()) {
+        "miss"
+    } else {
+        "hit"
+    }
+}
+
+/// Sends middleware-provided affinity to the isolated upstream.
+async fn affinity_proxy(
+    Extension(session): Extension<crate::provider::common::session::RequestSession>,
+    Extension(upstream): Extension<String>,
+) -> String {
+    reqwest::Client::new()
+        .get(upstream)
+        .header("x-affinity", session.id)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap()
+}
+
+/// Authenticated cache affinity is isolated by key and provider.
+#[allow(clippy::too_many_lines, clippy::literal_string_with_formatting_args)]
+#[tokio::test]
+async fn authenticated_session_cache_is_isolated() {
+    let path = path();
+    let database = Database::open(path.to_str().unwrap()).await.unwrap();
+    let store = SettingsStore::new(database, &key(9)).await.unwrap();
+    for id in ["account-a", "account-b"] {
+        toasty::create!(ProviderRecord {
+            id: id.to_string(),
+            name: id.to_string(),
+            kind: "codex".to_string(),
+            base_url: String::new(),
+            keyless: false,
+            deleted: false
+        })
+        .exec(&mut (*store.database.db).clone())
+        .await
+        .unwrap();
+    }
+    let mut tokens = Vec::new();
+    for name in ["first", "second"] {
+        let response = create_key(
+            State(store.clone()),
+            Json(CreateKey {
+                name: name.into(),
+                providers: vec![],
+                models: vec![],
+                expires_at: None,
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+        tokens.push(
+            json_body(response).await["key"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+        );
+    }
+    let cache = Router::new().route("/", get(affinity_cache)).with_state((
+        std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
+        tokens.clone(),
+    ));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream = format!("http://{}/", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, cache).await.unwrap() });
+    let app = Router::new()
+        .route("/{id}/v1/responses", get(affinity_proxy))
+        .layer(Extension(upstream))
+        .layer(axum::middleware::from_fn_with_state(
+            (store.clone(), "codex"),
+            virtual_key_auth,
+        ));
+    let send = |provider: &str, token: &str, headers: &[(&str, &str)]| {
+        let mut builder = Request::builder()
+            .uri(format!("/{provider}/v1/responses"))
+            .header(header::AUTHORIZATION, format!("Bearer {token}"));
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        app.clone().oneshot(builder.body(Body::empty()).unwrap())
+    };
+    let outcome = |response: Response| async move {
+        assert_eq!(response.status(), StatusCode::OK);
+        String::from_utf8(to_bytes(response.into_body(), 1024).await.unwrap().to_vec()).unwrap()
+    };
+    let first = tokens.first().unwrap();
+    let second = tokens.get(1).unwrap();
+    let session = [("session_id", "session-123")];
+    assert_eq!(
+        outcome(send("account-a", first, &session).await.unwrap()).await,
+        "miss"
+    );
+    assert_eq!(
+        outcome(send("account-a", first, &session).await.unwrap()).await,
+        "hit"
+    );
+    assert_eq!(
+        outcome(send("account-a", second, &session).await.unwrap()).await,
+        "miss"
+    );
+    assert_eq!(
+        outcome(send("account-b", first, &session).await.unwrap()).await,
+        "miss"
+    );
+    for headers in [
+        vec![],
+        vec![("session_id", "")],
+        vec![("session_id", "invalid session")],
+        vec![("session_id", "duplicate"), ("session_id", "duplicate")],
+        vec![
+            ("session_id", "invalid session"),
+            ("x-session-id", "session-123"),
+        ],
+    ] {
+        for _ in 0..2 {
+            assert_eq!(
+                outcome(send("account-a", first, &headers).await.unwrap()).await,
+                "miss"
+            );
+        }
+    }
+    let maximum = "a".repeat(128);
+    let oversized = "a".repeat(129);
+    for (value, expected) in [(&maximum, "hit"), (&oversized, "miss")] {
+        let headers = [("session_id", value.as_str())];
+        assert_eq!(
+            outcome(send("account-a", first, &headers).await.unwrap()).await,
+            "miss"
+        );
+        assert_eq!(
+            outcome(send("account-a", first, &headers).await.unwrap()).await,
+            expected
+        );
+    }
+    for alias in [
+        "session-id",
+        "x-session-id",
+        "x-opencode-session",
+        "conversation-id",
+    ] {
+        let headers = [(alias, "session-123")];
+        assert_eq!(
+            outcome(send("account-a", first, &headers).await.unwrap()).await,
+            "hit"
+        );
+    }
+    let preferred = [
+        ("x-bf-eh-session_id", "preferred"),
+        ("session_id", "session-123"),
+    ];
+    assert_eq!(
+        outcome(send("account-a", first, &preferred).await.unwrap()).await,
+        "miss"
+    );
+    assert_eq!(
+        outcome(send("account-a", first, &preferred).await.unwrap()).await,
+        "hit"
+    );
+    let conversation = [("conversation_id", "conversation")];
+    assert_eq!(
+        outcome(send("account-a", first, &conversation).await.unwrap()).await,
+        "miss"
+    );
+    assert_eq!(
+        outcome(send("account-a", first, &conversation).await.unwrap()).await,
+        "hit"
+    );
+    assert_eq!(
+        send("account-a", "invalid-key", &session)
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    server.abort();
+    drop((app, store));
+    std::fs::remove_file(path).unwrap();
+}
