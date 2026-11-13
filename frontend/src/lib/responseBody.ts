@@ -19,6 +19,8 @@ export interface ResponseChoice {
 export interface ParsedResponseBody {
   format: "json" | "sse" | "unknown";
   status: ResponseStatus;
+  /** Response identity (`id`, `model`, `created`, ...) as first reported. */
+  metadata: Record<string, string | number>;
   choices: ResponseChoice[];
   usage: unknown | null;
   error: unknown | null;
@@ -47,6 +49,7 @@ export function parseResponseBody(body: unknown): ParsedResponseBody {
   const result: ParsedResponseBody = {
     format: "unknown",
     status: "unknown",
+    metadata: {},
     choices: [],
     usage: null,
     error: null,
@@ -57,6 +60,32 @@ export function parseResponseBody(body: unknown): ParsedResponseBody {
   let recognized = false;
   let terminal = false;
   let malformed = false;
+  const meta = (value: ObjectValue | null) => {
+    if (!value) return;
+    for (const key of [
+      "id",
+      "model",
+      "created",
+      "created_at",
+      "system_fingerprint",
+      "service_tier",
+    ]) {
+      const field = value[key];
+      if (
+        result.metadata[key] === undefined &&
+        (typeof field === "string" || typeof field === "number") &&
+        field !== ""
+      )
+        result.metadata[key] = field;
+    }
+  };
+  /** Merge usage objects, as Anthropic splits counts across stream events. */
+  const usage = (value: unknown) => {
+    if (value == null) return;
+    const current = object(result.usage);
+    const next = object(value);
+    result.usage = current && next ? { ...current, ...next } : value;
+  };
 
   const setStatus = (status: ResponseStatus) => {
     const rank: Record<ResponseStatus, number> = {
@@ -184,7 +213,8 @@ export function parseResponseBody(body: unknown): ParsedResponseBody {
     } else result.unknown.push(item);
   };
   const response = (value: ObjectValue) => {
-    if (value.usage != null) result.usage = value.usage;
+    usage(value.usage);
+    meta(value);
     if (value.error != null) {
       result.error = value.error;
       setStatus("failed");
@@ -203,7 +233,8 @@ export function parseResponseBody(body: unknown): ParsedResponseBody {
   const chat = (value: ObjectValue) => {
     if (!Array.isArray(value.choices)) return false;
     recognized = true;
-    if (value.usage != null) result.usage = value.usage;
+    usage(value.usage);
+    meta(value);
     let allFinished = value.choices.length > 0;
     value.choices.forEach((entry, i) => {
       const item = object(entry);
@@ -257,6 +288,86 @@ export function parseResponseBody(body: unknown): ParsedResponseBody {
       setStatus("complete");
     return true;
   };
+  /** Anthropic Messages content block: text, thinking, or tool use. */
+  const anthropicBlock = (block: ObjectValue, number: number) => {
+    const state = choice(0);
+    if (block.type === "text") {
+      part(state, "text", number, string(block.text) ?? "", false);
+    } else if (block.type === "thinking") {
+      part(state, "reasoning", number, string(block.thinking) ?? "", false);
+    } else if (block.type === "redacted_thinking") {
+      part(state, "reasoning", number, "[redacted]", false);
+    } else if (block.type === "tool_use" || block.type === "server_tool_use") {
+      const call = tool(state, number);
+      call.id = string(block.id) ?? call.id;
+      call.name = string(block.name) ?? call.name;
+      const input = object(block.input);
+      if (input && Object.keys(input).length)
+        call.arguments = JSON.stringify(input);
+    } else result.unknown.push(block);
+  };
+  const stopReason = (value: unknown) => {
+    const reason = string(value);
+    if (reason === null) return;
+    choice(0).finishReason = reason;
+    if (reason === "max_tokens" || reason === "refusal")
+      setStatus("incomplete");
+  };
+  /** Anthropic Messages JSON or stream event; false when `data` is not one. */
+  const anthropic = (data: ObjectValue, type: string | undefined) => {
+    if (type === "message") {
+      meta(data);
+      usage(data.usage);
+      if (Array.isArray(data.content))
+        data.content.forEach((entry, i) => {
+          const block = object(entry);
+          if (block) anthropicBlock(block, i);
+          else result.unknown.push(entry);
+        });
+      stopReason(data.stop_reason);
+      if (data.stop_reason != null) {
+        terminal = true;
+        setStatus("complete");
+      }
+      return true;
+    }
+    if (type === "message_start") {
+      const message = object(data.message);
+      meta(message);
+      usage(message?.usage);
+      return true;
+    }
+    if (type === "content_block_start") {
+      const block = object(data.content_block);
+      if (block) anthropicBlock(block, index(data.index, 0));
+      return true;
+    }
+    if (type === "content_block_delta") {
+      const delta = object(data.delta);
+      const number = index(data.index, 0);
+      const state = choice(0);
+      if (delta?.type === "text_delta")
+        part(state, "text", number, string(delta.text) ?? "", true);
+      else if (delta?.type === "thinking_delta")
+        part(state, "reasoning", number, string(delta.thinking) ?? "", true);
+      else if (delta?.type === "input_json_delta") {
+        const call = tool(state, number);
+        call.arguments += string(delta.partial_json) ?? "";
+      } else if (delta?.type !== "signature_delta") result.unknown.push(data);
+      return true;
+    }
+    if (type === "message_delta") {
+      usage(data.usage);
+      stopReason(object(data.delta)?.stop_reason);
+      return true;
+    }
+    if (type === "message_stop") {
+      terminal = true;
+      setStatus("complete");
+      return true;
+    }
+    return type === "content_block_stop" || type === "ping";
+  };
   const event = (value: unknown, name?: string) => {
     const data = object(value);
     if (!data) {
@@ -270,6 +381,36 @@ export function parseResponseBody(body: unknown): ParsedResponseBody {
       terminal = true;
       result.error = data.error ?? data;
       setStatus("failed");
+      return;
+    }
+    if (anthropic(data, type)) {
+      recognized = true;
+      return;
+    }
+    if (
+      type === "response.created" ||
+      type === "response.in_progress" ||
+      type === "response.queued"
+    ) {
+      recognized = true;
+      const snapshot = object(data.response);
+      if (snapshot) {
+        meta(snapshot);
+        usage(snapshot.usage);
+      }
+      return;
+    }
+    if (
+      type === "response.content_part.added" ||
+      type === "response.content_part.done"
+    ) {
+      // Text arrives through `output_text` deltas; a finished part restates it.
+      recognized = true;
+      const text = string(object(data.part)?.text);
+      if (type.endsWith(".done") && text) {
+        const state = choice(itemIndex(data));
+        part(state, "text", index(data.content_index, 0), text, false);
+      }
       return;
     }
     if (

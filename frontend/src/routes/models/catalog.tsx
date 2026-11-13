@@ -31,7 +31,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { RequestBody, requestBodyTheme } from "@/components/RequestBody";
+import { jsonTheme } from "@/components/HighlightedJson";
+import { RequestBody } from "@/components/RequestBody";
 import { Page } from "@/routes/__root";
 import { message } from "@/server/api/client";
 import {
@@ -463,7 +464,7 @@ export function ModelCatalogPage() {
         />
       }
     >
-      <style>{requestBodyTheme}</style>
+      <style>{jsonTheme}</style>
       {catalog.error && (
         <Alert variant="destructive" className="mt-5">
           <AlertDescription>{message(catalog.error)}</AlertDescription>

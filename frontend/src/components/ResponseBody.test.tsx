@@ -20,12 +20,29 @@ test("shows reconstructed response, raw stream, and copies the selected view", a
     assert.ok(screen.getByText("Hello world"));
     fireEvent.click(screen.getByRole("button", { name: "Copy" }));
     await screen.findByText("Copied");
-    assert.equal(copied, "Hello world");
+    assert.equal(
+      copied,
+      'Hello world\n\nResponse:\n{\n  "finish_reason": "stop"\n}',
+    );
     fireEvent.click(screen.getByRole("button", { name: "Raw" }));
     assert.equal(view.container.querySelector("pre")?.textContent, raw);
     fireEvent.click(screen.getByRole("button", { name: "Copy" }));
     await screen.findByText("Copied");
     assert.equal(copied, raw);
+  } finally {
+    cleanup();
+  }
+});
+
+test("highlights JSON in raw and readable views", () => {
+  try {
+    const raw = 'data: {"choices":[],"usage":{"total_tokens":7}}\n\n';
+    const view = render(<ResponseBody body={raw} status={200} />);
+    assert.ok(view.container.querySelector('[data-token="property"]'));
+    fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+    const pre = view.container.querySelector("pre");
+    assert.equal(pre?.textContent, raw);
+    assert.ok(pre?.querySelector('[data-token="number"]'));
   } finally {
     cleanup();
   }

@@ -14,7 +14,7 @@
     "tailwindcss/no-unknown-classes": [
       "error",
       {
-        "allowlist": ["request-body"]
+        "allowlist": ["json-code"]
       }
     ],
     "tailwindcss/no-conflicting-classes": "error",

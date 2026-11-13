@@ -5,7 +5,13 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Card } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { message } from "@/server/api/client";
 import { FormSkeleton } from "@/components/Loading";
@@ -131,12 +137,12 @@ export function SettingsPage() {
       description="Configure the gateway. Some changes may require a restart."
     >
       {displayError && (
-        <Alert variant="destructive" className="mt-5">
+        <Alert variant="destructive" className="mb-6">
           <AlertDescription>{displayError}</AlertDescription>
         </Alert>
       )}
       {saved && (
-        <p role="status" className="mt-5 text-sm">
+        <p role="status" className="mb-6 text-sm">
           Settings saved.
         </p>
       )}
@@ -147,21 +153,25 @@ export function SettingsPage() {
             event.preventDefault();
             void form.handleSubmit();
           }}
-          className="mt-6 grid gap-6"
+          className="grid gap-6"
         >
-          <Card className="p-5">
-            <h2 className="text-lg font-semibold">Log retention</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Configure how long request logs and traces are retained. Expired
-              records are removed at startup and then hourly.
-            </p>
-            <div className="mt-4">
+          <Card className="gap-6 [--card-spacing:--spacing(6)]">
+            <CardHeader className="gap-2">
+              <CardTitle className="text-lg font-semibold">
+                <h2>Log retention</h2>
+              </CardTitle>
+              <CardDescription>
+                Configure how long request logs and traces are retained. Expired
+                records are removed at startup and then hourly.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
               <form.Field name="log_retention_days">
                 {(field) => (
-                  <Label className="block text-sm font-medium">
+                  <Label className="grid gap-2">
                     Log retention (days)
                     <Input
-                      className="mt-1"
+                      className="h-10"
                       type="number"
                       min={1}
                       max={36500}
@@ -176,23 +186,27 @@ export function SettingsPage() {
                   </Label>
                 )}
               </form.Field>
-            </div>
+            </CardContent>
           </Card>
 
-          <Card className="p-5">
-            <h2 className="text-lg font-semibold">Model synchronization</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Configure periodic background intervals for refreshing pricing
-              datasheets and discovering provider models. A value of 0 disables
-              periodic refreshes.
-            </p>
-            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <Card className="gap-6 [--card-spacing:--spacing(6)]">
+            <CardHeader className="gap-2">
+              <CardTitle className="text-lg font-semibold">
+                <h2>Model synchronization</h2>
+              </CardTitle>
+              <CardDescription>
+                Configure periodic background intervals for refreshing pricing
+                datasheets and discovering provider models. A value of 0
+                disables periodic refreshes.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4 sm:grid-cols-2">
               <form.Field name="pricing_interval_hours">
                 {(field) => (
-                  <Label className="block text-sm font-medium">
+                  <Label className="grid gap-2">
                     Datasheet sync interval (hours)
                     <Input
-                      className="mt-1"
+                      className="h-10"
                       type="number"
                       min={0}
                       step={1}
@@ -209,10 +223,10 @@ export function SettingsPage() {
               </form.Field>
               <form.Field name="discovery_interval_minutes">
                 {(field) => (
-                  <Label className="block text-sm font-medium">
+                  <Label className="grid gap-2">
                     Model discovery interval (minutes)
                     <Input
-                      className="mt-1"
+                      className="h-10"
                       type="number"
                       min={0}
                       step={1}
@@ -227,7 +241,7 @@ export function SettingsPage() {
                   </Label>
                 )}
               </form.Field>
-            </div>
+            </CardContent>
           </Card>
 
           <div>

@@ -1,46 +1,28 @@
-import { Card } from "./ui/card";
+import { Card, CardContent, CardHeader } from "./ui/card";
 import { Skeleton } from "./ui/skeleton";
 
-function FieldSkeleton({ modelSettings }: { modelSettings: boolean }) {
+/** Placeholder matching the settings page: two cards, then the save button. */
+export function FormSkeleton() {
   return (
-    <div>
-      <Skeleton className="h-5 w-40 max-w-full" />
-      <Skeleton className={`mt-1 w-full ${modelSettings ? "h-8" : "h-9"}`} />
+    <div role="status" aria-label="Loading settings" className="grid gap-6">
+      {[1, 2].map((fields) => (
+        <Card key={fields} className="gap-6 [--card-spacing:--spacing(6)]">
+          <CardHeader className="gap-2">
+            <Skeleton className="h-6 w-48 max-w-full" />
+            <Skeleton className="h-4 w-full max-w-xl" />
+          </CardHeader>
+          <CardContent className="grid gap-4 sm:grid-cols-2">
+            {Array.from({ length: fields }, (_, index) => (
+              <div key={index} className="grid gap-2">
+                <Skeleton className="h-4 w-40 max-w-full" />
+                <Skeleton className="h-10 w-full" />
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      ))}
+      <Skeleton className="h-8 w-32" />
     </div>
-  );
-}
-
-export function FormSkeleton({
-  modelSettings = false,
-}: {
-  modelSettings?: boolean;
-}) {
-  return (
-    <Card
-      role="status"
-      aria-label={modelSettings ? "Loading model settings" : "Loading settings"}
-      className="mt-6 p-5"
-    >
-      <div className="grid gap-5">
-        <FieldSkeleton modelSettings={modelSettings} />
-        {modelSettings && (
-          <>
-            <FieldSkeleton modelSettings />
-            <Skeleton className="h-5 w-80 max-w-full" />
-            <div className="grid gap-5 sm:grid-cols-2">
-              <FieldSkeleton modelSettings />
-              <FieldSkeleton modelSettings />
-            </div>
-            <Skeleton className="h-5 w-full max-w-xl" />
-          </>
-        )}
-        <div className="flex flex-wrap gap-3">
-          <Skeleton className="h-8 w-28" />
-          {modelSettings && <Skeleton className="h-8 w-40" />}
-        </div>
-        {modelSettings && <Skeleton className="h-5 w-80 max-w-full" />}
-      </div>
-    </Card>
   );
 }
 

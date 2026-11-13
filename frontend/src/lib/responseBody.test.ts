@@ -307,3 +307,111 @@ test("reports failures and retains unknown events and unrecognized input", () =>
     "incomplete",
   );
 });
+
+test("reconstructs Anthropic Messages streams with thinking, tools, and usage", () => {
+  const events = [
+    {
+      type: "message_start",
+      message: {
+        id: "msg_1",
+        model: "claude-opus-5-5",
+        content: [],
+        usage: { input_tokens: 10, output_tokens: 1 },
+      },
+    },
+    {
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "thinking", thinking: "" },
+    },
+    {
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "thinking_delta", thinking: "Check 7." },
+    },
+    {
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "signature_delta", signature: "sig" },
+    },
+    { type: "content_block_stop", index: 0 },
+    {
+      type: "content_block_start",
+      index: 1,
+      content_block: { type: "text", text: "" },
+    },
+    {
+      type: "content_block_delta",
+      index: 1,
+      delta: { type: "text_delta", text: "Not prime." },
+    },
+    {
+      type: "content_block_start",
+      index: 2,
+      content_block: { type: "tool_use", id: "tu", name: "calc", input: {} },
+    },
+    {
+      type: "content_block_delta",
+      index: 2,
+      delta: { type: "input_json_delta", partial_json: '{"n":' },
+    },
+    {
+      type: "content_block_delta",
+      index: 2,
+      delta: { type: "input_json_delta", partial_json: "1001}" },
+    },
+    { type: "ping" },
+    {
+      type: "message_delta",
+      delta: { stop_reason: "tool_use" },
+      usage: { output_tokens: 42 },
+    },
+    { type: "message_stop" },
+  ];
+  const parsed = parseResponseBody(events.map(frame).join(""));
+  assert.equal(parsed.format, "sse");
+  assert.equal(parsed.status, "complete");
+  assert.deepEqual(parsed.metadata, { id: "msg_1", model: "claude-opus-5-5" });
+  assert.deepEqual(parsed.usage, { input_tokens: 10, output_tokens: 42 });
+  assert.deepEqual(parsed.unknown, []);
+  assert.equal(parsed.choices[0].reasoning, "Check 7.");
+  assert.equal(parsed.choices[0].text, "Not prime.");
+  assert.equal(parsed.choices[0].finishReason, "tool_use");
+  assert.deepEqual(parsed.choices[0].toolCalls, [
+    { index: 2, id: "tu", name: "calc", arguments: '{"n":1001}' },
+  ]);
+});
+
+test("keeps chat stream identity and Responses lifecycle events out of unknown data", () => {
+  const chat = parseResponseBody(
+    frame({
+      id: "chatcmpl-1",
+      model: "m",
+      created: 5,
+      object: "chat.completion.chunk",
+      choices: [{ index: 0, delta: { role: "assistant" } }],
+    }) + "data: [DONE]\n\n",
+  );
+  assert.deepEqual(chat.metadata, { id: "chatcmpl-1", model: "m", created: 5 });
+  const responses = parseResponseBody(
+    [
+      {
+        type: "response.created",
+        response: { id: "resp", model: "m", status: "in_progress" },
+      },
+      {
+        type: "response.content_part.done",
+        item_id: "msg",
+        output_index: 0,
+        content_index: 0,
+        part: { type: "output_text", text: "Hi" },
+      },
+      { type: "response.completed", response: { status: "completed" } },
+    ]
+      .map(frame)
+      .join(""),
+  );
+  assert.deepEqual(responses.unknown, []);
+  assert.deepEqual(responses.metadata, { id: "resp", model: "m" });
+  assert.equal(responses.choices[0].text, "Hi");
+});

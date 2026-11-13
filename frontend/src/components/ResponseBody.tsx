@@ -1,16 +1,34 @@
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { JsonCode, JsonTokens, toJsonText } from "@/components/HighlightedJson";
 import { parseResponseBody } from "@/lib/responseBody";
 
-function format(value: unknown): string {
-  if (typeof value === "string") {
-    try {
-      return JSON.stringify(JSON.parse(value), null, 2);
-    } catch {
-      return value;
-    }
-  }
-  return JSON.stringify(value, null, 2) ?? "";
+const format = (value: unknown): string => toJsonText(value).text;
+
+/** Collapsible block with an 8px gap between the toggle and its content. */
+function Section({
+  title,
+  open,
+  children,
+}: {
+  title: string;
+  open?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <details open={open} className="group">
+      <summary className="cursor-pointer font-medium">{title}</summary>
+      <div className="mt-2 space-y-2">{children}</div>
+    </details>
+  );
+}
+
+function Code({ value }: { value: unknown }) {
+  return (
+    <pre className="break-all whitespace-pre-wrap">
+      <JsonCode value={value} />
+    </pre>
+  );
 }
 
 export function ResponseBody({
@@ -23,6 +41,20 @@ export function ResponseBody({
   const [view, setView] = useState<"readable" | "raw">("readable");
   const [copyStatus, setCopyStatus] = useState("");
   const parsed = useMemo(() => parseResponseBody(body), [body]);
+  const metadata = {
+    ...parsed.metadata,
+    ...Object.fromEntries(
+      parsed.choices
+        .filter((choice) => choice.finishReason !== null)
+        .map((choice) => [
+          parsed.choices.length > 1
+            ? `finish_reason_${choice.index + 1}`
+            : "finish_reason",
+          choice.finishReason,
+        ]),
+    ),
+  };
+  const hasMetadata = Object.keys(metadata).length > 0;
   const details = parsed.choices
     .map((choice) =>
       [
@@ -40,6 +72,7 @@ export function ResponseBody({
   const readable =
     [
       ...details,
+      hasMetadata && `Response:\n${format(metadata)}`,
       parsed.usage !== null && `Usage:\n${format(parsed.usage)}`,
       parsed.error !== null && `Error:\n${format(parsed.error)}`,
       ...parsed.unknown.map(
@@ -49,6 +82,9 @@ export function ResponseBody({
       .filter(Boolean)
       .join("\n\n") || (body ? format(body) : "Empty body");
   const incomplete = status === 499 || parsed.status === "incomplete";
+  const choices = parsed.choices.filter(
+    (choice) => choice.text || choice.reasoning || choice.toolCalls.length,
+  );
 
   async function copy() {
     try {
@@ -110,21 +146,24 @@ export function ResponseBody({
             : "The response may be incomplete or truncated."}
         </p>
       )}
-      <div className="max-h-96 min-w-0 overflow-auto rounded-lg border bg-muted/50 p-4 text-xs leading-relaxed">
+      <div className="json-code max-h-96 min-w-0 overflow-auto rounded-lg border bg-muted/50 p-4 text-xs leading-relaxed">
         {view === "raw" ? (
           <pre className="font-mono break-all whitespace-pre-wrap">
-            {body || "Empty body"}
+            {body ? <JsonTokens text={body} /> : "Empty body"}
           </pre>
         ) : parsed.format === "unknown" ? (
           <pre className="font-mono break-all whitespace-pre-wrap">
-            {format(body) || "Empty body"}
+            {body ? <JsonCode value={body} /> : "Empty body"}
           </pre>
         ) : (
           <div className="space-y-4">
-            {parsed.choices.map((choice) => (
-              <section key={`${choice.index}-${choice.id ?? ""}`}>
+            {choices.map((choice) => (
+              <section
+                key={`${choice.index}-${choice.id ?? ""}`}
+                className="space-y-2"
+              >
                 {choice.text && (
-                  <>
+                  <div>
                     <h4 className="mb-1 font-medium">
                       Assistant
                       {parsed.choices.length > 1 ? ` ${choice.index + 1}` : ""}
@@ -132,72 +171,58 @@ export function ResponseBody({
                     <p className="wrap-break-word whitespace-pre-wrap">
                       {choice.text}
                     </p>
-                  </>
+                  </div>
                 )}
                 {choice.reasoning && (
-                  <details className="mt-2">
-                    <summary className="cursor-pointer font-medium">
-                      Reasoning
-                    </summary>
-                    <pre className="mt-2 break-all whitespace-pre-wrap">
+                  <Section title="Reasoning">
+                    <pre className="break-all whitespace-pre-wrap">
                       {choice.reasoning}
                     </pre>
-                  </details>
+                  </Section>
                 )}
                 {choice.toolCalls.length > 0 && (
-                  <details className="mt-2">
-                    <summary className="cursor-pointer font-medium">
-                      Tool calls ({choice.toolCalls.length})
-                    </summary>
+                  <Section title={`Tool calls (${choice.toolCalls.length})`}>
                     {choice.toolCalls.map((call) => (
-                      <div
-                        key={`${call.index}-${call.id ?? ""}`}
-                        className="mt-2"
-                      >
+                      <div key={`${call.index}-${call.id ?? ""}`}>
                         <p className="font-medium">
                           {call.name || call.id || "Unknown tool"}
                         </p>
-                        <pre className="break-all whitespace-pre-wrap">
-                          {format(call.arguments)}
-                        </pre>
+                        <Code value={call.arguments} />
                       </div>
                     ))}
-                  </details>
+                  </Section>
                 )}
               </section>
             ))}
+            {hasMetadata && (
+              <Section title="Response">
+                <Code value={metadata} />
+              </Section>
+            )}
             {parsed.usage !== null && (
-              <details>
-                <summary className="cursor-pointer font-medium">Usage</summary>
-                <pre className="mt-2 break-all whitespace-pre-wrap">
-                  {format(parsed.usage)}
-                </pre>
-              </details>
+              <Section title="Usage">
+                <Code value={parsed.usage} />
+              </Section>
             )}
             {parsed.error !== null && (
-              <details open>
-                <summary className="cursor-pointer font-medium">Error</summary>
-                <pre className="mt-2 break-all whitespace-pre-wrap">
-                  {format(parsed.error)}
-                </pre>
-              </details>
+              <Section title="Error" open>
+                <Code value={parsed.error} />
+              </Section>
             )}
             {parsed.unknown.length > 0 && (
-              <details>
-                <summary className="cursor-pointer font-medium">
-                  Other response data
-                </summary>
-                <pre className="mt-2 break-all whitespace-pre-wrap">
-                  {parsed.unknown.map(format).join("\n\n")}
-                </pre>
-              </details>
+              <Section title="Other response data">
+                {parsed.unknown.map((entry, i) => (
+                  <Code key={i} value={entry} />
+                ))}
+              </Section>
             )}
             {!details.length &&
+              !hasMetadata &&
               parsed.usage === null &&
               parsed.error === null &&
               parsed.unknown.length === 0 && (
                 <pre className="font-mono break-all whitespace-pre-wrap">
-                  {format(body) || "Empty body"}
+                  {body ? <JsonCode value={body} /> : "Empty body"}
                 </pre>
               )}
           </div>

@@ -12,7 +12,8 @@ import {
 } from "@/components/ui/drawer";
 import { formatTimestamp } from "@/lib/date";
 import { LogsTable } from "@/components/LogsTable";
-import { RequestBody, requestBodyTheme } from "@/components/RequestBody";
+import { jsonTheme } from "@/components/HighlightedJson";
+import { RequestBody } from "@/components/RequestBody";
 import {
   getLog,
   logsQueryOptions,
@@ -247,7 +248,7 @@ export function RequestLogs({
                 ) : (
                   detail.data && (
                     <>
-                      <style>{requestBodyTheme}</style>
+                      <style>{jsonTheme}</style>
                       <div className="mt-5 grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
                         <div className="min-w-0">
                           <h3 className="mb-2 text-sm font-medium">
