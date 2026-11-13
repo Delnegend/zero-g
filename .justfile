@@ -19,8 +19,9 @@ frontend-build:
     cd frontend && bun run tsc -b && bun run --bun vite build
 
 lint:
-    cd frontend && bun run oxlint src scripts
-    frontend/node_modules/.bin/oxlint -c frontend/.oxlintrc.json scripts
+    # Warnings fail the gate, matching the Tailwind CSS editor diagnostics.
+    cd frontend && bun run oxlint --deny-warnings src scripts
+    frontend/node_modules/.bin/oxlint --deny-warnings -c frontend/.oxlintrc.json scripts
     cargo fmt
     bun fmt --no-script frontend scripts
 

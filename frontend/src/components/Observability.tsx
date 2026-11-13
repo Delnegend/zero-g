@@ -176,7 +176,7 @@ export function RequestLogs({
       >
         <DrawerContent
           finalFocus={detailsTrigger}
-          className="data-[swipe-axis=x]:[--drawer-content-width:min(100vw,48rem)] data-[swipe-axis=x]:sm:[--drawer-content-width:min(100vw,48rem)]"
+          className="data-[swipe-axis=x]:[--drawer-content-width:min(100vw,48rem)] sm:data-[swipe-axis=x]:[--drawer-content-width:min(100vw,48rem)]"
         >
           {selected && (
             <>

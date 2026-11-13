@@ -31,7 +31,7 @@ flowchart LR
 | `just dev` | Start backend and frontend | Builds the frontend first, then runs the backend with `cargo run` and Vite with frontend HMR. Vite proxies `/api` to the backend at `http://127.0.0.1:5173`. |
 | `just check` | Single CI gate check | Formats, lints, frontend tests, Rust test suite, OpenAPI checks. |
 | `just test` | Run all test suites | Unit and integration tests for Rust and frontend. |
-| `just lint` | Lint and format code | Runs Oxlint, `cargo fmt` and `bun fmt`. |
+| `just lint` | Lint and format code | Runs Oxlint (any warning fails), `cargo fmt` and `bun fmt`. |
 | `just build` | Compile release binary | Builds frontend assets and embeds them into `target/release/zero-g`. |
 | `just seed` | Populate mock data | Adds example providers, keys and logs to an initialized development database; stop the server first. |
 | `just api-generate` | Sync frontend API clients | Regenerates Orval clients from OpenAPI spec. |
@@ -144,6 +144,6 @@ sequenceDiagram
 |---|---|---|
 | **Rust Lints** | [Namtao strict Clippy](https://www.namtao.com/rust/#strict-lints) | Pedantic, nursery, missing docs on private items check (`just check`). |
 | **Frontend Compiler** | Oxc React Compiler | Automatic memoization of eligible React components. |
-| **Tailwind classes** | Canonical names and spacing-scale suggestions | Oxlint warns when a hardcoded length matches a theme token; suggestions can change sizing if the theme or root font size changes. |
+| **Tailwind classes** | Matches the Tailwind CSS editor diagnostics | Oxlint flags conflicting, unknown, deprecated and non-canonical classes, variant order, and hardcoded lengths that match a theme token; any finding fails `just check`. Token suggestions can change sizing if the theme or root font size changes. |
 | **Audits & Deps** | OSV Scanner | `osv-scanner.toml` contains policy and temporary waivers. |
 | **Migrations** | Zero uncommitted schema changes | Startup applies only committed Toasty migrations. |
