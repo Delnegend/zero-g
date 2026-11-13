@@ -1,87 +1,20 @@
-# Gateway Integration
+# Gateway
 
-Zero-G is built to sit behind OpenAI-compatible routing gateways (such as **LiteLLM** or **Bifrost**). 
+Zero-G is the gateway: applications and coding agents connect to it directly with a virtual key. It serves an OpenAI-compatible `/v1` API for every provider and a native Anthropic `/v1/messages` API for Claude clients.
 
-The gateway handles rate-limiting, organizational budgets, and user routing. Zero-G handles provider authentication, token refreshes, credential pooling, and protocol translation.
+Zero-G handles virtual keys with provider and model allowlists, request logging and token usage, the observability dashboard, provider authentication, token refreshes, credential pooling and failover, and protocol translation.
 
 ```mermaid
 flowchart LR
-    Apps[Applications / SDKs] --> Gateway[Gateway\nLiteLLM / Bifrost]
-    Gateway -->|Unified /v1 API + Bearer Key| ZeroG[Zero-G Engine]
-    
+    Apps[Applications / SDKs] -->|OpenAI /v1 + virtual key| ZeroG[Zero-G Gateway]
+    Agents[Claude Code / omp] -->|Anthropic /v1/messages + virtual key| ZeroG
+
     subgraph Upstreams [Upstream Providers]
         ZeroG --> AGY[Google Cloud Code Assist]
         ZeroG --> Codex[ChatGPT Backend]
         ZeroG --> Claude[Anthropic API]
         ZeroG --> Others[Grok / Zen / OpenRouter / Command Code]
     end
-```
-
----
-
-## Gateway Comparison & Setup
-
-| Gateway | Config Format | Base URL Pattern | Key Feature Support |
-|---|---|---|---|
-| **LiteLLM** | YAML (`model_list`) | `http://zero-g:8080/v1` | Per-model routing, load balancing, cost tracking. |
-| **Bifrost** | JSON (`providers`) | `http://zero-g:8080` (Bifrost appends `/v1`) | Direct custom OpenAI provider pass-through. |
-
----
-
-## Configuration Examples
-
-### LiteLLM Configuration
-
-Add deployments to `config.yaml`:
-
-```yaml
-model_list:
-  - model_name: agy-claude
-    litellm_params:
-      model: openai/agy/claude-sonnet-5-5-medium
-      api_base: http://zero-g:8080/v1
-      api_key: os.environ/ZERO_G_VIRTUAL_KEY
-
-  - model_name: codex-gpt5
-    litellm_params:
-      model: openai/codex/gpt-5.3-codex
-      api_base: http://zero-g:8080/v1
-      api_key: os.environ/ZERO_G_VIRTUAL_KEY
-
-  - model_name: zen-beam
-    litellm_params:
-      model: openai/zen/beam-free
-      api_base: http://zero-g:8080/v1
-      api_key: os.environ/ZERO_G_VIRTUAL_KEY
-```
-
-### Bifrost Configuration
-
-Configure a custom provider in `bifrost.json`:
-
-```json
-{
-  "providers": {
-    "zero-g": {
-      "keys": [
-        { "name": "zero-g", "value": "<ZERO_G_VIRTUAL_KEY>", "models": ["*"] }
-      ],
-      "network_config": { 
-        "base_url": "http://zero-g:8080" 
-      },
-      "custom_provider_config": {
-        "base_provider_type": "openai",
-        "allowed_requests": {
-          "list_models": true,
-          "chat_completion": true,
-          "chat_completion_stream": true,
-          "responses": true,
-          "responses_stream": true
-        }
-      }
-    }
-  }
-}
 ```
 
 ---
@@ -95,6 +28,13 @@ Configure a custom provider in `bifrost.json`:
 | `/v1/models` | All providers | Aggregated discovery returning `<provider-id>/<model-id>`. |
 | `/v1/decisions` | `openrouter` only | Native OpenRouter multimodal Decisions API. |
 | `/v1/messages`, `/v1/messages/count_tokens` | `claude` only | Native Anthropic Messages pass-through for Claude Code and other Anthropic clients; plain model names. |
+
+Translated providers require clients to resend the full conversation rather than
+using `previous_response_id`. Codex requests encrypted reasoning for replay;
+Antigravity and Claude use provider-specific signed parts. Clients must preserve
+those parts for the same provider and model. Generic reasoning input is rejected
+by non-Codex translated routes. Keep Chat Completions available for ChatJimmy
+and upstreams that do not support Responses.
 
 ### Anthropic Clients (Claude Code, omp)
 
