@@ -209,7 +209,8 @@ test("LLM log filters load matching requests and reset pagination", async () => 
   assert.ok(
     (await screen.findAllByRole("button", { name: "View request 1" })).length,
   );
-  await user.selectOptions(screen.getByLabelText("Rows per page"), "50");
+  await user.click(screen.getByRole("combobox", { name: "Rows per page" }));
+  await user.click(await screen.findByRole("option", { name: "50" }));
   await waitFor(() =>
     assert.equal(requests.at(-1)?.searchParams.get("limit"), "50"),
   );

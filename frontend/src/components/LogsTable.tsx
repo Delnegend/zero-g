@@ -65,6 +65,15 @@ const sortOptions = [
   { value: "path:asc", label: "Path: A–Z" },
   { value: "path:desc", label: "Path: Z–A" },
 ];
+const pageSizes = [20, 50, 100, 200];
+
+/** Standard page sizes, plus the current one when a URL selected another. */
+function pageSizeOptions(limit: number) {
+  return (pageSizes.includes(limit) ? pageSizes : [limit, ...pageSizes]).map(
+    (size) => ({ value: String(size), label: String(size) }),
+  );
+}
+
 function relativeDate(value: number): string {
   const date = new Date(value * 1000);
   return Number.isNaN(date.getTime())
@@ -418,26 +427,27 @@ export function LogsTable({
             {number.format(Math.min(page * limit, total))} of{" "}
             {number.format(total)} requests
           </p>
-          <label className="flex items-center gap-2 text-sm">
-            Rows per page
-            <select
-              aria-label="Rows per page"
-              value={limit}
-              onChange={(event) =>
-                onPagingChange({ limit: Number(event.target.value), page: 1 })
-              }
-              className="rounded-md border bg-background px-2 py-1"
+          <div className="flex items-center gap-2 text-sm">
+            <label htmlFor="logs-page-size">Rows per page</label>
+            <Select
+              items={pageSizeOptions(limit)}
+              value={String(limit)}
+              onValueChange={(value) => {
+                if (value) onPagingChange({ limit: Number(value), page: 1 });
+              }}
             >
-              {![20, 50, 100, 200].includes(limit) && (
-                <option value={limit}>{limit}</option>
-              )}
-              {[20, 50, 100, 200].map((size) => (
-                <option key={size} value={size}>
-                  {size}
-                </option>
-              ))}
-            </select>
-          </label>
+              <SelectTrigger id="logs-page-size" size="sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {pageSizeOptions(limit).map(({ value, label }) => (
+                  <SelectItem key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <PaginationContent>
             <PaginationItem>
               <Button
