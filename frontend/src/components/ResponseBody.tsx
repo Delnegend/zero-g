@@ -129,7 +129,7 @@ export function ResponseBody({
                       Assistant
                       {parsed.choices.length > 1 ? ` ${choice.index + 1}` : ""}
                     </h4>
-                    <p className="break-words whitespace-pre-wrap">
+                    <p className="wrap-break-word whitespace-pre-wrap">
                       {choice.text}
                     </p>
                   </>
