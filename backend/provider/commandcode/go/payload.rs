@@ -94,9 +94,7 @@ fn wire_id(id: &str) -> String {
 /// Convert one user content value to generate parts.
 fn user_content(content: Option<&MessageContent>) -> Result<Value, String> {
     let Some(MessageContent::Parts(parts)) = content else {
-        return Ok(json!(
-            content.map(MessageContent::as_text).unwrap_or_default()
-        ));
+        return Ok(json!(content.map_or_default(MessageContent::as_text)));
     };
     parts
         .iter()
@@ -147,8 +145,7 @@ fn messages(input: &[ChatMessage]) -> Result<(String, Vec<Value>), String> {
             message
                 .content
                 .as_ref()
-                .map(MessageContent::as_text)
-                .unwrap_or_default()
+                .map_or_default(MessageContent::as_text)
         };
         match message.role.as_str() {
             "system" | "developer" if out.is_empty() && results.is_empty() => system.push(text()),

@@ -45,8 +45,7 @@ async fn anthropic(state: AppState, request: Request) -> Response {
     };
     let identity = request.extensions().get::<RequestIdentity>().cloned();
     let session = virtual_key(request.headers())
-        .map(|token| RequestSession::new(request.headers(), token, "claude").id)
-        .unwrap_or_default();
+        .map_or_default(|token| RequestSession::new(request.headers(), token, "claude").id);
     let path = request.uri().path_and_query().map_or_else(
         || request.uri().path().to_owned(),
         |p| p.as_str().to_owned(),

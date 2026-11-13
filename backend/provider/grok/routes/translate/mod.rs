@@ -21,7 +21,7 @@ pub(super) fn chat_to_responses(req: &ChatCompletionRequest) -> Value {
     let mut input = Vec::new();
     for message in &req.messages {
         if message.role == "tool" {
-            input.push(json!({"type":"function_call_output", "call_id":message.tool_call_id, "output":message.content.as_ref().map(MessageContent::as_text).unwrap_or_default()}));
+            input.push(json!({"type":"function_call_output", "call_id":message.tool_call_id, "output":message.content.as_ref().map_or_default(MessageContent::as_text)}));
             continue;
         }
         if message.role == "assistant"

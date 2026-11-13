@@ -109,8 +109,7 @@ fn normalize(value: &mut Value, model: &str) -> Result<(), String> {
                 .find(|message| message.get("role").and_then(Value::as_str) == Some("user"))
         })
         .and_then(|message| message.get("content"))
-        .map(text_of)
-        .unwrap_or_default();
+        .map_or_default(text_of);
     let object = value
         .as_object_mut()
         .ok_or("Request body must be a JSON object")?;
@@ -129,8 +128,7 @@ fn normalize(value: &mut Value, model: &str) -> Result<(), String> {
             .remove(index)
             .get("text")
             .and_then(Value::as_str)
-            .map(reset_attestation)
-            .unwrap_or_default()
+            .map_or_default(reset_attestation)
     } else {
         if !blocks
             .iter()

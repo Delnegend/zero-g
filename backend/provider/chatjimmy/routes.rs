@@ -175,11 +175,7 @@ pub(super) async fn chat_handler(
     let mut system_prompts = Vec::new();
     let mut chat_messages = Vec::new();
     for msg in &req.messages {
-        let text = msg
-            .content
-            .as_ref()
-            .map(MessageContent::as_text)
-            .unwrap_or_default();
+        let text = msg.content.as_ref().map_or_default(MessageContent::as_text);
         if msg.role == "system" || msg.role == "developer" {
             system_prompts.push(text);
         } else {

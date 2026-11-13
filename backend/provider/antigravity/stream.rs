@@ -181,8 +181,7 @@ fn parse_usage(metadata: &Value) -> Usage {
         metadata
             .get(name)
             .and_then(Value::as_u64)
-            .map(|value| u32::try_from(value).unwrap_or(u32::MAX))
-            .unwrap_or_default()
+            .map_or_default(|value| u32::try_from(value).unwrap_or(u32::MAX))
     };
     let completion = count("candidatesTokenCount").saturating_add(count("thoughtsTokenCount"));
     let reported_total = metadata

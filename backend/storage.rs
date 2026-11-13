@@ -1,3 +1,6 @@
+// `toasty::Model` expands `#[index]` and `#[unique]` fields into underscore-prefixed helpers.
+#![allow(clippy::used_underscore_items)]
+
 /// Persisted inference request and response metadata.
 #[derive(Debug, toasty::Model)]
 #[table = "request_logs"]

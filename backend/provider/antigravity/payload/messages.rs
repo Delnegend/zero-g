@@ -248,11 +248,7 @@ impl AntigravityClient {
                     .and_then(|id| tool_call_names.get(id).cloned())
             })
             .unwrap_or_else(|| "tool".to_string());
-        let result_str = msg
-            .content
-            .as_ref()
-            .map(MessageContent::as_text)
-            .unwrap_or_default();
+        let result_str = msg.content.as_ref().map_or_default(MessageContent::as_text);
         let response_obj: Value = match serde_json::from_str::<Value>(&result_str) {
             Ok(value @ Value::Object(_)) => value,
             Ok(value) => json!({ "output": value }),

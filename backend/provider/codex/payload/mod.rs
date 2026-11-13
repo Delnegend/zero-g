@@ -58,11 +58,7 @@ pub(super) fn build_codex_payload_from_chat(req: &ChatCompletionRequest) -> Valu
             }
             "tool" => {
                 let call_id = msg.tool_call_id.clone().unwrap_or_default();
-                let output = msg
-                    .content
-                    .as_ref()
-                    .map(MessageContent::as_text)
-                    .unwrap_or_default();
+                let output = msg.content.as_ref().map_or_default(MessageContent::as_text);
                 input_items.push(json!({
                     "type": "function_call_output",
                     "call_id": call_id,
@@ -193,7 +189,7 @@ pub(super) fn build_codex_payload_from_responses(req: &ResponseCreateRequest) ->
                         if is_system_role(&msg.role) {
                             append_instructions(&mut instructions, msg.content.as_ref());
                         } else if msg.role == "tool" {
-                            input_items.push(json!({"type":"function_call_output","call_id":msg.tool_call_id.as_deref().unwrap_or_default(),"output":msg.content.as_ref().map(MessageContent::as_text).unwrap_or_default()}));
+                            input_items.push(json!({"type":"function_call_output","call_id":msg.tool_call_id.as_deref().unwrap_or_default(),"output":msg.content.as_ref().map_or_default(MessageContent::as_text)}));
                         } else {
                             if msg.content.is_some() {
                                 let parts =

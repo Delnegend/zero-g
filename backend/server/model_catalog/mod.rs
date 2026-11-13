@@ -229,7 +229,7 @@ async fn load(store: &SettingsStore) -> Result<CachedCatalog, String> {
             let prior = cached
                 .remove(&p.id)
                 .filter(|old| old.kind == p.kind && old.base_url == p.base_url);
-            let (models, error) = prior.map(|old| (old.models, old.error)).unwrap_or_default();
+            let (models, error) = prior.map_or_default(|old| (old.models, old.error));
             CachedProvider {
                 id: p.id,
                 name: p.name,
@@ -522,8 +522,7 @@ fn normalize_model(
             } else {
                 metadata
                     .modalities
-                    .map(|modalities| modalities.input)
-                    .unwrap_or_default()
+                    .map_or_default(|modalities| modalities.input)
             }
         });
     let reasoning_efforts = model
