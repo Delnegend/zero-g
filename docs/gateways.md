@@ -171,3 +171,4 @@ upstream fields, so missing or unverified fields are not filled in.
 | **Stream Termination** | Codex, Antigravity | Emits `data: [DONE]` on clean close. Interrupted streams yield an error event instead of a silent finish. |
 | **Unsupported Limits** | Codex | Accepts but does not forward `max_tokens` and `max_completion_tokens`; an effective output cap is unknown. |
 | **Strict Wire Options** | Antigravity, Codex, Claude, Cursor | Reject unsupported options (e.g. unknown structured formats, stop sequences, unsupported choice counts) with clear errors instead of dropping them silently. |
+| **Claude Billing** | Claude subscription | Reports Anthropic's known third-party extra-usage restriction when returned; other upstream error bodies remain private. |

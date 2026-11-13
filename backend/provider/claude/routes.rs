@@ -63,6 +63,25 @@ fn failure(status: StatusCode, message: &str) -> Response {
     )
         .into_response()
 }
+
+/// Report the known billing restriction without exposing upstream response bodies.
+fn upstream_failure(status: StatusCode, body: &[u8]) -> String {
+    const BILLING: &str = "Third-party apps now draw from extra usage, not plan limits. Ask your workspace admin to add more and keep going.";
+    let billing_rejected = serde_json::from_slice::<Value>(body)
+        .ok()
+        .and_then(|value| {
+            value
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .map(|message| message == BILLING)
+        })
+        .unwrap_or(false);
+    if billing_rejected {
+        format!("Claude upstream returned {status}: {BILLING}")
+    } else {
+        format!("Claude upstream returned {status}")
+    }
+}
 /// Return models visible to the virtual key.
 async fn list(
     State(state): State<AppState>,
@@ -215,7 +234,8 @@ async fn inference(
             } else {
                 status
             };
-            last = format!("Claude upstream returned {status}");
+            let body = response.bytes().await.unwrap_or_default();
+            last = upstream_failure(status, &body);
             if matches!(status.as_u16(), 401 | 403 | 429 | 503) {
                 continue;
             }
@@ -512,6 +532,26 @@ fn stream_response(
 mod tests {
     use super::*;
     use axum::body::to_bytes;
+
+    #[test]
+    fn preserves_anthropic_billing_errors() {
+        let status = StatusCode::BAD_REQUEST;
+        let body = br#"{"type":"error","error":{"type":"invalid_request_error","message":"Third-party apps now draw from extra usage, not plan limits. Ask your workspace admin to add more and keep going."}}"#;
+        assert!(
+            upstream_failure(status, body).contains("Third-party apps now draw from extra usage")
+        );
+        assert_eq!(
+            upstream_failure(
+                status,
+                br#"{"error":{"message":"private upstream content"}}"#
+            ),
+            "Claude upstream returned 400 Bad Request"
+        );
+        assert_eq!(
+            upstream_failure(status, b"not json"),
+            "Claude upstream returned 400 Bad Request"
+        );
+    }
 
     /// Preserve tool calls and signed reasoning through both stream formats.
     #[tokio::test]
