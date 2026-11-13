@@ -512,7 +512,7 @@ mod tests {
         AppState {
             providers: crate::provider::Providers::new(),
             settings,
-            logs: crate::server::observability::LogStore::new(database),
+            database,
             dashboard_auth: crate::server::dashboard_auth_config::test_auth().await,
         }
     }

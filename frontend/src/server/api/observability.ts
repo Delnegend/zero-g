@@ -1,11 +1,15 @@
 import { keepPreviousData, queryOptions } from "@tanstack/react-query";
-import * as api from "./generated/client";
-import { LogEntry, ObservabilityResponse } from "./generated/schemas";
+import {
+  getDashboard as requestDashboard,
+  listLogs,
+  getLog as requestLog,
+} from "./generated/client";
 import type {
-  LogEntry as GeneratedLogEntry,
-  ObservabilityResponse as GeneratedObservabilityResponse,
+  DashboardResponse,
+  LogEntry,
+  LogSummary,
+  LogsResponse,
 } from "./generated/schemas";
-import { request } from "./client";
 
 type Preset = "1h" | "6h" | "24h" | "7d" | "1m" | "6m" | "1y";
 export type DashboardRange =
@@ -19,6 +23,16 @@ export type ObservabilityFilterValues = {
   statuses?: ("success" | "error")[];
   virtual_key_ids?: string[];
   credential_ids?: string[];
+};
+
+export type LogsSort =
+  | "recent"
+  | `${"created_at" | "model" | "status" | "latency_ms" | "path"}:${"asc" | "desc"}`;
+export type LogsQuery = ObservabilityFilterValues & {
+  page: number;
+  limit: number;
+  search: string;
+  sort: LogsSort;
 };
 
 export function rangeStart(range: Preset, now = Date.now()): number {
@@ -41,7 +55,7 @@ export function rangeStart(range: Preset, now = Date.now()): number {
 }
 
 export type ObservabilityComparison = {
-  data: Observability | null;
+  data: DashboardResponse | null;
   currentSince: number;
   currentUntil: number;
   previousSince: number;
@@ -49,35 +63,19 @@ export type ObservabilityComparison = {
   retentionCutoff: number | null;
 };
 
-const LogSummary = LogEntry.omit({
-  request_body: true,
-  response_body: true,
-}).extend({
-  request_body: LogEntry.shape.request_body.optional(),
-  response_body: LogEntry.shape.response_body.optional(),
-});
-const Response = ObservabilityResponse.extend({ logs: LogSummary.array() });
-
-export type Log = Omit<GeneratedLogEntry, "request_body" | "response_body"> & {
-  request_body?: string | null;
-  response_body?: string | null;
-};
-export type Observability = Omit<GeneratedObservabilityResponse, "logs"> & {
-  logs: Log[];
+export type Log = LogSummary;
+export type Observability = DashboardResponse & {
   comparison?: ObservabilityComparison;
 };
+export type LogList = LogsResponse;
 
 export function observabilityQueryOptions(
   range: DashboardRange,
-  logsOnly: boolean,
   filters: ObservabilityFilterValues = {},
 ) {
   return queryOptions({
-    queryKey: ["observability", logsOnly ? { filters } : { range, filters }],
+    queryKey: ["observability", { range, filters }],
     queryFn: async ({ signal }): Promise<Observability> => {
-      if (logsOnly)
-        return getObservability(signal, { ...filters, logs_only: true });
-
       const now = Math.floor(Date.now() / 1000);
       const currentUntil = range.kind === "preset" ? now : range.until;
       const currentSince =
@@ -87,17 +85,15 @@ export function observabilityQueryOptions(
       const previousUntil = currentSince - 1;
       const previousSince = previousUntil - (currentUntil - currentSince);
       const [current, previous] = await Promise.all([
-        getObservability(signal, {
+        getDashboard(signal, {
           ...filters,
           since: currentSince,
           until: currentUntil,
-          aggregates_only: true,
         }),
-        getObservability(signal, {
+        getDashboard(signal, {
           ...filters,
           since: previousSince,
           until: previousUntil,
-          aggregates_only: true,
         }).catch((error: unknown) => {
           if (signal.aborted) throw error;
           return null;
@@ -127,22 +123,35 @@ export function observabilityQueryOptions(
   });
 }
 
-export function getObservability(
-  signal: AbortSignal,
-  range?: {
-    since?: number;
-    until?: number;
-    logs_only?: boolean;
-    aggregates_only?: boolean;
-    log_id?: number;
-  } & ObservabilityFilterValues,
+export function logsQueryOptions(
+  filters: ObservabilityFilterValues = {},
+  paging: Pick<LogsQuery, "page" | "limit" | "search" | "sort"> = {
+    page: 1,
+    limit: 20,
+    search: "",
+    sort: "recent",
+  },
 ) {
-  const params = range && {
+  return queryOptions({
+    queryKey: ["observability-logs", { filters, paging }],
+    queryFn: ({ signal }) => getLogs(signal, filters, paging),
+    placeholderData: keepPreviousData,
+    retry: false,
+    gcTime: 0,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+}
+
+type QueryFilters = {
+  since?: number;
+  until?: number;
+} & ObservabilityFilterValues;
+
+function queryParams(range: QueryFilters = {}) {
+  return {
     since: range.since,
     until: range.until,
-    logs_only: range.logs_only,
-    aggregates_only: range.aggregates_only,
-    log_id: range.log_id,
     providers: range.providers?.length
       ? JSON.stringify(range.providers)
       : undefined,
@@ -158,9 +167,27 @@ export function getObservability(
       ? JSON.stringify(range.credential_ids)
       : undefined,
   };
-  return request<Observability>(api.getGetObservabilityUrl(params), {
+}
+
+function getDashboard(signal: AbortSignal, filters: QueryFilters) {
+  return requestDashboard(queryParams(filters), {
     signal,
     statusOnlyError: true,
-    schema: Response,
   });
+}
+
+function getLogs(
+  signal: AbortSignal,
+  filters: QueryFilters,
+  paging: Pick<LogsQuery, "page" | "limit" | "search" | "sort">,
+) {
+  const { page, limit, search, sort } = paging;
+  return listLogs(
+    { ...queryParams(filters), page, limit, search, sort },
+    { signal, statusOnlyError: true },
+  );
+}
+
+export function getLog(signal: AbortSignal, id: Log["id"]): Promise<LogEntry> {
+  return requestLog(id, { signal, statusOnlyError: true });
 }

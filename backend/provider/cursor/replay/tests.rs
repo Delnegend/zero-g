@@ -137,7 +137,7 @@ async fn tool_choice_router() -> axum::Router {
     let state = crate::server::AppState {
         providers: crate::provider::Providers::new(),
         settings: store.clone(),
-        logs: crate::server::observability::LogStore::new(database),
+        database,
         dashboard_auth: crate::server::dashboard_auth_config::test_auth().await,
     };
     Router::new()

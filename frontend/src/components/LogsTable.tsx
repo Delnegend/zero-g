@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import {
   flexRender,
   tableFeatures,
@@ -18,7 +18,7 @@ import {
 } from "@tanstack/react-table";
 import { formatDistanceToNow, formatTimestamp } from "@/lib/date";
 import { ArrowUpDown, ChevronLeft, ChevronRight, Search } from "lucide-react";
-import type { Log } from "@/server/api/observability";
+import type { Log, LogsQuery, LogsSort } from "@/server/api/observability";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { Input } from "./ui/input";
@@ -65,7 +65,6 @@ const sortOptions = [
   { value: "path:asc", label: "Path: A–Z" },
   { value: "path:desc", label: "Path: Z–A" },
 ];
-
 function relativeDate(value: number): string {
   const date = new Date(value * 1000);
   return Number.isNaN(date.getTime())
@@ -96,12 +95,23 @@ function statusColor(status: number): string {
 export function LogsTable({
   logs,
   onSelect,
+  total,
+  paging,
+  onPagingChange,
 }: {
   logs: Log[];
   onSelect: (id: Log["id"], trigger: HTMLButtonElement) => void;
+  total: number;
+  paging: Pick<LogsQuery, "page" | "limit" | "search" | "sort">;
+  onPagingChange: (
+    paging: Partial<Pick<LogsQuery, "page" | "limit" | "search" | "sort">>,
+  ) => void;
 }) {
-  const [query, setQuery] = useState("");
-  const [sorting, setSorting] = useState<SortingState>([]);
+  const { page, limit, search, sort } = paging;
+  const sorting: SortingState =
+    sort === "recent"
+      ? []
+      : [{ id: sort.split(":")[0], desc: sort.endsWith(":desc") }];
   const columns = useMemo<ColumnDef<typeof features, Log>[]>(
     () => [
       {
@@ -193,29 +203,22 @@ export function LogsTable({
     features,
     data: logs,
     columns,
-    initialState: { pagination: { pageIndex: 0, pageSize: 20 } },
-    state: { sorting, globalFilter: query.trim() },
-    onSortingChange: setSorting,
-    globalFilterFn: (row, _columnId, filterValue: string) => {
-      const term = filterValue.toLowerCase();
-      const log = row.original;
-      return [
-        log.id,
-        log.created_at,
-        log.provider,
-        log.model,
-        log.path,
-        log.status,
-      ].some((value) =>
-        String(value ?? "")
-          .toLowerCase()
-          .includes(term),
-      );
+    state: { sorting },
+    manualSorting: true,
+    manualFiltering: true,
+    manualPagination: true,
+    onSortingChange: (updater) => {
+      const next = typeof updater === "function" ? updater(sorting) : updater;
+      onPagingChange({
+        sort: next.length
+          ? (`${next[0].id}:${next[0].desc ? "desc" : "asc"}` as LogsSort)
+          : "recent",
+        page: 1,
+      });
     },
   });
   const rows = table.getRowModel().rows;
-  const total = table.getFilteredRowModel().rows.length;
-  const { pageIndex, pageSize } = table.state.pagination;
+  const pageCount = Math.ceil(total / limit);
 
   return (
     <Card aria-labelledby="logs-heading" className="min-w-0 py-0">
@@ -225,7 +228,7 @@ export function LogsTable({
             Request logs
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            The latest 200 matching requests. Select one to inspect its details.
+            Select a request to inspect its details.
           </p>
         </div>
         <div className="relative w-full sm:w-72">
@@ -236,8 +239,10 @@ export function LogsTable({
           <Input
             type="search"
             aria-label="Search request logs"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            value={search}
+            onChange={(event) =>
+              onPagingChange({ search: event.target.value, page: 1 })
+            }
             placeholder="Search logs…"
             className="h-9 w-full rounded-lg border border-input bg-background pr-3 pl-9 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
           />
@@ -248,18 +253,9 @@ export function LogsTable({
           <label htmlFor="logs-sort">Sort by</label>
           <Select
             items={sortOptions}
-            value={
-              sorting.length
-                ? `${sorting[0].id}:${sorting[0].desc ? "desc" : "asc"}`
-                : "recent"
-            }
+            value={sort}
             onValueChange={(value) => {
-              if (!value || value === "recent") {
-                setSorting([]);
-                return;
-              }
-              const [id, direction] = value.split(":");
-              setSorting([{ id, desc: direction === "desc" }]);
+              if (value) onPagingChange({ sort: value as LogsSort, page: 1 });
             }}
           >
             <SelectTrigger id="logs-sort" className="min-w-0">
@@ -408,9 +404,7 @@ export function LogsTable({
       <div>
         {rows.length === 0 && (
           <p className="px-5 py-10 text-center text-sm text-muted-foreground">
-            {logs.length === 0
-              ? "No requests match the current filters."
-              : "No requests match your search."}
+            No requests match the current filters or search.
           </p>
         )}
       </div>
@@ -420,25 +414,45 @@ export function LogsTable({
           className="flex flex-wrap items-center justify-between gap-3 border-t px-5 py-4"
         >
           <p aria-live="polite" className="text-sm text-muted-foreground">
-            {number.format(pageIndex * pageSize + 1)}–
-            {number.format(Math.min((pageIndex + 1) * pageSize, total))} of{" "}
+            {number.format(Math.min((page - 1) * limit + 1, total))}–
+            {number.format(Math.min(page * limit, total))} of{" "}
             {number.format(total)} requests
           </p>
+          <label className="flex items-center gap-2 text-sm">
+            Rows per page
+            <select
+              aria-label="Rows per page"
+              value={limit}
+              onChange={(event) =>
+                onPagingChange({ limit: Number(event.target.value), page: 1 })
+              }
+              className="rounded-md border bg-background px-2 py-1"
+            >
+              {![20, 50, 100, 200].includes(limit) && (
+                <option value={limit}>{limit}</option>
+              )}
+              {[20, 50, 100, 200].map((size) => (
+                <option key={size} value={size}>
+                  {size}
+                </option>
+              ))}
+            </select>
+          </label>
           <PaginationContent>
             <PaginationItem>
               <Button
                 variant="ghost"
                 size="sm"
                 aria-label="Go to previous page"
-                disabled={!table.getCanPreviousPage()}
-                onClick={() => table.previousPage()}
+                disabled={page <= 1}
+                onClick={() => onPagingChange({ page: page - 1 })}
               >
                 <ChevronLeft aria-hidden="true" /> Previous
               </Button>
             </PaginationItem>
             <PaginationItem>
               <span className="px-2 text-sm" aria-current="page">
-                {pageIndex + 1} / {table.getPageCount()}
+                {page} / {pageCount}
               </span>
             </PaginationItem>
             <PaginationItem>
@@ -446,8 +460,8 @@ export function LogsTable({
                 variant="ghost"
                 size="sm"
                 aria-label="Go to next page"
-                disabled={!table.getCanNextPage()}
-                onClick={() => table.nextPage()}
+                disabled={page >= pageCount}
+                onClick={() => onPagingChange({ page: page + 1 })}
               >
                 Next <ChevronRight aria-hidden="true" />
               </Button>

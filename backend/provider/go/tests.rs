@@ -93,7 +93,7 @@ async fn restricted_model_listing_filters_and_rejects_invalid_upstream() {
     let state = AppState {
         providers: crate::provider::Providers::new(),
         settings: store,
-        logs: crate::server::observability::LogStore::new(database),
+        database,
         dashboard_auth: crate::server::dashboard_auth_config::test_auth().await,
     };
     let provider = Provider {

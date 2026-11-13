@@ -18,12 +18,14 @@ import {
   CredentialsResponse,
   CursorPollResponse,
   CursorStartResponse,
+  DashboardResponse,
   DashboardUser,
   GrokPollResponse,
   GrokStartResponse,
   KeyList,
+  LogEntry,
+  LogsResponse,
   ModelCatalog,
-  ObservabilityResponse,
   Provider,
   ProviderKindsResponse,
   ProvidersResponse,
@@ -41,8 +43,9 @@ import type {
   CreateProvider,
   CredentialInput,
   CursorPollInput,
-  GetObservabilityParams,
+  GetDashboardParams,
   GrokPollInput,
+  ListLogsParams,
   ManagementKey,
   OidcCallbackParams,
   UpdateKey,
@@ -65,6 +68,36 @@ export const currentUser = async (
     ...options,
     method: "GET",
     schema: DashboardUser,
+  });
+};
+
+export const getGetDashboardUrl = (params?: GetDashboardParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/dashboard?${stringifiedParams}`
+    : `/api/dashboard`;
+};
+
+/**
+ * @summary Serve dashboard metrics for a filtered range.
+ */
+export const getDashboard = async (
+  params?: GetDashboardParams,
+  options?: Parameters<typeof request>[1],
+): Promise<DashboardResponse> => {
+  return request<DashboardResponse>(getGetDashboardUrl(params), {
+    ...options,
+    method: "GET",
+    schema: DashboardResponse,
   });
 };
 
@@ -207,6 +240,54 @@ export const unrevokeKey = async (
   });
 };
 
+export const getListLogsUrl = (params?: ListLogsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/logs?${stringifiedParams}`
+    : `/api/logs`;
+};
+
+/**
+ * @summary Serve a bounded list of metadata and available filter dimensions.
+ */
+export const listLogs = async (
+  params?: ListLogsParams,
+  options?: Parameters<typeof request>[1],
+): Promise<LogsResponse> => {
+  return request<LogsResponse>(getListLogsUrl(params), {
+    ...options,
+    method: "GET",
+    schema: LogsResponse,
+  });
+};
+
+export const getGetLogUrl = (id: number) => {
+  return `/api/logs/${encodeURIComponent(String(id))}`;
+};
+
+/**
+ * @summary Serve one captured log including its bodies.
+ */
+export const getLog = async (
+  id: number,
+  options?: Parameters<typeof request>[1],
+): Promise<LogEntry> => {
+  return request<LogEntry>(getGetLogUrl(id), {
+    ...options,
+    method: "GET",
+    schema: LogEntry,
+  });
+};
+
 export const getGetModelCatalogUrl = () => {
   return `/api/model-catalog`;
 };
@@ -238,36 +319,6 @@ export const refreshModelCatalog = async (
     ...options,
     method: "POST",
     schema: ModelCatalog,
-  });
-};
-
-export const getGetObservabilityUrl = (params?: GetObservabilityParams) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : String(value));
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/observability?${stringifiedParams}`
-    : `/api/observability`;
-};
-
-/**
- * @summary Serve dashboard metrics and recent request logs.
- */
-export const getObservability = async (
-  params?: GetObservabilityParams,
-  options?: Parameters<typeof request>[1],
-): Promise<ObservabilityResponse> => {
-  return request<ObservabilityResponse>(getGetObservabilityUrl(params), {
-    ...options,
-    method: "GET",
-    schema: ObservabilityResponse,
   });
 };
 

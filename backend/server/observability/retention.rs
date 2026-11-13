@@ -1,21 +1,52 @@
-use crate::storage::{LogFilterOption, RequestLog};
+use crate::database::{Database, transaction_with_retry};
+use crate::storage::{LogFilterOption, RequestLog, Setting};
 
-use super::LogEntry;
+use super::{logs::LogEntry, now};
 
-/// Delete expired logs and their retained filter snapshots in the same transaction.
-pub(super) async fn prune_expired(
-    tx: &mut toasty::Transaction<'_>,
-    cutoff: i64,
-) -> toasty::Result<()> {
-    RequestLog::filter(RequestLog::fields().created_at().lt(cutoff))
-        .delete()
+/// Read the current retention policy from the same transaction as its consumer.
+pub(super) async fn read_retention(tx: &mut toasty::Transaction<'_>) -> toasty::Result<i64> {
+    let setting = Setting::filter_by_name("log_retention_days")
+        .first()
         .exec(tx)
         .await?;
-    LogFilterOption::filter(LogFilterOption::fields().last_seen().lt(cutoff))
-        .delete()
-        .exec(tx)
-        .await?;
-    Ok(())
+    let days = match setting {
+        Some(setting) => setting.value.parse::<i64>().map_err(|_| {
+            toasty::Error::from_args(format_args!(
+                "log_retention_days must be a positive integer"
+            ))
+        })?,
+        None => 30,
+    };
+    if !(1..=36500).contains(&days) {
+        return Err(toasty::Error::from_args(format_args!(
+            "log_retention_days must be between 1 and 36500"
+        )));
+    }
+    Ok(days)
+}
+
+/// Earliest Unix second retained under a retention policy of `days`.
+pub(super) fn cutoff(days: i64) -> i64 {
+    now().saturating_sub(days.saturating_mul(86400))
+}
+
+/// Delete expired logs and filter snapshots using the current persisted policy.
+pub(crate) async fn prune_expired(database: &Database) -> Result<(), String> {
+    transaction_with_retry!(database, |mut tx| {
+        let retention_days = read_retention(&mut tx).await?;
+        let cutoff = cutoff(retention_days);
+        RequestLog::filter(RequestLog::fields().created_at().lt(cutoff))
+            .delete()
+            .exec(&mut tx)
+            .await?;
+        LogFilterOption::filter(LogFilterOption::fields().last_seen().lt(cutoff))
+            .delete()
+            .exec(&mut tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    })
+    .map_err(|err| err.to_string())
 }
 
 /// Track the newest retained request for every option and identity-name snapshot.

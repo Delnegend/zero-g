@@ -1,7 +1,12 @@
 import { afterEach, test } from "node:test";
 import assert from "node:assert/strict";
 import { QueryClient } from "@tanstack/react-query";
-import { observabilityQueryOptions, rangeStart } from "./observability";
+import {
+  getLog,
+  logsQueryOptions,
+  observabilityQueryOptions,
+  rangeStart,
+} from "./observability";
 
 const originalFetch = globalThis.fetch;
 const originalNow = Date.now;
@@ -22,7 +27,6 @@ const response = {
     virtual_keys: [],
   },
   interval: "hour",
-  logs: [],
   retention_cutoff: -1000000000,
   summary: {
     avg_latency_ms: 0,
@@ -53,7 +57,6 @@ test("dashboard sends adjacent inclusive ranges with identical filters and refre
   const client = new QueryClient();
   const options = observabilityQueryOptions(
     { kind: "preset", value: "1m" },
-    false,
     filters,
   );
   const result = await client.fetchQuery(options);
@@ -80,7 +83,8 @@ test("dashboard sends adjacent inclusive ranges with identical filters and refre
     ],
   );
   for (const call of calls) {
-    assert.equal(call.searchParams.get("aggregates_only"), "true");
+    assert.equal(call.pathname, "/api/dashboard");
+    assert.equal(call.searchParams.has("aggregates_only"), false);
     for (const [key, value] of Object.entries(filters)) {
       assert.deepEqual(JSON.parse(call.searchParams.get(key)!), value);
     }
@@ -102,7 +106,7 @@ test("custom and single-second ranges preserve inclusive boundaries", async () =
   }) as typeof fetch;
   const client = new QueryClient();
   const data = await client.fetchQuery(
-    observabilityQueryOptions({ kind: "custom", from: 100, until: 100 }, false),
+    observabilityQueryOptions({ kind: "custom", from: 100, until: 100 }),
   );
   assert.deepEqual(data.comparison, {
     data: response,
@@ -152,10 +156,11 @@ test("previous failure retains current data while current failure rejects", asyn
       : Response.json(response);
   }) as typeof fetch;
   const client = new QueryClient();
-  const options = observabilityQueryOptions(
-    { kind: "custom", from: 100, until: 110 },
-    false,
-  );
+  const options = observabilityQueryOptions({
+    kind: "custom",
+    from: 100,
+    until: 110,
+  });
   const data = await client.fetchQuery(options);
   assert.deepEqual(data.summary, response.summary);
   assert.equal(data.comparison?.data, null);
@@ -172,46 +177,93 @@ test("active retention cutoff controls comparisons without requesting pending se
   }) as typeof fetch;
   const client = new QueryClient();
   const partial = await client.fetchQuery(
-    observabilityQueryOptions(
-      { kind: "custom", from: 13601, until: 13602 },
-      false,
-    ),
+    observabilityQueryOptions({ kind: "custom", from: 13601, until: 13602 }),
   );
   assert.equal(partial.comparison?.retentionCutoff, 13600);
   assert.equal(partial.comparison?.data, null);
   const complete = await client.fetchQuery(
-    observabilityQueryOptions(
-      { kind: "custom", from: 13602, until: 13603 },
-      false,
-    ),
+    observabilityQueryOptions({ kind: "custom", from: 13602, until: 13603 }),
   );
   assert.deepEqual(complete.comparison?.data, {
     ...response,
     retention_cutoff: 13600,
   });
   assert.equal(calls.length, 4);
-  assert.ok(calls.every((url) => url.startsWith("/api/observability?")));
+  assert.ok(calls.every((url) => url.startsWith("/api/dashboard?")));
   client.clear();
 });
 
-test("logs-only queries issue one unbounded request and no comparison", async () => {
+test("logs queries send pagination, search and sort without comparison", async () => {
   const calls: URL[] = [];
   globalThis.fetch = (async (url) => {
     calls.push(new URL(String(url), "http://localhost"));
-    return Response.json(response);
+    return Response.json({
+      logs: [],
+      total: 0,
+      page: 2,
+      limit: 50,
+      filter_options: response.filter_options,
+      retention_cutoff: response.retention_cutoff,
+    });
   }) as typeof fetch;
   const client = new QueryClient();
   const result = await client.fetchQuery(
-    observabilityQueryOptions({ kind: "custom", from: 100, until: 110 }, true, {
-      models: ["model"],
-    }),
+    logsQueryOptions(
+      {
+        models: ["model"],
+      },
+      { page: 2, limit: 50, search: "needle", sort: "model:asc" },
+    ),
   );
-  assert.deepEqual(result, response);
+  assert.deepEqual(result, {
+    logs: [],
+    total: 0,
+    page: 2,
+    limit: 50,
+    filter_options: response.filter_options,
+    retention_cutoff: response.retention_cutoff,
+  });
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].searchParams.get("logs_only"), "true");
-  assert.equal(calls[0].searchParams.get("aggregates_only"), null);
+  assert.equal(calls[0].pathname, "/api/logs");
+  assert.equal(calls[0].searchParams.has("logs_only"), false);
+  assert.equal(calls[0].searchParams.has("aggregates_only"), false);
   assert.equal(calls[0].searchParams.get("since"), null);
   assert.equal(calls[0].searchParams.get("until"), null);
   assert.deepEqual(JSON.parse(calls[0].searchParams.get("models")!), ["model"]);
+  assert.equal(calls[0].searchParams.get("page"), "2");
+  assert.equal(calls[0].searchParams.get("limit"), "50");
+  assert.equal(calls[0].searchParams.get("search"), "needle");
+  assert.equal(calls[0].searchParams.get("sort"), "model:asc");
   client.clear();
+});
+
+test("log detail loads a single full entry and reports missing logs", async () => {
+  const log = {
+    id: 42,
+    created_at: 1,
+    provider: "alpha",
+    model: "model",
+    path: "/chat",
+    status: 200,
+    latency_ms: 1,
+    input_tokens: null,
+    output_tokens: null,
+    request_body: "request",
+    response_body: "response",
+    virtual_key_id: null,
+    virtual_key_name: null,
+    credential_id: null,
+    credential_name: null,
+  };
+  const calls: string[] = [];
+  globalThis.fetch = (async (url) => {
+    calls.push(String(url));
+    return calls.length === 1
+      ? Response.json(log)
+      : new Response(null, { status: 404 });
+  }) as typeof fetch;
+  const signal = new AbortController().signal;
+  assert.deepEqual(await getLog(signal, 42), log);
+  await assert.rejects(getLog(signal, 43), /404/);
+  assert.deepEqual(calls, ["/api/logs/42", "/api/logs/43"]);
 });

@@ -61,6 +61,107 @@
         }
       }
     },
+    "/api/dashboard": {
+      "get": {
+        "tags": [],
+        "summary": "Serve dashboard metrics for a filtered range.",
+        "operationId": "getDashboard",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Inclusive lower Unix timestamp",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "description": "Inclusive upper Unix timestamp",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "providers",
+            "in": "query",
+            "description": "JSON array of exact providers; empty means all",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "models",
+            "in": "query",
+            "description": "JSON array of exact models; empty means all",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "paths",
+            "in": "query",
+            "description": "JSON array of exact request paths; empty means all",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "statuses",
+            "in": "query",
+            "description": "JSON array of success (200–399) and/or error (400 and above); empty means all",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "virtual_key_ids",
+            "in": "query",
+            "description": "JSON array of exact virtual key IDs; empty means all",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_ids",
+            "in": "query",
+            "description": "JSON array of exact provider credential IDs; empty means all",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query"
+          },
+          "500": {
+            "description": "Log query failed"
+          }
+        }
+      }
+    },
     "/api/keys": {
       "get": {
         "tags": [],
@@ -226,6 +327,182 @@
         }
       }
     },
+    "/api/logs": {
+      "get": {
+        "tags": [],
+        "summary": "Serve a bounded list of metadata and available filter dimensions.",
+        "operationId": "listLogs",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Inclusive lower Unix timestamp",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "description": "Inclusive upper Unix timestamp",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "providers",
+            "in": "query",
+            "description": "JSON array of exact providers",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "models",
+            "in": "query",
+            "description": "JSON array of exact models",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "paths",
+            "in": "query",
+            "description": "JSON array of exact request paths",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "statuses",
+            "in": "query",
+            "description": "JSON array of success and/or error",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "virtual_key_ids",
+            "in": "query",
+            "description": "JSON array of exact virtual key IDs",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_ids",
+            "in": "query",
+            "description": "JSON array of exact provider credential IDs",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "One-based page number, default 1",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, default 20, maximum 200",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "description": "Case-insensitive provider, model, or path search; whole numbers also match an exact ID, status, or timestamp",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Sort field and direction, or recent",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query"
+          },
+          "500": {
+            "description": "Log query failed"
+          }
+        }
+      }
+    },
+    "/api/logs/{id}": {
+      "get": {
+        "tags": [],
+        "summary": "Serve one captured log including its bodies.",
+        "operationId": "getLog",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Log identifier",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogEntry"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Log not found"
+          },
+          "500": {
+            "description": "Log query failed"
+          }
+        }
+      }
+    },
     "/api/model-catalog": {
       "get": {
         "tags": [],
@@ -280,135 +557,6 @@
                 }
               }
             }
-          }
-        }
-      }
-    },
-    "/api/observability": {
-      "get": {
-        "tags": [],
-        "summary": "Serve dashboard metrics and recent request logs.",
-        "operationId": "getObservability",
-        "parameters": [
-          {
-            "name": "since",
-            "in": "query",
-            "description": "Inclusive lower Unix timestamp",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          },
-          {
-            "name": "until",
-            "in": "query",
-            "description": "Inclusive upper Unix timestamp",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          },
-          {
-            "name": "providers",
-            "in": "query",
-            "description": "JSON array of exact providers; empty means all",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "models",
-            "in": "query",
-            "description": "JSON array of exact models; empty means all",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "paths",
-            "in": "query",
-            "description": "JSON array of exact request paths; empty means all",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "statuses",
-            "in": "query",
-            "description": "JSON array of success (200–399) and/or error (400 and above); empty means all",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "virtual_key_ids",
-            "in": "query",
-            "description": "JSON array of exact virtual key IDs; empty means all",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "credential_ids",
-            "in": "query",
-            "description": "JSON array of exact provider credential IDs; empty means all",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "logs_only",
-            "in": "query",
-            "description": "Return recent logs and filter options without calculating dashboard aggregates; aggregate fields are empty",
-            "required": false,
-            "schema": {
-              "type": "boolean"
-            }
-          },
-          {
-            "name": "aggregates_only",
-            "in": "query",
-            "description": "Return aggregates and filter options without fetching request logs; logs is empty",
-            "required": false,
-            "schema": {
-              "type": "boolean"
-            }
-          },
-          {
-            "name": "log_id",
-            "in": "query",
-            "description": "Return the selected log including its captured bodies; ordinary lists omit bodies",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ObservabilityResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid query"
-          },
-          "500": {
-            "description": "Log query failed"
           }
         }
       }
@@ -3023,6 +3171,48 @@
           }
         }
       },
+      "DashboardResponse": {
+        "type": "object",
+        "description": "Dashboard aggregates for a filtered time range.",
+        "required": [
+          "summary",
+          "interval",
+          "buckets",
+          "filter_options",
+          "breakdown",
+          "retention_cutoff"
+        ],
+        "properties": {
+          "breakdown": {
+            "$ref": "#/components/schemas/Breakdown",
+            "description": "Request counts by provider and model."
+          },
+          "buckets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ObservabilityBucket"
+            },
+            "description": "Time-bucketed metrics."
+          },
+          "filter_options": {
+            "$ref": "#/components/schemas/FilterOptions",
+            "description": "Available filter dimensions."
+          },
+          "interval": {
+            "$ref": "#/components/schemas/Interval",
+            "description": "UTC bucket interval."
+          },
+          "retention_cutoff": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Earliest retained timestamp in Unix seconds."
+          },
+          "summary": {
+            "$ref": "#/components/schemas/ObservabilitySummary",
+            "description": "Aggregate request and token statistics."
+          }
+        }
+      },
       "DashboardUser": {
         "type": "object",
         "description": "Authenticated dashboard user identity details.",
@@ -3293,7 +3483,7 @@
       },
       "LogEntry": {
         "type": "object",
-        "description": "Serialized request log returned by the dashboard.",
+        "description": "One stored request log including its captured bodies.",
         "required": [
           "id",
           "created_at",
@@ -3382,7 +3572,7 @@
       },
       "LogSummary": {
         "type": "object",
-        "description": "Metadata returned by list queries; bodies are present only for detail queries.",
+        "description": "Log metadata returned by list queries, without captured bodies.",
         "required": [
           "id",
           "created_at",
@@ -3444,14 +3634,6 @@
             "type": "string",
             "description": "Provider serving the request."
           },
-          "request_body": {
-            "type": ["string", "null"],
-            "description": "Captured request body, present only for details."
-          },
-          "response_body": {
-            "type": ["string", "null"],
-            "description": "Captured response body, present only for details."
-          },
           "status": {
             "type": "integer",
             "format": "int64",
@@ -3464,6 +3646,51 @@
           "virtual_key_name": {
             "type": ["string", "null"],
             "description": "Virtual key name snapshot, if known."
+          }
+        }
+      },
+      "LogsResponse": {
+        "type": "object",
+        "description": "Bounded metadata listing and available filter dimensions.",
+        "required": [
+          "logs",
+          "total",
+          "page",
+          "limit",
+          "filter_options",
+          "retention_cutoff"
+        ],
+        "properties": {
+          "filter_options": {
+            "$ref": "#/components/schemas/FilterOptions",
+            "description": "Available filter dimensions."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of entries per page.",
+            "minimum": 0
+          },
+          "logs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LogSummary"
+            },
+            "description": "Up to 200 matching log summaries without bodies."
+          },
+          "page": {
+            "type": "integer",
+            "description": "One-based page number.",
+            "minimum": 0
+          },
+          "retention_cutoff": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Earliest retained timestamp in Unix seconds."
+          },
+          "total": {
+            "type": "integer",
+            "description": "Number of matching log records before pagination.",
+            "minimum": 0
           }
         }
       },
@@ -3648,56 +3875,6 @@
             "type": "integer",
             "description": "Responses with status 200 through 399.",
             "minimum": 0
-          }
-        }
-      },
-      "ObservabilityResponse": {
-        "type": "object",
-        "description": "Dashboard metrics and recent request logs.",
-        "required": [
-          "summary",
-          "logs",
-          "interval",
-          "buckets",
-          "filter_options",
-          "breakdown",
-          "retention_cutoff"
-        ],
-        "properties": {
-          "breakdown": {
-            "$ref": "#/components/schemas/Breakdown",
-            "description": "Counts by provider and model after filtering."
-          },
-          "buckets": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ObservabilityBucket"
-            },
-            "description": "Request counts by time bucket."
-          },
-          "filter_options": {
-            "$ref": "#/components/schemas/FilterOptions",
-            "description": "Sorted dimension values in the selected date range."
-          },
-          "interval": {
-            "$ref": "#/components/schemas/Interval",
-            "description": "Bucket granularity."
-          },
-          "logs": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/LogSummary"
-            },
-            "description": "Up to 200 metadata-only entries, or one full entry for `log_id`."
-          },
-          "retention_cutoff": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Earliest Unix second retained by the active log-store policy."
-          },
-          "summary": {
-            "$ref": "#/components/schemas/ObservabilitySummary",
-            "description": "Aggregate metrics."
           }
         }
       },

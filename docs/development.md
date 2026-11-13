@@ -78,9 +78,30 @@ The request log response viewer reconstructs supported streamed and JSON
 responses, with a raw view for the original captured bytes. Captured responses
 are limited to 256 KiB, so the readable view may be incomplete.
 
-The logs page loads metadata for up to 200 matching requests; captured bodies
-are fetched only when a request is opened. Search and pagination apply to those
-200 summaries.
+The logs page searches and sorts all matching requests on the server, then loads
+one page of metadata at a time. Captured bodies are fetched only when a request
+is opened. `GET /api/logs` accepts a one-based `page` and a `limit` from 1 to
+200 (default 20), and returns the matching total along with the selected page.
+Search matches provider, model, or path text (ASCII case-insensitive); a whole
+number also matches an exact log ID, status, or timestamp.
+Dashboard totals and charts cover the entire selected range, not just a page.
+
+Both endpoints share one filter (`backend/server/observability/filter.rs`):
+time range, dimensions, statuses, and the filter choices offered for a range.
+`dashboard.rs` owns aggregation and `logs.rs` owns paging, search, and details.
+All queries are built with Toasty, without hand-written SQL.
+
+Request capture writes each completed or interrupted inference log and its
+filter snapshots in one transaction. Query tests seed historical records
+directly, while capture tests exercise request and response recording.
+
+
+The dashboard reads aggregate statistics from `GET /api/dashboard`. The log
+list uses `GET /api/logs`, and opening a request fetches its captured bodies
+from `GET /api/logs/{id}`. These endpoints require dashboard authentication.
+Their handlers and endpoint tests live in `backend/server/observability/dashboard.rs`
+and `backend/server/observability/logs.rs`, respectively.
+
 
 
 

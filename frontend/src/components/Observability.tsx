@@ -14,14 +14,18 @@ import { formatTimestamp } from "@/lib/date";
 import { LogsTable } from "@/components/LogsTable";
 import { RequestBody, requestBodyTheme } from "@/components/RequestBody";
 import {
-  getObservability,
+  getLog,
+  logsQueryOptions,
   observabilityQueryOptions,
   type DashboardRange,
   type Log,
   type ObservabilityFilterValues,
+  type LogsQuery,
 } from "@/server/api/observability";
-import { useQuery } from "@tanstack/react-query";
-import { useCallback, useRef, useState } from "react";
+import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+import { useCallback, useRef, useState, type RefObject } from "react";
+import type { LogList } from "@/server/api/observability";
+import type { LogEntry } from "@/server/api/generated/schemas";
 
 export const number = new Intl.NumberFormat();
 
@@ -29,10 +33,7 @@ export function formatTokens(value: number | null): string {
   return value == null ? "Unknown" : number.format(value);
 }
 
-export function useObservability(
-  logsOnly = false,
-  filters: ObservabilityFilterValues = {},
-) {
+export function useObservability(filters: ObservabilityFilterValues = {}) {
   const [range, setRange] = useState<DashboardRange>({
     kind: "preset",
     value: "24h",
@@ -42,7 +43,27 @@ export function useObservability(
     error: queryError,
     isFetching: loading,
     refetch,
-  } = useQuery(observabilityQueryOptions(range, logsOnly, filters));
+  } = useQuery(observabilityQueryOptions(range, filters));
+  const error =
+    !loading && queryError
+      ? queryError instanceof Error
+        ? queryError.message
+        : "Unable to load observability data."
+      : null;
+  return { range, setRange, data, loading, refetch, error };
+}
+
+export function useRequestLogs(
+  filters: ObservabilityFilterValues,
+  paging: Pick<LogsQuery, "page" | "limit" | "search" | "sort">,
+) {
+  const {
+    data,
+    error: queryError,
+    isFetching: loading,
+    refetch,
+    isPlaceholderData,
+  } = useQuery(logsQueryOptions(filters, paging));
   const error =
     !loading && queryError
       ? queryError instanceof Error
@@ -60,12 +81,8 @@ export function useObservability(
   const detail = useQuery({
     queryKey: ["observability-log", selectedId],
     queryFn: async ({ signal }) => {
-      const result = await getObservability(signal, {
-        logs_only: true,
-        log_id: selectedId!,
-      });
-      const log = result.logs[0];
-      if (!log || log.request_body == null || log.response_body == null) {
+      const log = await getLog(signal, selectedId!);
+      if (log.request_body == null || log.response_body == null) {
         throw new Error("Request details are no longer available.");
       }
       return log;
@@ -77,9 +94,8 @@ export function useObservability(
     refetchOnReconnect: false,
   });
   return {
-    range,
-    setRange,
     data,
+    isPlaceholderData,
     loading,
     refetch,
     error,
@@ -118,6 +134,19 @@ export function ObservabilityError({
   );
 }
 
+type RequestLogsProps = {
+  data: LogList | undefined;
+  selected: Log | undefined;
+  detail: UseQueryResult<LogEntry, Error>;
+  setSelectedId: (id: Log["id"] | null) => void;
+  detailsTrigger: RefObject<HTMLButtonElement | null>;
+  selectLog: (id: Log["id"], trigger: HTMLButtonElement) => void;
+  paging: Pick<LogsQuery, "page" | "limit" | "search" | "sort">;
+  onPagingChange: (
+    paging: Partial<Pick<LogsQuery, "page" | "limit" | "search" | "sort">>,
+  ) => void;
+};
+
 export function RequestLogs({
   data,
   selected,
@@ -125,10 +154,18 @@ export function RequestLogs({
   setSelectedId,
   detailsTrigger,
   selectLog,
-}: ReturnType<typeof useObservability>) {
+  paging,
+  onPagingChange,
+}: RequestLogsProps) {
   return (
     <>
-      <LogsTable logs={data?.logs ?? []} onSelect={selectLog} />
+      <LogsTable
+        logs={data?.logs ?? []}
+        total={data?.total ?? 0}
+        paging={paging}
+        onPagingChange={onPagingChange}
+        onSelect={selectLog}
+      />
       <Drawer
         open={selected != null}
         onOpenChange={(open) => {

@@ -6,7 +6,7 @@ function parseDocument(html: string) {
   return document;
 }
 import { ObservabilityCharts } from "./ObservabilityCharts";
-import type { ObservabilityResponse } from "@/server/api/generated/schemas";
+import type { DashboardResponse } from "@/server/api/generated/schemas";
 
 const bucket = (
   start: number,
@@ -27,12 +27,11 @@ const breakdown = {
   providers: [{ name: "provider", requests: 2 }],
   models: [{ name: "model", requests: 2 }],
 };
-const previous: ObservabilityResponse = {
+const previous: DashboardResponse = {
   interval: "hour",
   buckets: [bucket(0, 1, null), bucket(7200, 1, 7)],
   breakdown,
   retention_cutoff: 0,
-  logs: [],
   filter_options: {
     providers: [],
     models: [],
@@ -321,7 +320,7 @@ test("model usage stacks only current models without previous period content", (
 });
 
 test("provider charts stack requests and reported token usage by time", () => {
-  const current: ObservabilityResponse["buckets"] = [
+  const current: DashboardResponse["buckets"] = [
     {
       ...bucket(3600, 3, 100),
       by_provider: {

@@ -37,21 +37,24 @@ test("search and inspect a request in LLM logs", async () => {
   globalThis.fetch = (async (url) => {
     const parsed = new URL(String(url), "http://localhost");
     requests.push(parsed);
-    assert.equal(parsed.pathname, "/api/observability");
+    assert.ok(
+      parsed.pathname === "/api/logs" || parsed.pathname === "/api/logs/42",
+    );
     assert.equal(parsed.searchParams.has("since"), false);
+    if (parsed.pathname === "/api/logs/42") return Response.json(log);
+    const search = (parsed.searchParams.get("search") ?? "").toLowerCase();
+    const logs = [log, { ...log, id: 43, path: "/v1/decisions" }].filter(
+      (entry) => entry.path.includes(search),
+    );
     return Response.json({
-      interval: "hour",
       retention_cutoff: 0,
-      buckets: [],
-      logs: parsed.searchParams.has("log_id")
-        ? [log]
-        : [log, { ...log, id: 43, path: "/v1/decisions" }].map(
-            ({
-              request_body: _request,
-              response_body: _response,
-              ...summary
-            }) => summary,
-          ),
+      page: 1,
+      limit: 20,
+      total: logs.length,
+      logs: logs.map(
+        ({ request_body: _request, response_body: _response, ...summary }) =>
+          summary,
+      ),
       filter_options: {
         providers: ["alpha"],
         models: ["model-a"],
@@ -77,14 +80,21 @@ test("search and inspect a request in LLM logs", async () => {
   assert.ok((await screen.findAllByText("Decisions")).length > 0);
   assert.ok(screen.getAllByText("Chat completions").length > 0);
   assert.equal(
-    requests.some((url) => url.searchParams.has("log_id")),
+    requests.some((url) => url.pathname === "/api/logs/42"),
     false,
   );
   await user.type(screen.getByLabelText("Search request logs"), "decisions");
   assert.ok(
-    screen.getAllByRole("button", { name: "View request 43" }).length > 0,
+    (await screen.findAllByRole("button", { name: "View request 43" })).length >
+      0,
   );
-  assert.equal(screen.queryByRole("button", { name: "View request 42" }), null);
+  await waitFor(() => {
+    assert.equal(requests.at(-1)?.searchParams.get("search"), "decisions");
+    assert.equal(
+      screen.queryByRole("button", { name: "View request 42" }),
+      null,
+    );
+  });
   await user.clear(screen.getByLabelText("Search request logs"));
   await user.click(
     (await screen.findAllByRole("button", { name: "View request 42" }))[0],
@@ -97,10 +107,10 @@ test("search and inspect a request in LLM logs", async () => {
   assert.ok(await within(details).findByText(/hello/));
   assert.ok(await within(details).findByText(/world/));
   assert.equal(
-    requests.filter((url) => url.searchParams.has("log_id")).length,
+    requests.filter((url) => url.pathname === "/api/logs/42").length,
     1,
   );
-  assert.equal(requests.at(-1)?.searchParams.get("log_id"), "42");
+  assert.equal(requests.at(-1)?.pathname, "/api/logs/42");
   await user.keyboard("{Escape}");
   await waitFor(() => assert.equal(screen.queryByRole("dialog"), null));
 });
@@ -132,15 +142,22 @@ test("LLM log filters load matching requests and reset pagination", async () => 
   globalThis.fetch = (async (url) => {
     const parsed = new URL(String(url), "http://localhost");
     requests.push(parsed);
+    assert.equal(parsed.pathname, "/api/logs");
     const providers = JSON.parse(
       parsed.searchParams.get("providers") ?? "[]",
     ) as string[];
-    const visible = providers.includes("beta") ? [olderMatch] : logs;
+    const page = Number(parsed.searchParams.get("page") ?? 1);
+    const limit = Number(parsed.searchParams.get("limit") ?? 20);
+    const search = parsed.searchParams.get("search") ?? "";
+    const visible = (providers.includes("beta") ? [olderMatch] : logs).filter(
+      (log) => String(log.id).includes(search),
+    );
     return Response.json({
-      interval: "hour",
       retention_cutoff: 0,
-      buckets: [],
-      logs: visible,
+      page,
+      limit,
+      total: visible.length,
+      logs: visible.slice((page - 1) * limit, page * limit),
       filter_options: {
         providers: ["alpha", "beta"],
         models: ["test-model"],
@@ -166,6 +183,7 @@ test("LLM log filters load matching requests and reset pagination", async () => 
   assert.ok(
     (await screen.findAllByRole("button", { name: "View request 21" })).length,
   );
+  assert.equal(requests.at(-1)?.searchParams.get("page"), "2");
   const filters = screen.getByRole("complementary", {
     name: "Observability filters",
   });
@@ -182,6 +200,7 @@ test("LLM log filters load matching requests and reset pagination", async () => 
     ["beta"],
   );
   assert.equal(requests.at(-1)!.searchParams.has("since"), false);
+  assert.equal(requests.at(-1)?.searchParams.get("page"), "1");
   assert.deepEqual(
     JSON.parse(new URLSearchParams(history.location.search).get("providers")!),
     ["beta"],
@@ -190,6 +209,19 @@ test("LLM log filters load matching requests and reset pagination", async () => 
   assert.ok(
     (await screen.findAllByRole("button", { name: "View request 1" })).length,
   );
+  await user.selectOptions(screen.getByLabelText("Rows per page"), "50");
+  await waitFor(() =>
+    assert.equal(requests.at(-1)?.searchParams.get("limit"), "50"),
+  );
+  assert.equal(requests.at(-1)?.searchParams.get("page"), "1");
+  await user.click(screen.getByRole("button", { name: /Provider \/ model/ }));
+  await waitFor(() =>
+    assert.match(
+      requests.at(-1)?.searchParams.get("sort") ?? "",
+      /^model:(asc|desc)$/,
+    ),
+  );
+  assert.equal(requests.at(-1)?.searchParams.get("page"), "1");
 });
 
 test("dashboard filters graphs and changes the time range without showing logs", async () => {
@@ -197,6 +229,7 @@ test("dashboard filters graphs and changes the time range without showing logs",
   globalThis.fetch = (async (url) => {
     const parsed = new URL(String(url), "http://localhost");
     requests.push(parsed);
+    assert.equal(parsed.pathname, "/api/dashboard");
     return Response.json({
       interval: "hour",
       retention_cutoff: 0,

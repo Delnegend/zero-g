@@ -5,13 +5,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ObservabilityPage } from "./routes/index";
 import { TooltipProvider } from "./components/ui/tooltip";
 import type { ObservabilityComparison } from "./server/api/observability";
-import type { ObservabilityResponse } from "./server/api/generated/schemas";
+import type { DashboardResponse } from "./server/api/generated/schemas";
 
-const response: ObservabilityResponse = {
+const response: DashboardResponse = {
   interval: "hour",
   retention_cutoff: 0,
   buckets: [],
-  logs: [],
   filter_options: {
     providers: [],
     models: [],
@@ -31,7 +30,7 @@ const response: ObservabilityResponse = {
 };
 
 function dashboard(
-  summary: ObservabilityResponse["summary"],
+  summary: DashboardResponse["summary"],
   filters = {},
   comparison?: ObservabilityComparison,
 ) {

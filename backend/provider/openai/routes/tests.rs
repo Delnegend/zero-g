@@ -118,7 +118,7 @@ fn model_listing_preserves_metadata_and_filters_unknown_models() {
 async fn fixed_compatible_router_enforces_scope_and_forwards_nested_models() {
     use crate::{
         database::Database,
-        server::{dashboard_auth_config, observability::LogStore},
+        server::dashboard_auth_config,
         storage::{ProviderCredential, ProviderRecord, Secret, VirtualKey},
     };
     use axum::{body::Body, extract::Request, response::Json};
@@ -221,7 +221,7 @@ async fn fixed_compatible_router_enforces_scope_and_forwards_nested_models() {
     let state = AppState {
         providers: crate::provider::Providers::new(),
         settings: store.clone(),
-        logs: LogStore::new(database),
+        database,
         dashboard_auth: dashboard_auth_config::test_auth().await,
     };
     let public_gateway = crate::server::create_router(state.clone());

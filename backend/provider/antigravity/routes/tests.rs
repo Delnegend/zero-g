@@ -460,7 +460,7 @@ async fn chat_route_preserves_signatures_and_applies_discovered_profile() {
     let state = AppState {
         providers,
         settings: store,
-        logs: crate::server::observability::LogStore::new(database),
+        database,
         dashboard_auth: crate::server::dashboard_auth_config::test_auth().await,
     };
     let app = Router::new()

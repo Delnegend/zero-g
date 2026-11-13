@@ -7,6 +7,8 @@ use axum::{
 pub(in crate::server) async fn fallback(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
     if crate::provider::is_provider_path(uri.path())
+        || path == "api"
+        || path.starts_with("api/")
         || path == "v1"
         || path.starts_with("v1/")
         || path == "health"

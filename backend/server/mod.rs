@@ -39,8 +39,8 @@ pub(crate) struct AppState {
     pub(crate) providers: provider::Providers,
     /// Persistent settings and credentials.
     pub(crate) settings: settings::SettingsStore,
-    /// Request log storage.
-    pub(crate) logs: observability::LogStore,
+    /// Persistent request log database.
+    pub(crate) database: crate::database::Database,
     /// Dashboard access protection.
     pub(crate) dashboard_auth: axum_auth_gate::Auth,
 }
@@ -74,16 +74,23 @@ pub(crate) fn create_router(state: AppState) -> Router {
         .route("/redoc", get(redoc::redoc))
         .route("/api/openapi.json", get(openapi::openapi))
         .route(
-            "/api/observability",
-            get(observability::dashboard).with_state(state.logs.clone()),
+            "/api/dashboard",
+            get(observability::dashboard).with_state(state.database.clone()),
+        )
+        .route(
+            "/api/logs",
+            get(observability::logs).with_state(state.database.clone()),
+        )
+        .route(
+            "/api/logs/{id}",
+            get(observability::log_detail).with_state(state.database.clone()),
         )
         .route(
             "/api/settings",
             get(settings::get_settings)
                 .with_state(state.settings.clone())
                 .merge(
-                    axum::routing::put(settings::put_settings)
-                        .with_state((state.settings.clone(), state.logs.clone())),
+                    axum::routing::put(settings::put_settings).with_state(state.settings.clone()),
                 ),
         )
         .route(
@@ -119,7 +126,7 @@ pub(crate) fn create_router(state: AppState) -> Router {
         )
         .merge(inference::router(&state))
         .layer(axum::middleware::from_fn_with_state(
-            state.logs.clone(),
+            state.database.clone(),
             observability::capture,
         ))
         .layer(axum::middleware::from_fn_with_state(
@@ -175,7 +182,7 @@ mod tests {
         let app = create_router(AppState {
             providers: provider::Providers::new(),
             settings,
-            logs: observability::LogStore::new(database),
+            database,
             dashboard_auth: dashboard_auth_config::test_auth().await,
         });
         for path in ["/", "/redoc", "/api/openapi.json", "/redoc.standalone.js"] {
@@ -215,6 +222,19 @@ mod tests {
                 assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
             }
         }
+        let retired = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/observability")
+                    .header(header::HOST, "127.0.0.1:8080")
+                    .header(header::AUTHORIZATION, "Basic dGVzdDp0ZXN0")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(retired.status(), StatusCode::NOT_FOUND);
         let request = Request::builder()
             .uri("/api/openapi.json")
             .header(header::HOST, "127.0.0.1:8080")
@@ -248,7 +268,7 @@ mod tests {
         let app = create_router(AppState {
             providers: provider::Providers::new(),
             settings,
-            logs: observability::LogStore::new(database),
+            database,
             dashboard_auth: dashboard_auth_config::test_auth().await,
         });
         for authorization in [None, Some("Bearer invalid")] {

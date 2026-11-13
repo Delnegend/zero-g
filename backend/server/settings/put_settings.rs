@@ -1,6 +1,5 @@
 use super::{SettingsResponse, SettingsStore, UpdateSettings, get_settings, internal_error};
 use crate::database::transaction_with_retry;
-use crate::server::observability::LogStore;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
@@ -18,7 +17,7 @@ use axum::response::{IntoResponse, Json, Response};
     )
 )]
 pub(crate) async fn put_settings(
-    State((store, logs)): State<(SettingsStore, LogStore)>,
+    State(store): State<SettingsStore>,
     Json(input): Json<UpdateSettings>,
 ) -> Response {
     if input
@@ -36,16 +35,20 @@ pub(crate) async fn put_settings(
     {
         return (StatusCode::BAD_REQUEST, "Interval is too large").into_response();
     }
-    if let Some(days) = input.log_retention_days
-        && let Err(err) = logs.save_retention(i64::from(days)).await
+    if input.log_retention_days.is_some()
+        || input.pricing_interval_hours.is_some()
+        || input.discovery_interval_minutes.is_some()
     {
-        return internal_error(&err);
-    }
-    if input.pricing_interval_hours.is_some() || input.discovery_interval_minutes.is_some() {
-        let store = store.clone();
+        let retention = input.log_retention_days;
         let pricing = input.pricing_interval_hours;
         let discovery = input.discovery_interval_minutes;
         let result = transaction_with_retry!(store.database, |mut tx| {
+            if let Some(days) = retention {
+                crate::storage::Setting::upsert_by_name("log_retention_days")
+                    .value(days.to_string())
+                    .exec(&mut tx)
+                    .await?;
+            }
             if let Some(hours) = pricing {
                 crate::storage::Setting::upsert_by_name("pricing_interval_hours")
                     .value(hours.to_string())

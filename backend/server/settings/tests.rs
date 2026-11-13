@@ -33,7 +33,6 @@ async fn settings_endpoints_preserve_response_and_update_behavior() {
     let path = path();
     let database = Database::open(path.to_str().unwrap()).await.unwrap();
     let store = SettingsStore::new(database, &key(1)).await.unwrap();
-    let logs = crate::server::observability::LogStore::new(store.database.clone());
 
     let input = serde_json::from_value(json!({
         "log_retention_days": 7,
@@ -41,7 +40,7 @@ async fn settings_endpoints_preserve_response_and_update_behavior() {
         "discovery_interval_minutes": 30
     }))
     .unwrap();
-    let response = put_settings(State((store.clone(), logs.clone())), Json(input)).await;
+    let response = put_settings(State(store.clone()), Json(input)).await;
     assert_eq!(response.status(), StatusCode::OK);
     let body = json_body(response).await;
     assert_eq!(body["log_retention_days"], 7);
@@ -51,9 +50,8 @@ async fn settings_endpoints_preserve_response_and_update_behavior() {
     assert!(body.get("oauth_client_secret_set").is_none());
 
     let input = serde_json::from_value(json!({"log_retention_days": 0})).unwrap();
-    let response = put_settings(State((store.clone(), logs.clone())), Json(input)).await;
+    let response = put_settings(State(store.clone()), Json(input)).await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    drop(logs);
     drop(store);
     std::fs::remove_file(path).unwrap();
 }

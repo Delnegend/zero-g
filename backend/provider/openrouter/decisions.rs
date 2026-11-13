@@ -89,7 +89,6 @@ mod tests {
     use super::*;
     use crate::{
         database::Database,
-        server::observability::LogStore,
         storage::{ProviderCredential, ProviderRecord, Secret, VirtualKey},
     };
     use axum::{
@@ -178,7 +177,7 @@ mod tests {
         .unwrap();
         let state = AppState {
             providers: crate::provider::Providers::new(),
-            logs: LogStore::new(database),
+            database,
             dashboard_auth: crate::server::dashboard_auth_config::test_auth().await,
             settings: store.clone(),
         };

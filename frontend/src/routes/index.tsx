@@ -131,10 +131,8 @@ export function ObservabilityPage({
   filters: ObservabilityFilterValues;
   onFiltersChange: (filters: ObservabilityFilterValues) => void;
 }) {
-  const { range, setRange, data, loading, refetch, error } = useObservability(
-    false,
-    filters,
-  );
+  const { range, setRange, data, loading, refetch, error } =
+    useObservability(filters);
   const summary = data?.summary;
   const previous = data?.comparison?.data?.summary;
   const cards = summary

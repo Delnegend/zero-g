@@ -10,14 +10,17 @@ use tracing::error;
 
 use crate::provider::common::request_identity::RequestIdentity;
 
-use super::{LogEntry, LogStore, now};
+use super::{LogEntry, now, retention::update_filter_options};
+use crate::database::{Database, transaction_with_retry};
+use crate::storage::RequestLog;
 
 /// Maximum response bytes retained for a single log entry.
 const RESPONSE_CAPTURE_LIMIT: usize = 256 * 1024;
 
 /// Capture POST request and response bodies for asynchronous logging.
+#[allow(clippy::too_many_lines)]
 pub(in crate::server) async fn capture(
-    State(store): State<LogStore>,
+    State(database): State<Database>,
     req: Request,
     next: Next,
 ) -> Response {
@@ -107,7 +110,30 @@ pub(in crate::server) async fn capture(
                 response_body,
             };
             tokio::spawn(async move {
-                if let Err(err) = store.insert(log).await {
+                let result = transaction_with_retry!(database, |mut tx| {
+                    toasty::create!(RequestLog {
+                        created_at: log.created_at,
+                        provider: log.provider.clone(),
+                        model: log.model.clone(),
+                        path: log.path.clone(),
+                        status: log.status,
+                        latency_ms: log.latency_ms,
+                        input_tokens: log.input_tokens,
+                        output_tokens: log.output_tokens,
+                        request_body: log.request_body.clone(),
+                        response_body: log.response_body.clone(),
+                        virtual_key_id: log.virtual_key_id.clone(),
+                        virtual_key_name: log.virtual_key_name.clone(),
+                        credential_id: log.credential_id.clone(),
+                        credential_name: log.credential_name.clone(),
+                    })
+                    .exec(&mut tx)
+                    .await?;
+                    update_filter_options(&mut tx, &log).await?;
+                    tx.commit().await?;
+                    Ok(())
+                });
+                if let Err(err) = result {
                     error!("Could not store request log: {err}");
                 }
             });
@@ -262,7 +288,6 @@ fn usage(body: &str) -> (Option<i64>, Option<i64>) {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use super::super::dashboard;
     use super::*;
     use crate::database::Database;
     use axum::{
@@ -280,7 +305,6 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("zero-g-log-test-{}.db", uuid::Uuid::new_v4()));
         let database = Database::open(path.to_str().unwrap()).await.unwrap();
-        let store = LogStore::new(database);
         let complete_body =
             r#"{"answer":"hello","usage":{"prompt_tokens":7,"completion_tokens":4}}"#;
         let partial_body =
@@ -320,9 +344,9 @@ mod tests {
                     next.run(request).await
                 },
             ))
-            .route_layer(middleware::from_fn_with_state(store.clone(), capture))
-            .route("/api/observability", get(dashboard))
-            .with_state(store.clone());
+            .route_layer(middleware::from_fn_with_state(database.clone(), capture))
+            .route("/api/logs", get(super::super::logs))
+            .with_state(database.clone());
 
         let request = |uri, body: &'static str| {
             Request::builder()
@@ -361,7 +385,7 @@ mod tests {
                     .clone()
                     .oneshot(
                         Request::builder()
-                            .uri("/api/observability")
+                            .uri("/api/logs")
                             .body(Body::empty())
                             .unwrap(),
                     )
@@ -370,7 +394,7 @@ mod tests {
                 assert_eq!(response.status(), StatusCode::OK);
                 let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
                 let dashboard: Value = serde_json::from_slice(&bytes).unwrap();
-                if dashboard["summary"]["requests"] == 2 {
+                if dashboard["logs"].as_array().unwrap().len() == 2 {
                     break dashboard["logs"].as_array().unwrap().clone();
                 }
                 tokio::task::yield_now().await;
@@ -401,15 +425,11 @@ mod tests {
             ),
         ] {
             let summary = logs.iter().find(|log| log["path"] == route).unwrap();
-            let result = store
-                .dashboard(&super::super::DashboardQuery {
-                    logs_only: Some(true),
-                    log_id: summary["id"].as_i64(),
-                    ..Default::default()
-                })
+            let log = super::super::logs::detail(&database, summary["id"].as_i64().unwrap())
                 .await
+                .unwrap()
                 .unwrap();
-            let log = serde_json::to_value(&result.logs[0]).unwrap();
+            let log = serde_json::to_value(&log).unwrap();
             assert_eq!(log["request_body"], request);
             assert_eq!(log["provider"], provider);
             assert_eq!(log["model"], model);
@@ -420,7 +440,7 @@ mod tests {
             assert_eq!(log["output_tokens"], output);
         }
         drop(app);
-        drop(store);
+        drop(database);
         std::fs::remove_file(path).unwrap();
     }
 
@@ -430,7 +450,7 @@ mod tests {
     async fn capture_keeps_concurrent_identities_isolated() {
         let path =
             std::env::temp_dir().join(format!("zero-g-identity-test-{}.db", uuid::Uuid::new_v4()));
-        let store = LogStore::new(Database::open(path.to_str().unwrap()).await.unwrap());
+        let database = Database::open(path.to_str().unwrap()).await.unwrap();
         let app = Router::new()
             .route("/{id}", post(|axum::extract::Path(id): axum::extract::Path<String>,
                 axum::Extension(identity): axum::Extension<RequestIdentity>| async move {
@@ -443,8 +463,8 @@ mod tests {
                 tokio::task::yield_now().await;
                 Body::from_stream(futures_util::stream::once(async { Ok::<_, std::convert::Infallible>(Bytes::from_static(b"response")) }))
             }))
-            .route_layer(middleware::from_fn_with_state(store.clone(), capture))
-            .with_state(store.clone());
+            .route_layer(middleware::from_fn_with_state(database.clone(), capture))
+            .with_state(database.clone());
         let request = |id| {
             Request::builder()
                 .method(Method::POST)
@@ -465,10 +485,13 @@ mod tests {
         }
         let logs = tokio::time::timeout(std::time::Duration::from_secs(10), async {
             loop {
-                let result = store
-                    .dashboard(&super::super::DashboardQuery::default())
-                    .await
-                    .unwrap();
+                let result = super::super::logs::query(
+                    &database,
+                    &super::super::filter::Filter::default(),
+                    &super::super::logs::Page::default(),
+                )
+                .await
+                .unwrap();
                 if result.logs.len() == 4 {
                     break result.logs;
                 }
@@ -478,21 +501,15 @@ mod tests {
         .await
         .unwrap();
         for log in logs {
-            let log = store
-                .dashboard(&super::super::DashboardQuery {
-                    logs_only: Some(true),
-                    log_id: Some(log.id),
-                    ..Default::default()
-                })
+            let log = super::super::logs::detail(&database, log.id)
                 .await
                 .unwrap()
-                .logs
-                .remove(0);
+                .unwrap();
             let id = log.path.trim_start_matches('/');
             if id == "anonymous" {
                 assert!(log.virtual_key_id.is_none());
-                assert_eq!(log.request_body.as_deref(), Some(""));
-                assert_eq!(log.response_body.as_deref(), Some(""));
+                assert_eq!(log.request_body, "");
+                assert_eq!(log.response_body, "");
                 assert!(log.credential_id.is_none());
             } else {
                 assert_eq!(log.virtual_key_id.as_deref(), Some(id));
@@ -512,7 +529,7 @@ mod tests {
             }
         }
         drop(app);
-        drop(store);
+        drop(database);
         std::fs::remove_file(path).unwrap();
     }
 
@@ -522,7 +539,7 @@ mod tests {
     async fn capture_bounds_streams_and_redacts_anonymous_bodies() {
         let path =
             std::env::temp_dir().join(format!("zero-g-capture-limit-{}.db", uuid::Uuid::new_v4()));
-        let store = LogStore::new(Database::open(path.to_str().unwrap()).await.unwrap());
+        let database = Database::open(path.to_str().unwrap()).await.unwrap();
         let app = Router::new()
             .route("/{kind}", post(
                 |axum::extract::Path(kind): axum::extract::Path<String>,
@@ -553,8 +570,8 @@ mod tests {
                     Body::from_stream(futures_util::stream::iter(chunks)).into_response()
                 }
             ))
-            .route_layer(middleware::from_fn_with_state(store.clone(), capture))
-            .with_state(store.clone());
+            .route_layer(middleware::from_fn_with_state(database.clone(), capture))
+            .with_state(database.clone());
         let request = |kind| {
             Request::builder()
                 .method(Method::POST)
@@ -615,11 +632,14 @@ mod tests {
 
         let logs = tokio::time::timeout(std::time::Duration::from_secs(10), async {
             loop {
-                let logs = store
-                    .dashboard(&super::super::DashboardQuery::default())
-                    .await
-                    .unwrap()
-                    .logs;
+                let logs = super::super::logs::query(
+                    &database,
+                    &super::super::filter::Filter::default(),
+                    &super::super::logs::Page::default(),
+                )
+                .await
+                .unwrap()
+                .logs;
                 if logs.len() == 3 {
                     break logs;
                 }
@@ -631,44 +651,36 @@ mod tests {
         let mut details = Vec::new();
         for log in logs {
             details.push(
-                store
-                    .dashboard(&super::super::DashboardQuery {
-                        logs_only: Some(true),
-                        log_id: Some(log.id),
-                        ..Default::default()
-                    })
+                super::super::logs::detail(&database, log.id)
                     .await
                     .unwrap()
-                    .logs
-                    .remove(0),
+                    .unwrap(),
             );
         }
         let logs = details;
         let large = logs.iter().find(|log| log.path == "/large").unwrap();
         assert_eq!(large.status, 200);
-        assert!(large.response_body.as_ref().unwrap().len() <= RESPONSE_CAPTURE_LIMIT);
+        assert!(large.response_body.len() <= RESPONSE_CAPTURE_LIMIT);
         assert!(
             large
                 .response_body
-                .as_ref()
-                .unwrap()
                 .starts_with(&"a".repeat(RESPONSE_CAPTURE_LIMIT - 1))
         );
         assert_eq!(large.input_tokens, Some(9));
         assert_eq!(large.output_tokens, Some(4));
         let anonymous = logs.iter().find(|log| log.path == "/anonymous").unwrap();
         assert_eq!(anonymous.status, 499);
-        assert_eq!(anonymous.request_body.as_deref(), Some(""));
-        assert_eq!(anonymous.response_body.as_deref(), Some(""));
+        assert_eq!(anonymous.request_body, "");
+        assert_eq!(anonymous.response_body, "");
         assert_eq!(anonymous.provider, "");
         assert_eq!(anonymous.model, "");
         let error = logs.iter().find(|log| log.path == "/error").unwrap();
         assert_eq!(error.status, 499);
-        assert_eq!(error.response_body.as_deref(), Some("partial"));
+        assert_eq!(error.response_body, "partial");
         assert!(error.input_tokens.is_none());
         assert!(error.output_tokens.is_none());
         drop(app);
-        drop(store);
+        drop(database);
         std::fs::remove_file(path).unwrap();
     }
 

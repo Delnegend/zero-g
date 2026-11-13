@@ -104,4 +104,4 @@ Clients authenticate with inference endpoints via `Authorization: Bearer <virtua
 | **Unified inference request size** | 20,000,000 bytes (~20 MB) | HTTP 413 Payload Too Large |
 | **Response Log Truncation** | 256 KiB | Logged body truncated; client stream unimpacted |
 | **Max Pending OIDC Logins** | 1,024 concurrent | HTTP 503 Service Unavailable |
-| **Default Log Retention** | 30 days (range: 1–36,500) | Old records pruned automatically |
+| **Default Log Retention** | 30 days (range: 1–36,500) | Expired records pruned at startup and hourly; setting changes apply at the next cleanup |

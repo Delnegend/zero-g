@@ -21,7 +21,7 @@ async fn tool_request_is_rejected_before_upstream() {
     let state = AppState {
         providers: crate::provider::Providers::new(),
         settings,
-        logs: crate::server::observability::LogStore::new(database),
+        database,
         dashboard_auth: crate::server::dashboard_auth_config::test_auth().await,
     };
     let provider = registry::Provider {

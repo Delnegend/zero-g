@@ -1,9 +1,6 @@
 use super::*;
 use crate::provider::registry;
-use crate::{
-    database::Database,
-    server::{observability::LogStore, settings},
-};
+use crate::{database::Database, server::settings};
 use axum::body::Body;
 use axum::{
     body::to_bytes,
@@ -72,7 +69,7 @@ async fn fixture() -> (
     let state = AppState {
         providers: crate::provider::Providers::new(),
         settings: store.clone(),
-        logs: LogStore::new(database),
+        database,
         dashboard_auth: crate::server::dashboard_auth_config::test_auth().await,
     };
     for (id, base) in [("first", first), ("second", second)] {
@@ -398,7 +395,7 @@ async fn unified_decisions_dispatch() {
     let state = AppState {
         providers: crate::provider::Providers::new(),
         settings: store.clone(),
-        logs: LogStore::new(database),
+        database,
         dashboard_auth: crate::server::dashboard_auth_config::test_auth().await,
     };
     for body in [

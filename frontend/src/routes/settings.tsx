@@ -152,8 +152,8 @@ export function SettingsPage() {
           <Card className="p-5">
             <h2 className="text-lg font-semibold">Log retention</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Configure how long request logs and traces are retained before
-              being pruned.
+              Configure how long request logs and traces are retained. Expired
+              records are removed at startup and then hourly.
             </p>
             <div className="mt-4">
               <form.Field name="log_retention_days">

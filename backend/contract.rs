@@ -86,4 +86,51 @@ mod tests {
             );
         }
     }
+
+    /// Split observability operations have independent response schemas.
+    #[test]
+    fn observability_contract_uses_distinct_routes() {
+        let document: Value = serde_json::to_value(openapi()).unwrap();
+        let paths = &document["paths"];
+        assert!(paths.get("/api/observability").is_none());
+        for (path, schema) in [
+            ("/api/dashboard", "DashboardResponse"),
+            ("/api/logs", "LogsResponse"),
+            ("/api/logs/{id}", "LogEntry"),
+        ] {
+            let operation = &paths[path]["get"];
+            assert_eq!(
+                operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+                format!("#/components/schemas/{schema}")
+            );
+            for parameter in operation["parameters"].as_array().unwrap() {
+                assert!(
+                    !["logs_only", "aggregates_only", "log_id"]
+                        .contains(&parameter["name"].as_str().unwrap())
+                );
+            }
+        }
+        assert!(paths["/api/logs/{id}"]["get"]["responses"]["404"].is_object());
+        let schemas = &document["components"]["schemas"];
+        assert!(
+            schemas["DashboardResponse"]["properties"]
+                .get("logs")
+                .is_none()
+        );
+        assert!(
+            schemas["LogsResponse"]["properties"]
+                .get("summary")
+                .is_none()
+        );
+        assert!(
+            schemas["LogSummary"]["properties"]
+                .get("request_body")
+                .is_none()
+        );
+        assert!(
+            schemas["LogEntry"]["properties"]
+                .get("request_body")
+                .is_some()
+        );
+    }
 }

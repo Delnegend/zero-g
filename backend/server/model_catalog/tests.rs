@@ -344,7 +344,7 @@ async fn catalog_reports_antigravity_input_modalities() {
     save(&store, &catalog).await.unwrap();
     let state = AppState {
         providers: crate::provider::Providers::new(),
-        logs: crate::server::observability::LogStore::new(store.database.clone()),
+        database: store.database.clone(),
         dashboard_auth: crate::server::dashboard_auth_config::test_auth().await,
         settings: store,
     };
