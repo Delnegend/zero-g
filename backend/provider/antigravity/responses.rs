@@ -308,6 +308,18 @@ impl ResponsesStreamSerializer {
                 .data(added_event.to_string()),
         );
 
+        let delta_args = json!({
+            "type": "response.function_call_arguments.delta",
+            "item_id": fc_item_id,
+            "output_index": index,
+            "delta": arguments
+        });
+        events.push(
+            Event::default()
+                .event("response.function_call_arguments.delta")
+                .data(delta_args.to_string()),
+        );
+
         let done_args = json!({
             "type": "response.function_call_arguments.done",
             "item_id": fc_item_id,
@@ -452,13 +464,14 @@ mod tests {
                 "response.content_part.done",
                 "response.output_item.done",
                 "response.output_item.added",
+                "response.function_call_arguments.delta",
                 "response.function_call_arguments.done",
                 "response.output_item.done",
                 "response.completed",
             ],
         );
-        let output = events[11]["response"]["output"].as_array().unwrap();
-        assert_eq!(events[11]["response"]["output_text"], "before");
+        let output = events[12]["response"]["output"].as_array().unwrap();
+        assert_eq!(events[12]["response"]["output_text"], "before");
         assert_eq!(output.len(), 2);
         assert_eq!(output[0]["id"], "msg_first");
         assert_eq!(output[0]["content"][0]["text"], "before");
@@ -474,7 +487,9 @@ mod tests {
         assert_eq!(events[6]["part"]["text"], "before");
         assert_eq!(events[7]["item"], output[0]);
         assert_eq!(events[8]["output_index"], 1);
-        assert_eq!(events[10]["item"], output[1]);
+        assert_eq!(events[9]["delta"], r#"{"q":"x"}"#);
+        assert_eq!(events[9]["item_id"], output[1]["id"]);
+        assert_eq!(events[11]["item"], output[1]);
         assert_eq!(output[1]["type"], "function_call");
         assert_eq!(output[1]["call_id"], "call_1");
         assert_eq!(output[1]["arguments"], r#"{"q":"x"}"#);
@@ -508,6 +523,7 @@ mod tests {
                 "response.content_part.done",
                 "response.output_item.done",
                 "response.output_item.added",
+                "response.function_call_arguments.delta",
                 "response.function_call_arguments.done",
                 "response.output_item.done",
                 "response.output_item.added",
@@ -522,9 +538,9 @@ mod tests {
                 "response.completed",
             ],
         );
-        let output = events[22]["response"]["output"].as_array().unwrap();
+        let output = events[23]["response"]["output"].as_array().unwrap();
         assert_eq!(output.len(), 3);
-        assert_eq!(events[22]["response"]["output_text"], "beforeafter!");
+        assert_eq!(events[23]["response"]["output_text"], "beforeafter!");
         assert_eq!(output[0]["content"][0]["text"], "before");
         assert_eq!(output[2]["content"][0]["text"], "after!");
         assert_eq!(
@@ -544,20 +560,20 @@ mod tests {
             ])
         );
         assert_eq!(events[9]["item"], output[0]);
-        assert_eq!(events[12]["item"], output[1]);
-        assert_eq!(events[21]["item"], output[2]);
+        assert_eq!(events[13]["item"], output[1]);
+        assert_eq!(events[22]["item"], output[2]);
         assert_eq!(output[1]["type"], "function_call");
         assert_ne!(output[0]["id"], output[2]["id"]);
-        for (added, done, index) in [(1, 9, 0), (10, 12, 1), (13, 21, 2)] {
+        for (added, done, index) in [(1, 9, 0), (10, 13, 1), (14, 22, 2)] {
             assert_eq!(events[added]["output_index"], index);
             assert_eq!(events[done]["output_index"], index);
             assert_eq!(events[added]["item"]["id"], events[done]["item"]["id"]);
         }
         assert_eq!(events[4]["item_id"], output[0]["id"]);
         assert_eq!(events[6]["item_id"], output[0]["id"]);
-        assert_eq!(events[16]["item_id"], output[2]["id"]);
-        assert_eq!(events[18]["item_id"], output[2]["id"]);
-        assert_eq!(events[19]["text"], "after!");
-        assert_eq!(events[20]["part"]["text"], "after!");
+        assert_eq!(events[17]["item_id"], output[2]["id"]);
+        assert_eq!(events[19]["item_id"], output[2]["id"]);
+        assert_eq!(events[20]["text"], "after!");
+        assert_eq!(events[21]["part"]["text"], "after!");
     }
 }
