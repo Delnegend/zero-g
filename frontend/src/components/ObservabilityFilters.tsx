@@ -175,6 +175,18 @@ export function FilterGroup({
   );
 }
 
+/** Number of selected filter values, ignoring paging, search and sort carried alongside. */
+function selectedCount(filters: ObservabilityFilterValues): number {
+  return (
+    (filters.providers?.length ?? 0) +
+    (filters.models?.length ?? 0) +
+    (filters.paths?.length ?? 0) +
+    (filters.statuses?.length ?? 0) +
+    (filters.virtual_key_ids?.length ?? 0) +
+    (filters.credential_ids?.length ?? 0)
+  );
+}
+
 function FilterContents({
   filters,
   options,
@@ -182,10 +194,7 @@ function FilterContents({
   onHide,
   mobile = false,
 }: Props & { onHide: () => void; mobile?: boolean }) {
-  const count = Object.values(filters).reduce(
-    (total, values) => total + (values?.length ?? 0),
-    0,
-  );
+  const count = selectedCount(filters);
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-11 shrink-0 items-center justify-between border-b pr-2 pl-5">
@@ -199,16 +208,15 @@ function FilterContents({
           </span>
         )}
         <div className="flex items-center gap-1">
-          {count > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 px-2 text-xs"
-              onClick={() => onChange({})}
-            >
-              <RotateCcw className="size-3" /> Reset
-            </Button>
-          )}
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 px-2 text-xs"
+            disabled={count === 0}
+            onClick={() => onChange({})}
+          >
+            <RotateCcw className="size-3" /> Reset
+          </Button>
           <Button
             variant="ghost"
             size="icon"
@@ -278,10 +286,7 @@ function FilterContents({
 export function ObservabilityFilters(props: Props) {
   const [visible, setVisible] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const count = Object.values(props.filters).reduce(
-    (total, values) => total + (values?.length ?? 0),
-    0,
-  );
+  const count = selectedCount(props.filters);
   return (
     <>
       <div className="sticky top-2 z-10 mb-3 self-start xl:hidden">

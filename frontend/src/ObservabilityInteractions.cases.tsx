@@ -187,6 +187,10 @@ test("LLM log filters load matching requests and reset pagination", async () => 
   const filters = screen.getByRole("complementary", {
     name: "Observability filters",
   });
+  // Paging and sort are not filters: nothing is selected yet.
+  const reset = within(filters).getByRole("button", { name: "Reset" });
+  assert.equal((reset as HTMLButtonElement).disabled, true);
+  assert.equal(within(filters).queryByText(/Filters \(/), null);
   await user.click(
     within(filters).getByText("Providers", { selector: "summary" }),
   );
@@ -205,9 +209,13 @@ test("LLM log filters load matching requests and reset pagination", async () => 
     JSON.parse(new URLSearchParams(history.location.search).get("providers")!),
     ["beta"],
   );
-  await user.click(within(filters).getByRole("button", { name: "Reset" }));
+  assert.equal((reset as HTMLButtonElement).disabled, false);
+  await user.click(reset);
   assert.ok(
     (await screen.findAllByRole("button", { name: "View request 1" })).length,
+  );
+  await waitFor(() =>
+    assert.equal((reset as HTMLButtonElement).disabled, true),
   );
   await user.click(screen.getByRole("combobox", { name: "Rows per page" }));
   await user.click(await screen.findByRole("option", { name: "50" }));
