@@ -10,6 +10,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = toasty::Db::builder()
         .models(toasty::models!(
             storage::RequestLog,
+            storage::RequestLogBody,
             storage::Setting,
             storage::Secret,
             storage::VirtualKey,

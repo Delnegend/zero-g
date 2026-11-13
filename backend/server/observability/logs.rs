@@ -8,9 +8,9 @@ use toasty::stmt::{Expr, OrderByExpr};
 use tracing::error;
 
 use super::filter::{Filter, FilterOptions, StatusClass, json_array, options};
-use super::retention::{cutoff, read_retention};
+use super::retention::{cutoff, read_retention, update_filter_options};
 use crate::database::{Database, transaction_with_retry};
-use crate::storage::RequestLog;
+use crate::storage::{RequestLog, RequestLogBody};
 
 /// Largest accepted page size.
 const MAX_LIMIT: usize = 200;
@@ -302,15 +302,48 @@ pub(super) async fn query(
     })
 }
 
-/// Retrieve one captured log without loading unrelated records.
+/// Retrieve one captured log and its bodies without loading unrelated records.
 pub(super) async fn detail(database: &Database, id: i64) -> Result<Option<LogEntry>, String> {
-    let mut db = (*database.db).clone();
-    RequestLog::filter_by_id(id)
-        .first()
-        .exec(&mut db)
-        .await
-        .map(|record| record.map(LogEntry::from))
-        .map_err(|e| e.to_string())
+    transaction_with_retry!(database, |mut tx| {
+        let Some(record) = RequestLog::filter_by_id(id).first().exec(&mut tx).await? else {
+            return Ok(None);
+        };
+        let body = RequestLogBody::filter_by_log_id(id)
+            .first()
+            .exec(&mut tx)
+            .await?;
+        Ok(Some(LogEntry::from_parts(record, body)))
+    })
+    .map_err(|e| e.to_string())
+}
+
+/// Store a captured log, its bodies, and its filter snapshots atomically.
+pub(super) async fn insert(tx: &mut toasty::Transaction<'_>, log: &LogEntry) -> toasty::Result<()> {
+    let record = toasty::create!(RequestLog {
+        created_at: log.created_at,
+        provider: log.provider.clone(),
+        model: log.model.clone(),
+        path: log.path.clone(),
+        status: log.status,
+        latency_ms: log.latency_ms,
+        input_tokens: log.input_tokens,
+        output_tokens: log.output_tokens,
+        virtual_key_id: log.virtual_key_id.clone(),
+        virtual_key_name: log.virtual_key_name.clone(),
+        credential_id: log.credential_id.clone(),
+        credential_name: log.credential_name.clone(),
+    })
+    .exec(tx)
+    .await?;
+    toasty::create!(RequestLogBody {
+        log_id: record.id,
+        created_at: log.created_at,
+        request_body: log.request_body.clone(),
+        response_body: log.response_body.clone(),
+    })
+    .exec(tx)
+    .await?;
+    update_filter_options(tx, log).await
 }
 
 /// Serve a bounded list of metadata and available filter dimensions.
@@ -445,8 +478,11 @@ pub(super) struct LogEntry {
     pub(super) credential_name: Option<String>,
 }
 
-impl From<RequestLog> for LogEntry {
-    fn from(r: RequestLog) -> Self {
+impl LogEntry {
+    /// Combine log metadata with its separately stored bodies, which are empty when absent.
+    fn from_parts(r: RequestLog, body: Option<RequestLogBody>) -> Self {
+        let (request_body, response_body) =
+            body.map_or_else(Default::default, |b| (b.request_body, b.response_body));
         Self {
             id: r.id,
             created_at: r.created_at,
@@ -457,8 +493,8 @@ impl From<RequestLog> for LogEntry {
             latency_ms: r.latency_ms,
             input_tokens: r.input_tokens,
             output_tokens: r.output_tokens,
-            request_body: r.request_body,
-            response_body: r.response_body,
+            request_body,
+            response_body,
             virtual_key_id: r.virtual_key_id,
             virtual_key_name: r.virtual_key_name,
             credential_id: r.credential_id,

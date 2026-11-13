@@ -91,8 +91,11 @@ time range, dimensions, statuses, and the filter choices offered for a range.
 `dashboard.rs` owns aggregation and `logs.rs` owns paging, search, and details.
 All queries are built with Toasty, without hand-written SQL.
 
-Request capture writes each completed or interrupted inference log and its
-filter snapshots in one transaction. Query tests seed historical records
+Request capture writes each completed or interrupted inference log, its
+captured bodies, and its filter snapshots in one transaction. Bodies live in
+`request_log_bodies`, apart from the `request_logs` metadata, so listing,
+filtering, and dashboard scans never read prompt or response text; retention
+prunes both tables by `created_at`. Query tests seed historical records
 directly, while capture tests exercise request and response recording.
 
 

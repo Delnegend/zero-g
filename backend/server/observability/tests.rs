@@ -4,7 +4,6 @@ use super::filter::Filter;
 use super::logs::{LogEntry, Page, detail};
 use super::{dashboard, logs, now, prune_expired};
 use crate::database::{Database, transaction_with_retry};
-use crate::storage::{LogFilterOption, RequestLog};
 
 /// Dashboard response for a filter, as JSON.
 async fn dashboard_json(database: &Database, filter: &Filter) -> Value {
@@ -32,53 +31,7 @@ fn scanned() -> Filter {
 /// Seed a log and its retained filter snapshots without invoking request capture.
 pub(super) async fn fixture(database: &Database, log: LogEntry) -> Result<(), String> {
     transaction_with_retry!(database, |mut tx| {
-        toasty::create!(RequestLog {
-            created_at: log.created_at,
-            provider: log.provider.clone(),
-            model: log.model.clone(),
-            path: log.path.clone(),
-            status: log.status,
-            latency_ms: log.latency_ms,
-            input_tokens: log.input_tokens,
-            output_tokens: log.output_tokens,
-            request_body: log.request_body.clone(),
-            response_body: log.response_body.clone(),
-            virtual_key_id: log.virtual_key_id.clone(),
-            virtual_key_name: log.virtual_key_name.clone(),
-            credential_id: log.credential_id.clone(),
-            credential_name: log.credential_name.clone(),
-        })
-        .exec(&mut tx)
-        .await?;
-        let options = [
-            (!log.provider.is_empty()).then_some((0_i64, log.provider.as_str(), "")),
-            (!log.model.is_empty()).then_some((1, log.model.as_str(), "")),
-            (!log.path.is_empty()).then_some((2, log.path.as_str(), "")),
-            log.virtual_key_id
-                .as_deref()
-                .zip(log.virtual_key_name.as_deref())
-                .map(|(id, name)| (3, id, name)),
-            log.credential_id
-                .as_deref()
-                .zip(log.credential_name.as_deref())
-                .map(|(id, name)| (4, id, name)),
-        ];
-        for (kind, value, name) in options.into_iter().flatten() {
-            let id = format!("{kind}:{}:{value}{name}", value.len());
-            let existing = LogFilterOption::filter_by_id(id.as_str())
-                .first()
-                .exec(&mut tx)
-                .await?;
-            let last_seen =
-                existing.map_or(log.created_at, |row| row.last_seen.max(log.created_at));
-            LogFilterOption::upsert_by_id(id.as_str())
-                .kind(kind)
-                .value(value)
-                .name(name)
-                .last_seen(last_seen)
-                .exec(&mut tx)
-                .await?;
-        }
+        logs::insert(&mut tx, &log).await?;
         tx.commit().await?;
         Ok(())
     })
@@ -204,6 +157,7 @@ async fn migrates_existing_log_filter_options() {
     let mut db = toasty::Db::builder()
         .models(toasty::models!(
             crate::storage::RequestLog,
+            crate::storage::RequestLogBody,
             crate::storage::Setting,
             crate::storage::Secret,
             crate::storage::VirtualKey,

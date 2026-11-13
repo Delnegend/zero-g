@@ -10,9 +10,9 @@ use tracing::error;
 
 use crate::provider::common::request_identity::RequestIdentity;
 
-use super::{LogEntry, now, retention::update_filter_options};
+use super::logs::insert;
+use super::{LogEntry, now};
 use crate::database::{Database, transaction_with_retry};
-use crate::storage::RequestLog;
 
 /// Maximum response bytes retained for a single log entry.
 const RESPONSE_CAPTURE_LIMIT: usize = 256 * 1024;
@@ -117,25 +117,7 @@ pub(in crate::server) async fn capture(
             };
             tokio::spawn(async move {
                 let result = transaction_with_retry!(database, |mut tx| {
-                    toasty::create!(RequestLog {
-                        created_at: log.created_at,
-                        provider: log.provider.clone(),
-                        model: log.model.clone(),
-                        path: log.path.clone(),
-                        status: log.status,
-                        latency_ms: log.latency_ms,
-                        input_tokens: log.input_tokens,
-                        output_tokens: log.output_tokens,
-                        request_body: log.request_body.clone(),
-                        response_body: log.response_body.clone(),
-                        virtual_key_id: log.virtual_key_id.clone(),
-                        virtual_key_name: log.virtual_key_name.clone(),
-                        credential_id: log.credential_id.clone(),
-                        credential_name: log.credential_name.clone(),
-                    })
-                    .exec(&mut tx)
-                    .await?;
-                    update_filter_options(&mut tx, &log).await?;
+                    insert(&mut tx, &log).await?;
                     tx.commit().await?;
                     Ok(())
                 });

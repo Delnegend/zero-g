@@ -26,10 +26,6 @@ pub(crate) struct RequestLog {
     pub input_tokens: Option<i64>,
     /// Reported output token count, when available.
     pub output_tokens: Option<i64>,
-    /// Stored request body.
-    pub request_body: String,
-    /// Stored response body.
-    pub response_body: String,
     /// Authenticated virtual key identity at request time.
     pub virtual_key_id: Option<String>,
     /// Authenticated virtual key name at request time.
@@ -38,6 +34,22 @@ pub(crate) struct RequestLog {
     pub credential_id: Option<String>,
     /// Successfully selected provider credential name at request time.
     pub credential_name: Option<String>,
+}
+
+/// Captured request and response bodies, kept apart so metadata scans stay small.
+#[derive(Debug, toasty::Model)]
+#[table = "request_log_bodies"]
+pub(crate) struct RequestLogBody {
+    /// Identifier of the owning request log.
+    #[key]
+    pub log_id: i64,
+    /// Creation timestamp copied from the owning log, used for retention.
+    #[index]
+    pub created_at: i64,
+    /// Stored request body.
+    pub request_body: String,
+    /// Stored response body.
+    pub response_body: String,
 }
 
 /// Retention-maintained log filter dimension and identity-name snapshot.

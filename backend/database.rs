@@ -47,6 +47,7 @@ impl Database {
         let db = toasty::Db::builder()
             .models(toasty::models!(
                 crate::storage::RequestLog,
+                crate::storage::RequestLogBody,
                 crate::storage::Setting,
                 crate::storage::Secret,
                 crate::storage::VirtualKey,

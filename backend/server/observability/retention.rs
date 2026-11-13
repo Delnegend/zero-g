@@ -1,5 +1,5 @@
 use crate::database::{Database, transaction_with_retry};
-use crate::storage::{LogFilterOption, RequestLog, Setting};
+use crate::storage::{LogFilterOption, RequestLog, RequestLogBody, Setting};
 
 use super::{logs::LogEntry, now};
 
@@ -30,12 +30,16 @@ pub(super) fn cutoff(days: i64) -> i64 {
     now().saturating_sub(days.saturating_mul(86400))
 }
 
-/// Delete expired logs and filter snapshots using the current persisted policy.
+/// Delete expired logs, their bodies, and filter snapshots using the current persisted policy.
 pub(crate) async fn prune_expired(database: &Database) -> Result<(), String> {
     transaction_with_retry!(database, |mut tx| {
         let retention_days = read_retention(&mut tx).await?;
         let cutoff = cutoff(retention_days);
         RequestLog::filter(RequestLog::fields().created_at().lt(cutoff))
+            .delete()
+            .exec(&mut tx)
+            .await?;
+        RequestLogBody::filter(RequestLogBody::fields().created_at().lt(cutoff))
             .delete()
             .exec(&mut tx)
             .await?;

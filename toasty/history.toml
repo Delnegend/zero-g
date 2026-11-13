@@ -34,3 +34,8 @@ snapshot_name = "0005_snapshot.toml"
 id = 3674965700299625864
 name = "0006_add_provider_keyless.sql"
 snapshot_name = "0006_snapshot.toml"
+
+[[migrations]]
+id = 8840555713037282514
+name = "0007_split_request_log_bodies.sql"
+snapshot_name = "0007_snapshot.toml"
