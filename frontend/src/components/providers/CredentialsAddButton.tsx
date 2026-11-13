@@ -169,7 +169,8 @@ export function CredentialsAddButton({
                   <span className="font-normal text-muted-foreground">
                     (
                     {editing === "new"
-                      ? provider.kind === "go"
+                      ? provider.kind === "go" ||
+                        provider.kind === "commandcode"
                         ? "required"
                         : "optional"
                       : "leave blank to retain"}
@@ -178,7 +179,11 @@ export function CredentialsAddButton({
                   <Input
                     className="mt-1"
                     type="password"
-                    required={provider.kind === "go" && editing === "new"}
+                    required={
+                      (provider.kind === "go" ||
+                        provider.kind === "commandcode") &&
+                      editing === "new"
+                    }
                     value={field.state.value}
                     onBlur={field.handleBlur}
                     onChange={(event) => field.handleChange(event.target.value)}

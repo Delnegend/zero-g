@@ -96,7 +96,8 @@ export function ProviderForm({
         kind.api_key &&
         value.kind !== "zen" &&
         value.kind !== "openrouter" &&
-        value.kind !== "chatjimmy"
+        value.kind !== "chatjimmy" &&
+        value.kind !== "commandcode"
       ) {
         body.base_url = value.baseUrl;
       }
@@ -247,13 +248,16 @@ export function ProviderForm({
             {(kind) =>
               kind === "zen" ||
               kind === "openrouter" ||
-              kind === "chatjimmy" ? (
+              kind === "chatjimmy" ||
+              kind === "commandcode" ? (
                 <p className="text-sm text-muted-foreground">
                   {kind === "zen"
                     ? "Zen uses the official OpenCode API for all models."
                     : kind === "openrouter"
                       ? "OpenRouter uses the official OpenRouter API for all models."
-                      : "ChatJimmy uses the official chatjimmy.ai inference endpoint for all models."}
+                      : kind === "commandcode"
+                        ? "Command Code uses the official Command Code Provider API. Claude models are not listed because they need Anthropic's message format."
+                        : "ChatJimmy uses the official chatjimmy.ai inference endpoint for all models."}
                 </p>
               ) : (
                 kinds.find((item) => item.value === kind)?.api_key && (

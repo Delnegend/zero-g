@@ -120,6 +120,9 @@ fn validate(id: &str, name: &str, kind: &str, base_url: &str) -> Result<(), &'st
     if kind.as_str() == "chatjimmy" && !base_url.is_empty() {
         return Err("ChatJimmy uses a fixed upstream URL");
     }
+    if kind.as_str() == "commandcode" && !base_url.is_empty() {
+        return Err("Command Code uses a fixed upstream URL");
+    }
     if base_url.is_empty() {
         if kind.api_key() && kind.default_base_url().is_none() {
             return Err("Provider base URL is required for this kind");

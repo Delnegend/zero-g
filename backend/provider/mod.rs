@@ -8,6 +8,8 @@ pub(crate) mod chatjimmy;
 pub(crate) mod claude;
 /// Codex provider integration.
 pub(crate) mod codex;
+/// Command Code provider integration.
+pub(crate) mod commandcode;
 /// Shared provider contracts and helpers.
 pub(crate) mod common;
 /// Provider credential management.
@@ -107,6 +109,8 @@ providers! {
     Openrouter => openrouter::Backend,
     /// `ChatJimmy` backend.
     ChatJimmy => chatjimmy::Backend,
+    /// Command Code backend.
+    CommandCode => commandcode::Backend,
 }
 
 impl ProviderKind {
@@ -153,6 +157,7 @@ impl ProviderKind {
             Self::Openai => openai::Backend::discover(state, provider).await,
             Self::Openrouter => openrouter::Backend::discover(state, provider).await,
             Self::ChatJimmy => chatjimmy::Backend::discover(state, provider).await,
+            Self::CommandCode => commandcode::Backend::discover(state, provider).await,
         }
     }
 
@@ -183,6 +188,9 @@ impl ProviderKind {
             Self::ChatJimmy => {
                 chatjimmy::Backend::discover_permitted(state, provider, permissions).await
             }
+            Self::CommandCode => {
+                commandcode::Backend::discover_permitted(state, provider, permissions).await
+            }
         }
     }
 
@@ -195,7 +203,12 @@ impl ProviderKind {
             Self::Go => Some(QuotaCapability::Go),
             Self::Claude => Some(QuotaCapability::Claude),
             Self::Openrouter => Some(QuotaCapability::Openrouter),
-            Self::Openai | Self::Cursor | Self::Grok | Self::GrokBuild | Self::ChatJimmy => None,
+            Self::Openai
+            | Self::Cursor
+            | Self::Grok
+            | Self::GrokBuild
+            | Self::ChatJimmy
+            | Self::CommandCode => None,
         }
     }
 
@@ -213,6 +226,7 @@ impl ProviderKind {
             Self::Openai => openai::Backend::router(settings),
             Self::Openrouter => openrouter::Backend::router(settings),
             Self::ChatJimmy => chatjimmy::Backend::router(settings),
+            Self::CommandCode => commandcode::Backend::router(settings),
         }
     }
 }
@@ -285,7 +299,8 @@ pub(crate) fn dashboard_router(state: &AppState) -> Router {
             ProviderKind::Go
             | ProviderKind::Openai
             | ProviderKind::GrokBuild
-            | ProviderKind::ChatJimmy => router,
+            | ProviderKind::ChatJimmy
+            | ProviderKind::CommandCode => router,
         })
 }
 
@@ -312,6 +327,7 @@ mod tests {
                 "openai",
                 "openrouter",
                 "chatjimmy",
+                "commandcode",
             ]
         );
         for value in values {

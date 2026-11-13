@@ -30,6 +30,7 @@ flowchart TD
         Dispatch --> Zen[OpenCode Zen]
         Dispatch --> Go[OpenCode Go]
         Dispatch --> OpenRouter[OpenRouter + Decisions API]
+        Dispatch --> CommandCode[Command Code]
         Dispatch --> Custom[Custom OpenAI-Compatible]
     end
 

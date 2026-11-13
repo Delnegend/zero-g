@@ -13,7 +13,7 @@ flowchart LR
         ZeroG --> AGY[Google Cloud Code Assist]
         ZeroG --> Codex[ChatGPT Backend]
         ZeroG --> Claude[Anthropic API]
-        ZeroG --> Others[Grok / Zen / OpenRouter]
+        ZeroG --> Others[Grok / Zen / OpenRouter / Command Code]
     end
 ```
 
