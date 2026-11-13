@@ -10,6 +10,8 @@ pub(crate) mod request_identity;
 pub(crate) mod session;
 /// Incremental upstream SSE frame decoding.
 pub(crate) mod stream;
+/// Decoded upstream events rendered as `OpenAI` chat or Responses output.
+pub(crate) mod translation;
 
 use crate::openai::Model;
 use crate::provider::{quota, registry};

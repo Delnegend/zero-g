@@ -173,7 +173,7 @@ async fn complete(
             };
         match super::transport::start(&provider.base_url, &token, replay).await {
             Ok(rx) => {
-                let response = super::translation::respond(
+                let response = crate::provider::common::translation::respond(
                     rx,
                     req.model,
                     req.stream.unwrap_or(false),

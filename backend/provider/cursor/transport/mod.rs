@@ -2,8 +2,9 @@ use futures_util::StreamExt;
 use prost::Message;
 use tokio::sync::mpsc;
 
-use super::{proto, replay::Replay, translation::Event};
+use super::{proto, replay::Replay};
 use crate::provider::common::errors::UpstreamError;
+use crate::provider::common::translation::Event;
 
 /// Execution request handling and MCP argument decoding.
 mod exec;

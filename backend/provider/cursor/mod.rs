@@ -10,8 +10,6 @@ mod models;
 mod replay;
 /// Virtual-key-protected inference endpoints.
 mod routes;
-/// Cursor event conversion to `OpenAI` response formats.
-mod translation;
 /// Cursor agent RPC transport.
 mod transport;
 

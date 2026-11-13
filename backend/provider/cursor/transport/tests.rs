@@ -145,7 +145,8 @@ async fn turn_ended_usage_requires_both_reported_counts() {
         .unwrap();
         tx.send(Ok(Event::Done)).await.unwrap();
         let response =
-            super::super::translation::respond(rx, "model".into(), true, false, true).await;
+            crate::provider::common::translation::respond(rx, "model".into(), true, false, true)
+                .await;
         let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap();
@@ -282,7 +283,8 @@ async fn mcp_call_is_handed_to_the_client() {
         .await
         .unwrap();
     let response =
-        super::super::translation::respond(events, "test".into(), false, false, false).await;
+        crate::provider::common::translation::respond(events, "test".into(), false, false, false)
+            .await;
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();

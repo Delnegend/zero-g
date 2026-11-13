@@ -8,9 +8,9 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
-/// Decoded Cursor output, independent of its wire protocol.
+/// Decoded upstream output, independent of its wire protocol.
 #[derive(Debug)]
-pub(super) enum Event {
+pub(crate) enum Event {
     /// An assistant text fragment.
     Text(String),
     /// A reasoning text fragment.
@@ -24,7 +24,7 @@ pub(super) enum Event {
         /// JSON-encoded arguments.
         arguments: String,
     },
-    /// Token counts reported by Cursor.
+    /// Token counts reported by the upstream.
     Usage {
         /// Input token count.
         input: i64,
@@ -35,7 +35,7 @@ pub(super) enum Event {
     Done,
 }
 
-/// Maintains response state and converts Cursor events into `OpenAI` events.
+/// Maintains response state and converts decoded upstream events into `OpenAI` events.
 struct Translator {
     /// Identifier shared by the response and its chunks.
     id: String,
@@ -319,7 +319,7 @@ impl Translator {
 }
 
 /// Translate decoded events into an OpenAI-compatible HTTP response.
-pub(super) async fn respond(
+pub(crate) async fn respond(
     mut rx: mpsc::Receiver<Result<Event, String>>,
     model: String,
     streaming: bool,
@@ -350,7 +350,7 @@ pub(super) async fn respond(
                     return;
                 }
             }
-            for event in translator.failure("Cursor stream ended before completion") {
+            for event in translator.failure("Upstream stream ended before completion") {
                 if tx.send(Ok(event)).await.is_err() {
                     return;
                 }
@@ -371,7 +371,7 @@ pub(super) async fn respond(
                 Err(error) => return (StatusCode::BAD_GATEWAY, Json(json!({"error": {"message": error, "type": "upstream_error", "code": "bad_gateway"}}))).into_response(),
             }
         }
-        (StatusCode::BAD_GATEWAY, Json(json!({"error": {"message": "Cursor stream ended before completion", "type": "upstream_error", "code": "bad_gateway"}}))).into_response()
+        (StatusCode::BAD_GATEWAY, Json(json!({"error": {"message": "Upstream stream ended before completion", "type": "upstream_error", "code": "bad_gateway"}}))).into_response()
     }
 }
 
