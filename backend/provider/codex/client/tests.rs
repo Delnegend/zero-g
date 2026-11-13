@@ -286,6 +286,26 @@ async fn responses_terminal_before_oversized_data_remains_successful() {
 }
 
 #[tokio::test]
+async fn responses_stream_stops_at_terminal_before_invalid_trailing_data() {
+    let sse = format!(
+        "data: {{\"type\":\"response.completed\",\"response\":{{\"status\":\"completed\",\"output\":[]}}}}\n\n{}",
+        "x".repeat(MAX_SSE_BYTES + 1)
+    );
+    let (client, _requests) = fake_client(sse).await;
+    let request =
+        serde_json::from_value(serde_json::json!({"model":"test","input":"hello"})).unwrap();
+    let body = stream_body(
+        client
+            .stream_responses(&credentials(), &request, "test")
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(body.contains("response.completed"));
+    assert!(!body.contains("event: error"));
+}
+
+#[tokio::test]
 async fn chat_stream_includes_usage_only_when_requested() {
     let sse = concat!(
         "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n",

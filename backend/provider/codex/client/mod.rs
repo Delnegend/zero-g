@@ -459,6 +459,9 @@ async fn pump_responses_events(
                     if tx.send(Ok(sse_ev)).await.is_err() {
                         return;
                     }
+                    if terminal {
+                        return;
+                    }
                 }
                 if let Some(message) = decode_error {
                     let _ = tx
