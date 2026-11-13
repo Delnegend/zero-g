@@ -11,7 +11,6 @@ use axum::{
     routing::{get, post},
 };
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use std::convert::Infallible;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -19,7 +18,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use crate::{
     openai::{ChatCompletionRequest, ModelListResponse},
     provider::{
-        claude::{auth, client, models, payload, stream::Decoder},
+        claude::{client, models, payload, stream::Decoder},
         registry::Provider,
     },
     responses::ResponseCreateRequest,
@@ -182,93 +181,65 @@ async fn inference(
             "Model is not allowed for this virtual key",
         );
     }
-    let mut payload = match payload::build(&req) {
+    let payload = match payload::build(&req) {
         Ok(v) => v,
         Err(e) => return failure(StatusCode::BAD_REQUEST, &e),
-    };
-    let credentials = match crate::provider::credentials::list(&state.settings, &provider.id).await
-    {
-        Ok(v) => v,
-        Err(e) => return failure(StatusCode::INTERNAL_SERVER_ERROR, &e),
     };
     let http = match client::http() {
         Ok(client) => client,
         Err(e) => return failure(StatusCode::INTERNAL_SERVER_ERROR, &e),
     };
-    let mut last = "No connected Claude credentials".to_owned();
-    let mut last_status = StatusCode::SERVICE_UNAVAILABLE;
-    for credential in credentials {
-        let creds = match auth::load(&state.settings, &provider.id, &credential.id).await {
-            Ok(v) => v,
-            Err(e) => {
-                last = e;
-                continue;
-            }
-        };
-        let digest = Sha256::digest(format!("zero-g-claude-device:{}", credential.id).as_bytes());
-        let device = client::hex(&digest);
-        let mut identity = json!({"device_id":device,"session_id":session.id});
-        if let Some(account) = &creds.account_id
-            && let Some(object) = identity.as_object_mut()
-        {
-            object.insert("account_uuid".into(), json!(account));
-        }
+    let url = format!("{}/v1/messages?beta=true", client::API_ROOT);
+    let attempt = client::first_accepted(&state.settings, &provider.id, |creds, credential| {
+        let mut payload = payload.clone();
         if let Some(object) = payload.as_object_mut() {
-            object.insert("metadata".into(), json!({"user_id":identity.to_string()}));
+            let user_id = client::user_id(&credential.id, &session.id, creds.account_id.as_deref());
+            object.insert("metadata".into(), json!({ "user_id": user_id }));
         }
-        let response = match client::send(
-            &http,
-            "https://api.anthropic.com/v1/messages?beta=true",
-            &creds.access_token,
-            &payload,
-        )
-        .await
-        {
-            Ok(v) => v,
-            Err(e) => return failure(StatusCode::BAD_GATEWAY, &e),
+        let (http, url) = (&http, &url);
+        async move { client::send(http, url, &creds.access_token, &payload).await }
+    })
+    .await;
+    let (response, credential) = match attempt {
+        Ok(accepted) => accepted,
+        Err((status, message)) => return failure(status, &message),
+    };
+    if !response.status().is_success() {
+        let status = response.status();
+        let reported = if status.is_redirection() {
+            StatusCode::BAD_GATEWAY
+        } else {
+            status
         };
-        if !response.status().is_success() {
-            let status = response.status();
-            last_status = if status.is_redirection() {
-                StatusCode::BAD_GATEWAY
-            } else {
-                status
-            };
-            let body = response.bytes().await.unwrap_or_default();
-            last = upstream_failure(status, &body);
-            if matches!(status.as_u16(), 401 | 403 | 429 | 503) {
-                continue;
-            }
-            return failure(last_status, &last);
+        let body = response.bytes().await.unwrap_or_default();
+        return failure(reported, &upstream_failure(status, &body));
+    }
+    let decoder = Decoder::new(req.model.clone());
+    if req.stream.unwrap_or(false) {
+        if let Some(identity) = &request_identity {
+            identity.set_credential(&credential.id, &credential.name);
         }
-        let decoder = Decoder::new(req.model.clone());
-        if req.stream.unwrap_or(false) {
+        return stream_response(
+            response,
+            decoder,
+            responses,
+            req.stream_options
+                .is_some_and(|v| v.include_usage.unwrap_or(false)),
+        );
+    }
+    match client::consume(response, decoder, None).await {
+        Ok(done) => {
             if let Some(identity) = &request_identity {
                 identity.set_credential(&credential.id, &credential.name);
             }
-            return stream_response(
-                response,
-                decoder,
-                responses,
-                req.stream_options
-                    .is_some_and(|v| v.include_usage.unwrap_or(false)),
-            );
-        }
-        return match client::consume(response, decoder, None).await {
-            Ok(done) => {
-                if let Some(identity) = &request_identity {
-                    identity.set_credential(&credential.id, &credential.name);
-                }
-                if responses {
-                    Json(response_object(&done)).into_response()
-                } else {
-                    Json(json!({"id":done.id,"object":"chat.completion","created":done.created,"model":done.model,"choices":[{"index":0,"message":done.message(),"finish_reason":done.stop_reason}],"usage":done.usage()})).into_response()
-                }
+            if responses {
+                Json(response_object(&done)).into_response()
+            } else {
+                Json(json!({"id":done.id,"object":"chat.completion","created":done.created,"model":done.model,"choices":[{"index":0,"message":done.message(),"finish_reason":done.stop_reason}],"usage":done.usage()})).into_response()
             }
-            Err(e) => failure(StatusCode::BAD_GATEWAY, &e),
-        };
+        }
+        Err(e) => failure(StatusCode::BAD_GATEWAY, &e),
     }
-    failure(last_status, &last)
 }
 
 /// Convert a decoded completion to a Responses object.

@@ -94,6 +94,34 @@ Configure a custom provider in `bifrost.json`:
 | `/v1/responses` | All providers except ChatJimmy | Responses API format; passthrough providers depend on upstream support. |
 | `/v1/models` | All providers | Aggregated discovery returning `<provider-id>/<model-id>`. |
 | `/v1/decisions` | `openrouter` only | Native OpenRouter multimodal Decisions API. |
+| `/v1/messages`, `/v1/messages/count_tokens` | `claude` only | Native Anthropic Messages pass-through for Claude Code and other Anthropic clients; plain model names. |
+
+### Anthropic Clients (Claude Code, omp)
+
+`/v1/messages` forwards Anthropic Messages requests to the `claude` provider's
+subscription accounts. The virtual key may be sent as `x-api-key` or
+`Authorization: Bearer`; the key's provider and model allowlists apply, using
+plain model names such as `claude-sonnet-4-6`. Claude Code bodies, recognized by
+their billing block, are forwarded byte for byte with only the token swapped.
+Other clients receive Claude Code's billing block, identity line, and
+`metadata.user_id`, and the body is re-attested. Replies stream back unchanged,
+and request logs record input (including cache reads and writes) and output
+tokens. Gateway errors use Anthropic's `{"type":"error"}` shape.
+
+```bash
+# Claude Code: do not sign in to Claude Code itself.
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8080
+export ANTHROPIC_AUTH_TOKEN="$ZERO_G_VIRTUAL_KEY"
+```
+
+```yaml
+# omp (~/.omp/agent/models.yml): the base URL has no /v1 suffix.
+providers:
+  zero-g-claude:
+    baseUrl: http://127.0.0.1:8080
+    apiKey: <virtual key>
+    api: anthropic-messages
+```
 
 ### OpenRouter Decisions API Example
 

@@ -2349,6 +2349,136 @@
         }
       }
     },
+    "/v1/messages": {
+      "post": {
+        "tags": [],
+        "summary": "Forward an Anthropic Messages request to the Claude provider unchanged where possible.",
+        "operationId": "createMessage",
+        "parameters": [
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "description": "Virtual key; `Authorization: Bearer` is also accepted",
+            "required": false,
+            "schema": {
+              "type": ["string", "null"]
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Anthropic Messages request; the model may be plain or prefixed with `claude/`",
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Anthropic Messages response or event stream, passed through unchanged",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid virtual key",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Provider or model not allowed for this key",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Claude provider not configured",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "413": {
+            "description": "Request body too large",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/messages/count_tokens": {
+      "post": {
+        "tags": [],
+        "summary": "Forward an Anthropic token-counting request to the Claude provider.",
+        "operationId": "countMessageTokens",
+        "parameters": [
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "description": "Virtual key; `Authorization: Bearer` is also accepted",
+            "required": false,
+            "schema": {
+              "type": ["string", "null"]
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Anthropic token-counting request",
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Anthropic token count, passed through unchanged",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid virtual key",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Provider or model not allowed for this key",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Claude provider not configured",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/models": {
       "get": {
         "tags": [],

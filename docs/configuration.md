@@ -61,7 +61,7 @@ Built-in provider cards show their name without a separate type label. Custom Op
 |---|---|---|---|---|
 | **Antigravity** | Translation | `agy` | Google OAuth authorization code / PKCE | Browser sign-in with local callback or pasted callback URL. |
 | **Codex** | Translation | `codex` | OpenAI Device Code | Device authorization at `auth.openai.com/codex/device`. |
-| **Claude Code** | Translation | `claude` | Anthropic OAuth Flow | Paste returned authorization URL/code. |
+| **Claude Code** | Translation + Passthrough | `claude` | Anthropic OAuth Flow | Paste returned authorization URL/code. OpenAI routes are translated; `/v1/messages` passes Anthropic requests through. |
 | **Cursor** | Translation | `cursor` | OAuth browser login | Sign in through the browser; Zero-G polls for completion. |
 | **Grok** | Translation | `grok` | xAI Device Flow | Device authorization at `auth.x.ai`. |
 | **Grok Build** | Translation | `grok-build` | xAI Device Flow | Device authorization at `auth.x.ai`. |
@@ -87,7 +87,8 @@ credential pool; failover changes the eventual traffic distribution.
 
 ## Virtual Keys & Security
 
-Clients authenticate with inference endpoints via `Authorization: Bearer <virtual_key>`.
+Clients authenticate with inference endpoints via `Authorization: Bearer <virtual_key>`
+or, as Anthropic clients send it, `x-api-key: <virtual_key>`.
 
 | Feature | Details |
 |---|---|

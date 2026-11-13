@@ -1,8 +1,11 @@
+use axum::http::StatusCode;
 use futures_util::StreamExt;
 use serde_json::Value;
+use sha2::Digest;
 use tokio::sync::mpsc;
 
 use super::stream::Decoder;
+use crate::provider::credentials::Credential;
 
 /// Encode bytes as lowercase hexadecimal without intermediate allocations.
 pub(super) fn hex(bytes: &[u8]) -> String {
@@ -42,6 +45,23 @@ pub(super) fn attest(payload: &Value) -> Result<String, String> {
     Ok(body)
 }
 
+/// Anthropic API origin used with subscription tokens.
+pub(super) const API_ROOT: &str = "https://api.anthropic.com";
+
+/// Beta flags a subscription token needs to be accepted as Claude Code.
+pub(super) const REQUIRED_BETAS: [&str; 2] = ["claude-code-20250219", "oauth-2025-04-20"];
+/// Beta flags sent by translated requests.
+const TRANSLATED_BETAS: &str =
+    "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,effort-2025-11-24";
+
+/// User agent of the Claude Code release the wire format follows.
+pub(super) fn user_agent() -> String {
+    format!(
+        "claude-cli/{} (external, cli)",
+        super::payload::CLAUDE_VERSION
+    )
+}
+
 /// Send an attested request with Claude Code OAuth transport headers.
 pub(super) async fn send(
     client: &reqwest::Client,
@@ -50,11 +70,90 @@ pub(super) async fn send(
     payload: &Value,
 ) -> Result<reqwest::Response, String> {
     let body = attest(payload)?;
-    client.post(url).bearer_auth(token)
-        .header("content-type", "application/json").header("anthropic-version", "2023-06-01")
-        .header("anthropic-beta", "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,effort-2025-11-24")
-        .header("user-agent", format!("claude-cli/{} (external, cli)", super::payload::CLAUDE_VERSION))
-        .header("x-app", "cli").body(body).send().await.map_err(|e| format!("Claude request failed: {e}"))
+    client
+        .post(url)
+        .bearer_auth(token)
+        .header("content-type", "application/json")
+        .header("anthropic-version", "2023-06-01")
+        .header("anthropic-beta", TRANSLATED_BETAS)
+        .header("user-agent", user_agent())
+        .header("x-app", "cli")
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| format!("Claude request failed: {e}"))
+}
+
+/// Send a prepared body and caller-chosen headers with a subscription token.
+pub(super) async fn forward(
+    client: &reqwest::Client,
+    url: &str,
+    token: &str,
+    headers: reqwest::header::HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<reqwest::Response, String> {
+    client
+        .post(url)
+        .headers(headers)
+        .bearer_auth(token)
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| format!("Claude request failed: {e}"))
+}
+
+/// Claude Code's `metadata.user_id`: a stable device per credential plus the session.
+pub(super) fn user_id(credential: &str, session: &str, account: Option<&str>) -> String {
+    let digest = sha2::Sha256::digest(format!("zero-g-claude-device:{credential}").as_bytes());
+    let mut identity = serde_json::json!({"device_id": hex(&digest), "session_id": session});
+    if let Some(account) = account
+        && let Some(object) = identity.as_object_mut()
+    {
+        object.insert("account_uuid".into(), serde_json::json!(account));
+    }
+    identity.to_string()
+}
+
+/// Try connected credentials in weighted order until one is not refused.
+///
+/// A 401, 403, 429, or 503 moves on to the next credential; when every credential is
+/// refused, the last refusal is returned so callers can report it.
+pub(super) async fn first_accepted<F, Fut>(
+    store: &crate::server::settings::SettingsStore,
+    provider: &str,
+    mut send: F,
+) -> Result<(reqwest::Response, Credential), (StatusCode, String)>
+where
+    F: FnMut(super::auth::Credentials, &Credential) -> Fut,
+    Fut: Future<Output = Result<reqwest::Response, String>>,
+{
+    let credentials = crate::provider::credentials::list(store, provider)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let mut last = Err((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "No connected Claude credentials".to_owned(),
+    ));
+    for credential in credentials {
+        let creds = match super::auth::load(store, provider, &credential.id).await {
+            Ok(creds) => creds,
+            Err(e) => {
+                if last.is_err() {
+                    last = Err((StatusCode::SERVICE_UNAVAILABLE, e));
+                }
+                continue;
+            }
+        };
+        let response = send(creds, &credential)
+            .await
+            .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+        if matches!(response.status().as_u16(), 401 | 403 | 429 | 503) {
+            last = Ok((response, credential));
+            continue;
+        }
+        return Ok((response, credential));
+    }
+    last
 }
 
 /// Dispatches a single upstream event with bounded buffering.

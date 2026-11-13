@@ -122,6 +122,10 @@ impl IntoResponse for ProxyError {
     }
 }
 impl ProxyError {
+    /// HTTP status.
+    pub(crate) const fn status(&self) -> StatusCode {
+        self.0
+    }
     /// Error message.
     pub(crate) const fn message(&self) -> &'static str {
         self.1

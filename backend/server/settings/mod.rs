@@ -39,7 +39,7 @@ use revoke_key::__path_unrevoke_key;
 pub(super) use revoke_key::{revoke_key, unrevoke_key};
 use update_key::__path_update_key;
 pub(super) use update_key::update_key;
-pub(crate) use virtual_key_auth::virtual_key_auth;
+pub(crate) use virtual_key_auth::{virtual_key, virtual_key_auth};
 
 /// Reserved secret name for checking the configured encryption key.
 const SENTINEL: &str = "__zero_g_encryption_key_check";

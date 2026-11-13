@@ -8,6 +8,8 @@ pub(crate) mod dashboard_login;
 /// Account model discovery.
 mod models;
 pub(crate) use models::{catalog_info, catalog_reference};
+/// Anthropic Messages pass-through for Anthropic-format clients.
+pub(crate) mod passthrough;
 /// `OpenAI` to Anthropic request translation.
 mod payload;
 /// Subscription quota discovery.

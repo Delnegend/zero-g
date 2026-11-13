@@ -59,7 +59,13 @@ pub(in crate::server) async fn capture(
             .ok()
             .and_then(|v| v.get("model").and_then(Value::as_str).map(str::to_owned))
             .unwrap_or_default();
-        let (provider, model) = if let Some((provider, model)) = namespaced_model.split_once('/') {
+        let (provider, model) = if path.starts_with("/v1/messages") {
+            // Anthropic clients send plain model names to the Claude pass-through.
+            let model = namespaced_model
+                .strip_prefix("claude/")
+                .unwrap_or(&namespaced_model);
+            ("claude".to_owned(), model.to_owned())
+        } else if let Some((provider, model)) = namespaced_model.split_once('/') {
             (provider.to_owned(), model.to_owned())
         } else {
             (String::new(), namespaced_model)
@@ -266,12 +272,18 @@ fn usage(body: &str) -> (Option<i64>, Option<i64>) {
         if let Ok(json) = serde_json::from_str::<Value>(part) {
             let value = json
                 .get("usage")
-                .or_else(|| json.pointer("/response/usage"));
+                .or_else(|| json.pointer("/response/usage"))
+                .or_else(|| json.pointer("/message/usage"));
             if let Some(value) = value {
-                result.0 = value
-                    .get("input_tokens")
-                    .or_else(|| value.get("prompt_tokens"))
-                    .and_then(Value::as_i64)
+                let count = |field| value.get(field).and_then(Value::as_i64);
+                // Anthropic reports cache reads and writes outside `input_tokens`.
+                result.0 = count("input_tokens")
+                    .map(|input| {
+                        input
+                            .saturating_add(count("cache_read_input_tokens").unwrap_or(0))
+                            .saturating_add(count("cache_creation_input_tokens").unwrap_or(0))
+                    })
+                    .or_else(|| count("prompt_tokens"))
                     .or(result.0);
                 result.1 = value
                     .get("output_tokens")
@@ -695,5 +707,17 @@ mod tests {
             usage("data: {\"response\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":5}}}\n\n"),
             (Some(3), Some(5))
         );
+        // Anthropic streams input at message start and output at message delta, with cache
+        // tokens reported separately from `input_tokens`.
+        let anthropic = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":3,\"cache_read_input_tokens\":100,\"cache_creation_input_tokens\":20,\"output_tokens\":1}}}\n\n",
+            "event: message_delta\n",
+            "data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":42}}\n\n",
+        );
+        assert_eq!(usage(anthropic), (Some(123), Some(42)));
+        let mut stream = StreamUsage::default();
+        stream.push(anthropic.as_bytes());
+        assert_eq!(stream.finish(), (Some(123), Some(42)));
     }
 }

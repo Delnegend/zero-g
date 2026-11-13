@@ -571,3 +571,69 @@ async fn unified_api_authenticates_before_discovery_or_inference() {
     first_task.abort();
     second_task.abort();
 }
+
+/// Anthropic clients authenticate with `x-api-key` and receive Anthropic-shaped errors.
+#[tokio::test]
+async fn anthropic_messages_accept_x_api_key_and_answer_in_anthropic_shape() {
+    let (app, all, restricted, first_task, second_task, requests) = fixture().await;
+    let send = |path: &'static str, key: Option<&str>| {
+        let mut request = Request::builder()
+            .method("POST")
+            .uri(path)
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some(key) = key {
+            request = request.header("x-api-key", key);
+        }
+        app.clone().oneshot(
+            request
+                .body(Body::from(
+                    json!({"model": "claude-sonnet-4-6", "messages": []}).to_string(),
+                ))
+                .unwrap(),
+        )
+    };
+    for path in ["/v1/messages", "/v1/messages/count_tokens"] {
+        for (key, status, kind) in [
+            (None, StatusCode::UNAUTHORIZED, "authentication_error"),
+            (
+                Some("unknown"),
+                StatusCode::UNAUTHORIZED,
+                "authentication_error",
+            ),
+            // Restricted to another provider.
+            (
+                Some(restricted.as_str()),
+                StatusCode::FORBIDDEN,
+                "permission_error",
+            ),
+            // Accepted key, but no Claude provider is configured in this fixture.
+            (Some(all.as_str()), StatusCode::NOT_FOUND, "not_found_error"),
+        ] {
+            let response = send(path, key).await.unwrap();
+            assert_eq!(response.status(), status, "{path} {key:?}");
+            let body = json_body(response).await;
+            assert_eq!(body["type"], "error");
+            assert_eq!(body["error"]["type"], kind);
+        }
+    }
+    // The same key works for OpenAI-format routes through `x-api-key`.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/chat/completions")
+                .header("x-api-key", &all)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"model": "first/same", "messages": []}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(requests.load(Ordering::SeqCst), 1);
+    first_task.abort();
+    second_task.abort();
+}

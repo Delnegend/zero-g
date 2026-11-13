@@ -1,8 +1,25 @@
 use super::{SettingsStore, internal_error};
 use axum::extract::{Path, Request, State};
-use axum::http::{Method, StatusCode, header};
+use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Json, Response};
+
+/// Virtual key from `Authorization: Bearer`, or from `x-api-key` as Anthropic clients send it.
+pub(crate) fn virtual_key(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.split_once(' '))
+        .filter(|(scheme, token)| scheme.eq_ignore_ascii_case("bearer") && !token.trim().is_empty())
+        .map(|(_, token)| token.trim())
+        .or_else(|| {
+            headers
+                .get("x-api-key")
+                .and_then(|h| h.to_str().ok())
+                .map(str::trim)
+                .filter(|token| !token.is_empty())
+        })
+}
 
 /// Authenticates a virtual key and attaches provider and permission context.
 pub(crate) async fn virtual_key_auth(
@@ -29,14 +46,7 @@ pub(crate) async fn virtual_key_auth(
         }
         Err(err) => return internal_error(&err),
     };
-    let token = req
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|h| h.split_once(' '))
-        .filter(|(scheme, token)| scheme.eq_ignore_ascii_case("bearer") && !token.trim().is_empty())
-        .map(|(_, token)| token.trim());
-    let Some(token) = token else {
+    let Some(token) = virtual_key(req.headers()) else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(super::super::error_body(

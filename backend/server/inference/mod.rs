@@ -3,7 +3,7 @@ use crate::provider;
 use crate::server::{AppState, settings::Permissions};
 use axum::{
     Json, Router,
-    http::{StatusCode, header},
+    http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -15,6 +15,8 @@ mod chat_completions;
 mod decisions;
 /// Shared request validation and provider dispatch.
 mod dispatch;
+/// Anthropic Messages pass-through.
+mod messages;
 /// Model discovery endpoint.
 mod models;
 /// Responses endpoint.
@@ -22,6 +24,7 @@ mod responses;
 
 use chat_completions::{__path_inference, inference};
 use decisions::{__path_inference_decisions, inference_decisions};
+use messages::{__path_count_tokens, __path_messages, count_tokens, messages};
 use models::{__path_models, models};
 use responses::{__path_inference_responses, inference_responses};
 
@@ -61,7 +64,14 @@ struct InferenceModelList {
 /// Public unified inference operations.
 #[derive(utoipa::OpenApi)]
 #[openapi(
-    paths(models, inference, inference_responses, inference_decisions),
+    paths(
+        models,
+        inference,
+        inference_responses,
+        inference_decisions,
+        messages,
+        count_tokens
+    ),
     components(schemas(InferenceRequest, InferenceModelList, InferenceDiscoveryError, Model))
 )]
 pub(crate) struct Api;
@@ -77,13 +87,7 @@ async fn permissions(
     headers: &axum::http::HeaderMap,
     identity: Option<&crate::provider::common::request_identity::RequestIdentity>,
 ) -> Result<Permissions, crate::provider::common::proxy::ProxyError> {
-    let token = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|h| h.split_once(' '))
-        .filter(|(scheme, token)| scheme.eq_ignore_ascii_case("bearer") && !token.trim().is_empty())
-        .map(|(_, token)| token.trim());
-    let Some(token) = token else {
+    let Some(token) = crate::server::settings::virtual_key(headers) else {
         return Err(crate::provider::common::proxy::error(
             StatusCode::UNAUTHORIZED,
             "A virtual key is required",
@@ -124,6 +128,10 @@ pub(super) async fn authenticate_post(
             request.extensions_mut().insert(permissions);
             next.run(request).await
         }
+        // Anthropic clients only understand Anthropic-shaped errors.
+        Err(error) if request.uri().path().starts_with("/v1/messages") => {
+            provider::claude::passthrough::error(error.status(), error.message())
+        }
         Err(error) => error.into_response(),
     }
 }
@@ -138,6 +146,8 @@ pub(super) fn router(state: &AppState) -> Router<AppState> {
         .route("/v1/chat/completions", post(inference))
         .route("/v1/responses", post(inference_responses))
         .route("/v1/decisions", post(inference_decisions))
+        .route("/v1/messages", post(messages))
+        .route("/v1/messages/count_tokens", post(count_tokens))
         .layer(axum::Extension(internal))
 }
 

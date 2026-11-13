@@ -5,16 +5,12 @@ use sha2::{Digest, Sha256};
 /// Claude Code version reflected in the OAuth wire fingerprint.
 pub(super) const CLAUDE_VERSION: &str = "2.1.280";
 
-/// Translate `OpenAI` conversation history to Anthropic messages and tools.
-#[allow(clippy::too_many_lines)]
-pub(super) fn build(req: &ChatCompletionRequest) -> Result<Value, String> {
-    let first = req
-        .messages
-        .iter()
-        .find(|m| m.role == "user")
-        .and_then(|m| m.content.as_ref())
-        .map_or_else(String::new, MessageContent::as_text);
-    let units: Vec<u16> = first.encode_utf16().collect();
+/// System line identifying Claude Code to the subscription API.
+pub(super) const IDENTITY: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
+
+/// Billing attribution block text, fingerprinted by the first user message, awaiting attestation.
+pub(super) fn billing_header(first_user_text: &str) -> String {
+    let units: Vec<u16> = first_user_text.encode_utf16().collect();
     let fingerprint: String = [4, 7, 20]
         .iter()
         .map(|i| {
@@ -27,12 +23,23 @@ pub(super) fn build(req: &ChatCompletionRequest) -> Result<Value, String> {
     let hash = Sha256::digest(format!("59cf53e54c78{fingerprint}{CLAUDE_VERSION}").as_bytes());
     let hex = super::client::hex(&hash);
     let suffix: String = hex.chars().take(3).collect();
-    let billing = format!(
+    format!(
         "x-anthropic-billing-header: cc_version={CLAUDE_VERSION}.{suffix}; cc_entrypoint=cli; cch=00000;"
-    );
+    )
+}
+
+/// Translate `OpenAI` conversation history to Anthropic messages and tools.
+#[allow(clippy::too_many_lines)]
+pub(super) fn build(req: &ChatCompletionRequest) -> Result<Value, String> {
+    let first = req
+        .messages
+        .iter()
+        .find(|m| m.role == "user")
+        .and_then(|m| m.content.as_ref())
+        .map_or_else(String::new, MessageContent::as_text);
     let mut system = vec![
-        json!({"type":"text","text":billing}),
-        json!({"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude.","cache_control":{"type":"ephemeral"}}),
+        json!({"type":"text","text":billing_header(&first)}),
+        json!({"type":"text","text":IDENTITY,"cache_control":{"type":"ephemeral"}}),
     ];
     let mut messages: Vec<Value> = Vec::new();
     for message in &req.messages {
