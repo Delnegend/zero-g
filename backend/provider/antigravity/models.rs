@@ -302,7 +302,7 @@ pub(crate) enum ResolveError {
 
 impl AntigravityClient {
     /// Fetch enabled, user-facing models from the available upstream endpoints.
-    pub(crate) async fn fetch_models(
+    pub(super) async fn fetch_models(
         &self,
         creds: &Credentials,
     ) -> Result<Vec<(String, AntigravityModelInfo)>, UpstreamError> {

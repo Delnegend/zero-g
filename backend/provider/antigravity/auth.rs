@@ -41,17 +41,17 @@ pub(super) const ANTIGRAVITY_USER_AGENT: &str =
 /// Stored Google credentials and associated Cloud Code Assist project.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Credentials {
+pub(super) struct Credentials {
     /// Google OAuth access token.
-    pub(crate) access_token: String,
+    pub(super) access_token: String,
     /// Optional token used to refresh access.
-    pub(crate) refresh_token: Option<String>,
+    pub(super) refresh_token: Option<String>,
     /// Cloud Code Assist project identifier.
-    pub(crate) project_id: String,
+    pub(super) project_id: String,
     /// Access-token expiration in milliseconds since the Unix epoch.
-    pub(crate) expires_at: Option<i64>, // Milliseconds since UNIX epoch
+    pub(super) expires_at: Option<i64>, // Milliseconds since UNIX epoch
     /// Email address associated with the Google account, when available.
-    pub(crate) email: Option<String>,
+    pub(super) email: Option<String>,
 }
 
 /// Loads, refreshes, and persists credentials for one provider credential.
@@ -102,7 +102,7 @@ impl AuthManager {
     }
 
     /// Reloads credentials and refreshes an access token nearing expiration.
-    pub(crate) async fn get_credentials(&self) -> Result<Credentials, CredentialError> {
+    pub(super) async fn get_credentials(&self) -> Result<Credentials, CredentialError> {
         let lock = crate::provider::login::credential_lock(&self.credential_id).await;
         let _guard = lock.lock().await;
         let current: Credentials = crate::provider::credentials::load_oauth(
@@ -205,7 +205,7 @@ impl AuthManager {
     }
 
     /// Serializes and stores credentials for the specified provider credential.
-    pub(crate) async fn save(
+    pub(super) async fn save(
         store: &SettingsStore,
         provider_id: &str,
         credential_id: &str,

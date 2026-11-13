@@ -37,17 +37,17 @@ const JWT_CLAIM_PROFILE: &str = "https://api.openai.com/profile";
 /// Stored OAuth credentials and account metadata for Codex.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct CodexCredentials {
+pub(super) struct Credentials {
     /// Bearer token used for API requests.
     pub(super) access_token: String,
     /// Token used to refresh the access token, when available.
     pub(super) refresh_token: Option<String>,
     /// `ChatGPT` account identifier from the token claims.
-    pub(crate) account_id: Option<String>,
+    pub(super) account_id: Option<String>,
     /// Account email from the token claims.
-    pub(crate) email: Option<String>,
+    pub(super) email: Option<String>,
     /// `ChatGPT` subscription plan from the token claims.
-    pub(crate) plan_type: Option<String>,
+    pub(super) plan_type: Option<String>,
     /// Data or compute residency constraint from the access token.
     pub(super) residency: Option<String>,
     /// Access-token expiration in milliseconds since the Unix epoch.
@@ -58,7 +58,7 @@ pub(crate) struct CodexCredentials {
 #[derive(Clone)]
 pub(crate) struct CodexAuthManager {
     /// Cached credentials shared by manager clones.
-    creds: Arc<RwLock<CodexCredentials>>,
+    creds: Arc<RwLock<Credentials>>,
     /// Store holding the credential secret.
     store: SettingsStore,
     /// Provider owning the credential.
@@ -191,10 +191,10 @@ impl CodexAuthManager {
     }
 
     /// Reloads stored credentials and refreshes tokens within 60 seconds of expiry.
-    pub(crate) async fn get_credentials(&self) -> Result<CodexCredentials, CredentialError> {
+    pub(super) async fn get_credentials(&self) -> Result<Credentials, CredentialError> {
         let lock = crate::provider::login::credential_lock(&self.credential_id).await;
         let _guard = lock.lock().await;
-        let current: CodexCredentials = crate::provider::credentials::load_oauth(
+        let current: Credentials = crate::provider::credentials::load_oauth(
             &self.store,
             &self.provider_id,
             &self.credential_id,
@@ -309,11 +309,11 @@ impl CodexAuthManager {
     }
 
     /// Persists OAuth credentials for the specified provider and credential.
-    pub(crate) async fn save(
+    pub(super) async fn save(
         store: &SettingsStore,
         provider_id: &str,
         credential_id: &str,
-        creds: &CodexCredentials,
+        creds: &Credentials,
     ) -> Result<(), String> {
         let json = serde_json::to_string(creds)
             .map_err(|e| format!("Failed to serialize Codex credentials: {e}"))?;

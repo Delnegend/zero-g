@@ -3,7 +3,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::openai::{Model, ModelListResponse};
-use crate::provider::codex::auth::{CODEX_BASE_URL, CODEX_CLIENT_VERSION, CodexCredentials};
+use crate::provider::codex::auth::{CODEX_BASE_URL, CODEX_CLIENT_VERSION, Credentials};
 use crate::provider::common::errors::UpstreamError;
 use crate::provider::registry::Provider;
 use crate::server::AppState;
@@ -96,8 +96,8 @@ fn modalities(value: Option<&Value>) -> Option<Vec<String>> {
 }
 
 /// Fetches the normalized model list using the supplied credentials.
-pub(crate) async fn fetch_codex_models(
-    creds: &CodexCredentials,
+pub(super) async fn fetch_codex_models(
+    creds: &Credentials,
 ) -> Result<ModelListResponse, UpstreamError> {
     fetch_models(creds).await
 }
@@ -115,7 +115,7 @@ pub(crate) async fn fetch_catalog_pool(
 }
 
 /// Fetches and normalizes an upstream model list, retaining provider metadata.
-async fn request_models(creds: &CodexCredentials) -> Result<CodexModelsResponse, UpstreamError> {
+async fn request_models(creds: &Credentials) -> Result<CodexModelsResponse, UpstreamError> {
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
@@ -157,7 +157,7 @@ async fn request_models(creds: &CodexCredentials) -> Result<CodexModelsResponse,
 }
 
 /// Normalize the upstream model list while retaining provider metadata.
-async fn fetch_models(creds: &CodexCredentials) -> Result<ModelListResponse, UpstreamError> {
+async fn fetch_models(creds: &Credentials) -> Result<ModelListResponse, UpstreamError> {
     let parsed = request_models(creds).await?;
 
     let entries = parsed

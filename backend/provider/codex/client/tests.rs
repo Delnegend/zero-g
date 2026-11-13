@@ -141,8 +141,8 @@ async fn fake_client(
 }
 
 /// Returns an inert test credential.
-fn credentials() -> CodexCredentials {
-    CodexCredentials {
+fn credentials() -> Credentials {
+    Credentials {
         access_token: "test-token".to_string(),
         refresh_token: None,
         account_id: None,

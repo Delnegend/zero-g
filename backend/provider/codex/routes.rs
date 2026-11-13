@@ -9,7 +9,7 @@ use axum::routing::{get, post};
 
 use crate::openai::ChatCompletionRequest;
 use crate::provider::codex::CodexAuthManager;
-use crate::provider::codex::auth::CodexCredentials;
+use crate::provider::codex::auth::Credentials;
 use crate::provider::codex::models::fetch_codex_models;
 use crate::provider::common::errors::{UpstreamError, retryable_status};
 use crate::provider::common::request_identity::RequestIdentity;
@@ -128,14 +128,14 @@ impl PoolError {
 }
 
 /// Runs a request against the provider's credentials, retrying eligible failures.
-pub(crate) async fn with_pool<T, F, Fut>(
+pub(super) async fn with_pool<T, F, Fut>(
     state: &AppState,
     provider: &Provider,
     identity: Option<&RequestIdentity>,
     request: F,
 ) -> Result<T, PoolError>
 where
-    F: Fn(CodexCredentials) -> Fut + Send + Sync,
+    F: Fn(Credentials) -> Fut + Send + Sync,
     Fut: Future<Output = Result<T, UpstreamError>> + Send,
 {
     let credentials = crate::provider::credentials::list(&state.settings, &provider.id)

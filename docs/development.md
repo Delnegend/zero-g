@@ -67,6 +67,9 @@ zero-g/
 Related Rust implementation and test modules live together in named directories
 with `mod.rs` as their entry point.
 
+OAuth providers define their stored credential fields in their own `auth.rs`;
+Antigravity and Codex keep those structures private to the provider module.
+
 The dashboard shows requests and reported input/output token totals by provider
 over time. Missing counts remain unreported rather than being treated as zero;
 provider totals can be partial when an upstream reports only one token count.

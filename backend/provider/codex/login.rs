@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Deserialize;
 
 use crate::provider::codex::auth::{
-    CODEX_CLIENT_ID, CODEX_TOKEN_URL, CodexCredentials, decode_jwt_profile,
+    CODEX_CLIENT_ID, CODEX_TOKEN_URL, Credentials, decode_jwt_profile,
 };
 
 /// OAuth authorization-code exchange response.
@@ -20,11 +20,11 @@ struct TokenExchangeResponse {
 }
 
 /// Exchanges an authorization code and PKCE verifier for Codex credentials.
-pub(crate) async fn exchange_token(
+pub(super) async fn exchange_token(
     code: &str,
     verifier: &str,
     redirect_uri: &str,
-) -> Result<CodexCredentials, String> {
+) -> Result<Credentials, String> {
     exchange_token_at(code, verifier, redirect_uri, CODEX_TOKEN_URL).await
 }
 
@@ -34,7 +34,7 @@ pub(super) async fn exchange_token_at(
     verifier: &str,
     redirect_uri: &str,
     token_url: &str,
-) -> Result<CodexCredentials, String> {
+) -> Result<Credentials, String> {
     let client = reqwest::Client::new();
     let params = [
         ("grant_type", "authorization_code"),
@@ -73,7 +73,7 @@ pub(super) async fn exchange_token_at(
         .and_then(|duration| now_ms.checked_add(duration))
         .ok_or_else(|| "Token expiration is out of range".to_string())?;
 
-    Ok(CodexCredentials {
+    Ok(Credentials {
         access_token: token_data.access_token,
         refresh_token: token_data.refresh_token,
         account_id: profile.account_id,

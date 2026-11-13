@@ -14,7 +14,7 @@ use crate::provider::common::errors::UpstreamError;
 
 impl AntigravityClient {
     /// Send a streaming generation request, falling back on upstream failures.
-    pub(crate) async fn stream_request(
+    pub(super) async fn stream_request(
         &self,
         creds: &Credentials,
         payload: &Value,
@@ -77,7 +77,7 @@ impl AntigravityClient {
     }
 
     /// Collect a streaming generation into a non-streaming chat response.
-    pub(crate) async fn complete_non_streaming(
+    pub(super) async fn complete_non_streaming(
         &self,
         creds: &Credentials,
         req: &ChatCompletionRequest,

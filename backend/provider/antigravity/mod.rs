@@ -23,7 +23,8 @@ pub(crate) mod sse;
 /// Upstream streaming event decoding.
 mod stream;
 
-pub(crate) use auth::{AuthManager, Credentials};
+pub(crate) use auth::AuthManager;
+use auth::Credentials;
 pub(crate) use models::AntigravityModelInfo;
 use stream::map_finish_reason;
 pub(crate) use stream::{AntigravityEvent, spawn_event_stream};
@@ -200,11 +201,207 @@ impl super::common::DashboardProvider for Backend {
 }
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
-mod discovery_permission_tests {
+mod tests {
     use super::*;
     use crate::server::settings::Permissions;
     use serde_json::json;
 
+    /// Deleted credentials cannot be restored by stale login state.
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn credentials_are_isolated_and_cannot_be_resurrected() {
+        use crate::provider::antigravity::auth::{AuthManager, Credentials};
+        use crate::{database::Database, server::settings::SettingsStore};
+        use axum::{
+            body::{Body, to_bytes},
+            http::{Request, StatusCode},
+        };
+        use tower::ServiceExt;
+
+        let database = Database::open(":memory:").await.unwrap();
+        let store = SettingsStore::new(database, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+            .await
+            .unwrap();
+        let providers = crate::provider::registry::router(store.clone());
+        for kind in ["agy", "codex"] {
+            let request = Request::builder()
+                .method("POST")
+                .uri("/api/providers")
+                .header("content-type", "application/json")
+                .body(Body::from(format!(r#"{{"kind":"{kind}"}}"#)))
+                .unwrap();
+            assert_eq!(
+                providers.clone().oneshot(request).await.unwrap().status(),
+                StatusCode::CREATED
+            );
+        }
+        let credentials = crate::provider::credentials::router(store.clone());
+        let mut ids = Vec::new();
+        for name in ["first", "second"] {
+            let request = Request::builder()
+                .method("POST")
+                .uri("/api/providers/agy/credentials")
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"name":"{name}","weight":1,"enabled":true}}"#
+                )))
+                .unwrap();
+            let response = credentials.clone().oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::CREATED);
+            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            ids.push(value["id"].as_str().unwrap().to_string());
+            let creds = Credentials {
+                access_token: name.into(),
+                refresh_token: None,
+                project_id: name.into(),
+                expires_at: None,
+                email: None,
+            };
+            AuthManager::save(&store, "agy", ids.last().unwrap(), &creds)
+                .await
+                .unwrap();
+        }
+        let first = AuthManager::load(store.clone(), "agy", &ids[0])
+            .await
+            .unwrap()
+            .unwrap();
+        let second = AuthManager::load(store.clone(), "agy", &ids[1])
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.get_credentials().await.unwrap().access_token, "first");
+        assert_eq!(
+            second.get_credentials().await.unwrap().access_token,
+            "second"
+        );
+        let replacement = Credentials {
+            access_token: "replacement".into(),
+            refresh_token: None,
+            project_id: "replacement".into(),
+            expires_at: None,
+            email: None,
+        };
+        AuthManager::save(&store, "agy", &ids[0], &replacement)
+            .await
+            .unwrap();
+        assert_eq!(
+            first.get_credentials().await.unwrap().access_token,
+            "replacement"
+        );
+        assert_eq!(
+            second.get_credentials().await.unwrap().access_token,
+            "second"
+        );
+        assert!(
+            AuthManager::save(&store, "codex", &ids[0], &replacement)
+                .await
+                .is_err()
+        );
+        assert!(
+            AuthManager::load(store.clone(), "codex", &ids[0])
+                .await
+                .is_err()
+        );
+        assert!(
+            crate::provider::codex::auth::CodexAuthManager::load(store.clone(), "codex", &ids[0])
+                .await
+                .is_err()
+        );
+
+        let request = Request::builder()
+            .method("PUT")
+            .uri(format!("/api/providers/agy/credentials/{}", ids[0]))
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"name":"first","weight":1,"enabled":false}"#))
+            .unwrap();
+        assert!(
+            credentials
+                .clone()
+                .oneshot(request)
+                .await
+                .unwrap()
+                .status()
+                .is_success()
+        );
+        let late = Credentials {
+            access_token: "late".into(),
+            refresh_token: None,
+            project_id: "late".into(),
+            expires_at: None,
+            email: None,
+        };
+        assert!(first.get_credentials().await.is_err());
+        assert!(
+            AuthManager::save(&store, "agy", &ids[0], &late)
+                .await
+                .is_err()
+        );
+
+        let request = Request::builder()
+            .method("DELETE")
+            .uri(format!("/api/providers/agy/credentials/{}", ids[1]))
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            credentials.clone().oneshot(request).await.unwrap().status(),
+            StatusCode::NO_CONTENT
+        );
+        assert!(second.get_credentials().await.is_err());
+        assert!(
+            AuthManager::save(&store, "agy", &ids[1], &late)
+                .await
+                .is_err()
+        );
+        assert!(
+            store
+                .secret_get(&format!("credential.{}.credential", ids[1]))
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let request = Request::builder()
+            .method("DELETE")
+            .uri("/api/providers/agy")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            providers.clone().oneshot(request).await.unwrap().status(),
+            StatusCode::CONFLICT
+        );
+        let request = Request::builder()
+            .method("DELETE")
+            .uri(format!("/api/providers/agy/credentials/{}", ids[0]))
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            credentials.oneshot(request).await.unwrap().status(),
+            StatusCode::NO_CONTENT
+        );
+
+        let request = Request::builder()
+            .method("DELETE")
+            .uri("/api/providers/agy")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            providers.oneshot(request).await.unwrap().status(),
+            StatusCode::NO_CONTENT
+        );
+        assert!(
+            AuthManager::save(&store, "agy", &ids[0], &late)
+                .await
+                .is_err()
+        );
+        assert!(
+            store
+                .secret_get(&format!("credential.{}.credential", ids[0]))
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
     #[test]
     fn discovery_exposes_only_permitted_family_efforts() {
         let info: AntigravityModelInfo = serde_json::from_value(json!({

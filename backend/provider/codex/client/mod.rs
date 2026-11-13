@@ -13,7 +13,7 @@ use crate::openai::{
     AssistantMessage, ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse, Choice,
     ChunkChoice, ChunkDelta, ChunkFunctionCall, ChunkToolCall, FunctionCall, ToolCall, Usage,
 };
-use crate::provider::codex::auth::{CODEX_BASE_URL, CODEX_CLIENT_VERSION, CodexCredentials};
+use crate::provider::codex::auth::{CODEX_BASE_URL, CODEX_CLIENT_VERSION, Credentials};
 use crate::provider::codex::payload::{
     build_codex_payload_from_chat, build_codex_payload_from_responses,
 };
@@ -55,7 +55,7 @@ impl CodexClient {
     /// Sends an authenticated streaming request to the Codex Responses endpoint.
     async fn send_request(
         &self,
-        creds: &CodexCredentials,
+        creds: &Credentials,
         mut payload: Value,
         session_id: &str,
     ) -> Result<reqwest::Response, UpstreamError> {
@@ -113,9 +113,9 @@ impl CodexClient {
     }
 
     /// Translates and streams a chat completion as SSE chunks.
-    pub(crate) async fn stream_chat(
+    pub(super) async fn stream_chat(
         &self,
-        creds: &CodexCredentials,
+        creds: &Credentials,
         req: &ChatCompletionRequest,
         session_id: &str,
     ) -> Result<Response, UpstreamError> {
@@ -140,9 +140,9 @@ impl CodexClient {
     }
 
     /// Collects an upstream stream into a single chat completion.
-    pub(crate) async fn complete_chat_non_streaming(
+    pub(super) async fn complete_chat_non_streaming(
         &self,
-        creds: &CodexCredentials,
+        creds: &Credentials,
         req: &ChatCompletionRequest,
         session_id: &str,
     ) -> Result<ChatCompletionResponse, UpstreamError> {
@@ -249,9 +249,9 @@ impl CodexClient {
     }
 
     /// Forwards a Responses request as an SSE event stream.
-    pub(crate) async fn stream_responses(
+    pub(super) async fn stream_responses(
         &self,
-        creds: &CodexCredentials,
+        creds: &Credentials,
         req: &ResponseCreateRequest,
         session_id: &str,
     ) -> Result<Response, UpstreamError> {
@@ -270,9 +270,9 @@ impl CodexClient {
     }
 
     /// Collects an upstream stream into a single Responses object.
-    pub(crate) async fn complete_responses_non_streaming(
+    pub(super) async fn complete_responses_non_streaming(
         &self,
-        creds: &CodexCredentials,
+        creds: &Credentials,
         req: &ResponseCreateRequest,
         session_id: &str,
     ) -> Result<Value, UpstreamError> {
