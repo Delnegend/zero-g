@@ -24,6 +24,7 @@ flowchart TD
         Dispatch --> Cursor[Cursor]
         Dispatch --> Grok[Grok / Grok Build]
         Dispatch --> ChatJimmy[ChatJimmy]
+        Dispatch --> CommandCodeGo[Command Code Go]
     end
 
     subgraph Passthrough ["Passthrough / Forwarded"]

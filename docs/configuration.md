@@ -69,6 +69,7 @@ Built-in provider cards show their name without a separate type label. Custom Op
 | **OpenCode Go** | Passthrough | `go` | API Key | Subscription API key. |
 | **OpenRouter** | Passthrough | `openrouter` | API Key | Standard API key. Account credits check requires a Management Key. |
 | **Command Code** | Passthrough | `commandcode` | API Key | Command Code API key (any plan except Go). Claude models are hidden: Command Code serves them only in Anthropic's `/messages` format. |
+| **Command Code Go** | Translation | `commandcode-go` | API Key | Same Command Code API key; works on the $1 Go plan by using the CLI's private `/alpha/generate` endpoint. Lists only Go plan models. Undocumented: it can break without notice, and Command Code may treat it as bypassing plan limits. |
 | **ChatJimmy** | Translation | `chatjimmy` | API Key / Keyless | Keyless upstream; uses Taalas HC1 silicon at `chatjimmy.ai`. |
 | **Custom OpenAI** | Passthrough | _Custom_ | API Key / Keyless | Configurable base URL; forwards `/v1/chat/completions` & `/v1/responses`. |
 

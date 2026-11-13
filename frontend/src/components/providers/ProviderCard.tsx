@@ -58,7 +58,8 @@ export function ProviderCard({
                     provider.kind !== "zen" &&
                     provider.kind !== "openrouter" &&
                     provider.kind !== "chatjimmy" &&
-                    provider.kind !== "commandcode") ||
+                    provider.kind !== "commandcode" &&
+                    provider.kind !== "commandcode-go") ||
                     kind.fixed_name === null) && (
                     <Button
                       variant="outline"
@@ -125,7 +126,8 @@ export function ProviderCard({
               provider.kind !== "zen" &&
               provider.kind !== "openrouter" &&
               provider.kind !== "chatjimmy" &&
-              provider.kind !== "commandcode" && (
+              provider.kind !== "commandcode" &&
+              provider.kind !== "commandcode-go" && (
                 <p className="mt-2 text-sm break-all text-muted-foreground">
                   Upstream: {provider.base_url}
                 </p>

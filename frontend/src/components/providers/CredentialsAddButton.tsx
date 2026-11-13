@@ -170,7 +170,8 @@ export function CredentialsAddButton({
                     (
                     {editing === "new"
                       ? provider.kind === "go" ||
-                        provider.kind === "commandcode"
+                        provider.kind === "commandcode" ||
+                        provider.kind === "commandcode-go"
                         ? "required"
                         : "optional"
                       : "leave blank to retain"}
@@ -181,7 +182,8 @@ export function CredentialsAddButton({
                     type="password"
                     required={
                       (provider.kind === "go" ||
-                        provider.kind === "commandcode") &&
+                        provider.kind === "commandcode" ||
+                        provider.kind === "commandcode-go") &&
                       editing === "new"
                     }
                     value={field.state.value}

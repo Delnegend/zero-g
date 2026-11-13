@@ -111,6 +111,8 @@ providers! {
     ChatJimmy => chatjimmy::Backend,
     /// Command Code backend.
     CommandCode => commandcode::Backend,
+    /// Command Code Go plan backend.
+    CommandCodeGo => commandcode::go::GoBackend,
 }
 
 impl ProviderKind {
@@ -158,6 +160,7 @@ impl ProviderKind {
             Self::Openrouter => openrouter::Backend::discover(state, provider).await,
             Self::ChatJimmy => chatjimmy::Backend::discover(state, provider).await,
             Self::CommandCode => commandcode::Backend::discover(state, provider).await,
+            Self::CommandCodeGo => commandcode::go::GoBackend::discover(state, provider).await,
         }
     }
 
@@ -191,6 +194,9 @@ impl ProviderKind {
             Self::CommandCode => {
                 commandcode::Backend::discover_permitted(state, provider, permissions).await
             }
+            Self::CommandCodeGo => {
+                commandcode::go::GoBackend::discover_permitted(state, provider, permissions).await
+            }
         }
     }
 
@@ -208,7 +214,8 @@ impl ProviderKind {
             | Self::Grok
             | Self::GrokBuild
             | Self::ChatJimmy
-            | Self::CommandCode => None,
+            | Self::CommandCode
+            | Self::CommandCodeGo => None,
         }
     }
 
@@ -227,6 +234,7 @@ impl ProviderKind {
             Self::Openrouter => openrouter::Backend::router(settings),
             Self::ChatJimmy => chatjimmy::Backend::router(settings),
             Self::CommandCode => commandcode::Backend::router(settings),
+            Self::CommandCodeGo => commandcode::go::GoBackend::router(settings),
         }
     }
 }
@@ -300,7 +308,8 @@ pub(crate) fn dashboard_router(state: &AppState) -> Router {
             | ProviderKind::Openai
             | ProviderKind::GrokBuild
             | ProviderKind::ChatJimmy
-            | ProviderKind::CommandCode => router,
+            | ProviderKind::CommandCode
+            | ProviderKind::CommandCodeGo => router,
         })
 }
 
@@ -328,6 +337,7 @@ mod tests {
                 "openrouter",
                 "chatjimmy",
                 "commandcode",
+                "commandcode-go",
             ]
         );
         for value in values {

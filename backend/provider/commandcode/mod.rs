@@ -1,3 +1,6 @@
+/// Go plan access through the CLI's generate endpoint.
+pub(crate) mod go;
+
 use axum::Router;
 use axum::http::{HeaderMap, Method};
 use serde_json::Value;
