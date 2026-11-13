@@ -143,6 +143,30 @@ fn responses_repairs_orphans_and_keeps_paired_results_and_ids_stable() {
 }
 
 #[test]
+fn responses_replays_encrypted_reasoning_and_tool_calls() {
+    let req: ResponseCreateRequest = serde_json::from_value(json!({
+        "model": "gpt-5.5",
+        "input": [
+            {"type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "opaque"},
+            {"type": "message", "role": "assistant", "tool_calls": [
+                {"id": "call_1", "type": "function", "function": {"name": "read", "arguments": "{}"}}
+            ]},
+            {"type": "function_call_output", "call_id": "call_1", "output": "found"}
+        ]
+    })).unwrap();
+    let payload = build_codex_payload_from_responses(&req);
+    assert_eq!(payload["include"], json!(["reasoning.encrypted_content"]));
+    assert_eq!(
+        payload["input"],
+        json!([
+            {"type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "opaque"},
+            {"type": "function_call", "call_id": "call_1", "name": "read", "arguments": "{}"},
+            {"type": "function_call_output", "call_id": "call_1", "output": "found"}
+        ])
+    );
+}
+
+#[test]
 fn test_build_codex_payload_from_chat() {
     let req = ChatCompletionRequest {
         model: "gpt-5.5".to_string(),

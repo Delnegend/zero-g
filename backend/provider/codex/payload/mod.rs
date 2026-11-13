@@ -132,12 +132,15 @@ pub(super) fn build_codex_payload_from_responses(req: &ResponseCreateRequest) ->
                             if is_system_role(role) {
                                 append_instructions(&mut instructions, content.as_ref());
                             } else {
-                                let parts = convert_content_to_input_parts(content.as_ref(), role);
-                                input_items.push(json!({
-                                    "type": "message",
-                                    "role": role,
-                                    "content": parts,
-                                }));
+                                if content.is_some() {
+                                    let parts =
+                                        convert_content_to_input_parts(content.as_ref(), role);
+                                    input_items.push(json!({
+                                        "type": "message",
+                                        "role": role,
+                                        "content": parts,
+                                    }));
+                                }
                                 if let Some(calls) = tool_calls {
                                     for call in calls {
                                         input_items.push(json!({"type":"function_call","call_id":call.id,"name":call.function.name,"arguments":call.function.arguments}));
@@ -238,6 +241,7 @@ fn build_envelope(
         "model": model,
         "store": false,
         "stream": true,
+        "include": ["reasoning.encrypted_content"],
         "input": input_items,
     });
     if let Some(instructions) = instructions {
