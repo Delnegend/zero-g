@@ -62,8 +62,19 @@ pub(super) async fn models(State(state): State<AppState>, request: Request) -> R
         match result {
             Ok(Ok(models)) => {
                 succeeded = true;
+                let source = if provider.name.is_empty() {
+                    &provider.id
+                } else {
+                    &provider.name
+                };
                 for mut model in models {
                     normalize_model(&provider.kind, &mut model);
+                    let base = model
+                        .display_name
+                        .as_deref()
+                        .or(model.name.as_deref())
+                        .unwrap_or(&model.id);
+                    model.display_name = Some(format!("{base} ({source})"));
                     model.id = format!("{}/{}", provider.id, model.id);
                     data.push(model);
                 }

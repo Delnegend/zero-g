@@ -171,6 +171,18 @@ async fn check_discovery_and_routing(app: &Router, all: &str, restricted: &str) 
         .unwrap();
     assert_eq!(first["provider_metadata"]["nested"], 42);
     assert_eq!(first["supports_tools"], true);
+    let name = |id: &str| {
+        models["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|model| model["id"] == id)
+            .unwrap()["display_name"]
+            .clone()
+    };
+    // The same upstream model from two providers gets distinct names.
+    assert_eq!(name("first/same"), "same (first)");
+    assert_eq!(name("second/same"), "same (second)");
     let models = json_body(
         send("GET", "/v1/models", restricted, Value::Null)
             .await
