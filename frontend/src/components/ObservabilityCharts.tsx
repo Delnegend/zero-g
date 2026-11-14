@@ -111,6 +111,27 @@ function bucketLabel(start: number, interval: Interval) {
     : iso.slice(0, interval === "day" ? 10 : interval === "month" ? 7 : 4);
 }
 
+/** UTC start of the bucket containing `time`, in Unix seconds, matching the backend. */
+function bucketFloor(time: number, interval: Interval) {
+  const date = new Date(time * 1000);
+  const year = date.getUTCFullYear();
+  const month = interval === "year" ? 0 : date.getUTCMonth();
+  const day =
+    interval === "year" || interval === "month" ? 1 : date.getUTCDate();
+  const hour = interval === "hour" ? date.getUTCHours() : 0;
+  return Date.UTC(year, month, day, hour) / 1000;
+}
+
+/** UTC start of the bucket after the one starting at `start`. */
+function bucketNext(start: number, interval: Interval) {
+  const date = new Date(start * 1000);
+  if (interval === "hour") date.setUTCHours(date.getUTCHours() + 1);
+  else if (interval === "day") date.setUTCDate(date.getUTCDate() + 1);
+  else if (interval === "month") date.setUTCMonth(date.getUTCMonth() + 1);
+  else date.setUTCFullYear(date.getUTCFullYear() + 1);
+  return date.getTime() / 1000;
+}
+
 function GraphPanel({
   title,
   description,
@@ -121,7 +142,7 @@ function GraphPanel({
   comparison,
   comparisons,
   summary,
-  timeSeries = false,
+  timeSeries,
   timeRange,
   stacked = false,
   showLegend = true,
@@ -136,7 +157,8 @@ function GraphPanel({
   comparison?: Comparison;
   comparisons?: { title: string; value: Comparison }[];
   summary: string;
-  timeSeries?: boolean;
+  /** Bucket size when the x axis is time; bars then span their whole bucket. */
+  timeSeries?: Interval;
   timeRange?: readonly [number, number];
   stacked?: boolean;
   showLegend?: boolean;
@@ -186,22 +208,31 @@ function GraphPanel({
           ),
         ]
       : [];
-    const timeMin =
-      timeRange?.[0] ?? (timeStarts.length ? Math.min(...timeStarts) : 0);
-    const timeMax =
-      timeRange?.[1] ?? (timeStarts.length ? Math.max(...timeStarts) : 1);
-    const timeLabelFor = (value: number) => {
-      const date = new Date(value * 1000).toISOString();
-      return date.includes("T")
-        ? `${date.slice(0, 10)} ${date.slice(11, 16)}`
-        : date.slice(0, 10);
-    };
+    // Widen the axis to whole buckets so the first and last bars are not cut off.
+    const timeMin = timeSeries
+      ? bucketFloor(
+          timeRange?.[0] ?? (timeStarts.length ? Math.min(...timeStarts) : 0),
+          timeSeries,
+        )
+      : 0;
+    const timeMax = timeSeries
+      ? bucketNext(
+          bucketFloor(
+            timeRange?.[1] ?? (timeStarts.length ? Math.max(...timeStarts) : 0),
+            timeSeries,
+          ),
+          timeSeries,
+        )
+      : 1;
     return defineChart({
       marks: [
         barY(bars, {
+          // Each bar covers [start, next start), so it is drawn at the bucket's middle.
           x: timeSeries
-            ? (point) =>
-                Math.max(timeMin, Math.min(timeMax, point.start ?? timeMin))
+            ? (point) => {
+                const start = point.start ?? timeMin;
+                return (start + bucketNext(start, timeSeries)) / 2;
+              }
             : (point) => slot(point.label, point.series),
           y: "value",
           z: "series",
@@ -220,10 +251,24 @@ function GraphPanel({
               ]),
               axis: {
                 ticks: {
-                  count: 6,
+                  // Ticks on bucket edges (whole hours, days, ...), at most about 6.
+                  values: (() => {
+                    const edges: number[] = [];
+                    for (
+                      let t = timeMin;
+                      t <= timeMax;
+                      t = bucketNext(t, timeSeries)
+                    )
+                      edges.push(t);
+                    const step = Math.ceil(edges.length / 7);
+                    return edges.filter((_, i) => i % step === 0);
+                  })(),
+                  // Drop the year from hour and day labels; it is rarely ambiguous.
                   format: (value) => {
-                    const label = timeLabelFor(Number(value));
-                    return label.includes(" ") ? label.slice(5) : label;
+                    const label = bucketLabel(Number(value), timeSeries);
+                    return timeSeries === "hour" || timeSeries === "day"
+                      ? label.slice(5)
+                      : label;
                   },
                 },
                 tickLabels: { fontSize: 10, thin: true },
@@ -557,7 +602,7 @@ export function ObservabilityCharts({
     <div className="grid min-w-0 grid-cols-1 gap-3 @min-[768px]:grid-cols-2">
       <GraphPanel
         title="Request volume"
-        timeSeries
+        timeSeries={interval}
         showLegend={false}
         timeRange={timeRange}
         stacked
@@ -590,7 +635,7 @@ export function ObservabilityCharts({
       />
       <GraphPanel
         title="Average latency"
-        timeSeries
+        timeSeries={interval}
         showLegend={false}
         timeRange={timeRange}
         summary={latency}
@@ -617,7 +662,7 @@ export function ObservabilityCharts({
       />
       <GraphPanel
         title="Token usage"
-        timeSeries
+        timeSeries={interval}
         showLegend={false}
         timeRange={timeRange}
         stacked
@@ -664,7 +709,7 @@ export function ObservabilityCharts({
       />
       <GraphPanel
         title="Model usage"
-        timeSeries
+        timeSeries={interval}
         timeRange={timeRange}
         stacked
         summary={`${number.format(requests)} requests`}
@@ -684,7 +729,7 @@ export function ObservabilityCharts({
       />
       <GraphPanel
         title="Requests by provider"
-        timeSeries
+        timeSeries={interval}
         timeRange={timeRange}
         stacked
         summary={`${number.format(requests)} requests`}
@@ -697,7 +742,7 @@ export function ObservabilityCharts({
       />
       <GraphPanel
         title="Token usage by provider"
-        timeSeries
+        timeSeries={interval}
         timeRange={timeRange}
         stacked
         summary={`Input: ${tokenTotal("input_tokens")}; output: ${tokenTotal("output_tokens")} tokens`}
