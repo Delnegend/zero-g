@@ -107,7 +107,8 @@ export function mount(element: React.ReactNode) {
 }
 
 export const settings = {
-  log_retention_days: 30,
+  log_retention_days: 90,
+  body_retention_days: 7,
   pricing_interval_hours: 24,
   discovery_interval_minutes: 60,
 };

@@ -23,7 +23,7 @@ use tracing_subscriber::FmtSubscriber;
 
 use crate::database::Database;
 use crate::provider::Providers;
-use crate::server::observability::prune_expired;
+use crate::server::observability::{compress_legacy_bodies, prune_expired};
 use crate::server::settings::SettingsStore;
 use crate::server::{AppState, create_router};
 
@@ -91,7 +91,8 @@ async fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Opens settings and the database, then applies the configured retention.
+/// Opens settings and the database, applies the configured retention, then
+/// compresses any bodies still stored as plain text.
 async fn open_stores() -> Result<(SettingsStore, Database), String> {
     let path = std::env::var("ZERO_G_LOG_DB").unwrap_or_else(|_| "zero-g.db".into());
     let key = std::env::var("ZERO_G_ENCRYPTION_KEY")
@@ -99,6 +100,7 @@ async fn open_stores() -> Result<(SettingsStore, Database), String> {
     let database = Database::open(&path).await?;
     let settings = SettingsStore::new(database.clone(), &key).await?;
     prune_expired(&database).await?;
+    compress_legacy_bodies(&database).await?;
     Ok((settings, database))
 }
 

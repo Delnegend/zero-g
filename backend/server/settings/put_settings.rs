@@ -20,11 +20,12 @@ pub(crate) async fn put_settings(
     State(store): State<SettingsStore>,
     Json(input): Json<UpdateSettings>,
 ) -> Response {
-    if input
-        .log_retention_days
-        .is_some_and(|days| !(1..=36500).contains(&days))
-    {
+    let invalid_days = |days: Option<u32>| days.is_some_and(|days| !(1..=36500).contains(&days));
+    if invalid_days(input.log_retention_days) {
         return (StatusCode::BAD_REQUEST, "Invalid log retention").into_response();
+    }
+    if invalid_days(input.body_retention_days) {
+        return (StatusCode::BAD_REQUEST, "Invalid body retention").into_response();
     }
     if input
         .pricing_interval_hours
@@ -36,15 +37,23 @@ pub(crate) async fn put_settings(
         return (StatusCode::BAD_REQUEST, "Interval is too large").into_response();
     }
     if input.log_retention_days.is_some()
+        || input.body_retention_days.is_some()
         || input.pricing_interval_hours.is_some()
         || input.discovery_interval_minutes.is_some()
     {
         let retention = input.log_retention_days;
+        let body_retention = input.body_retention_days;
         let pricing = input.pricing_interval_hours;
         let discovery = input.discovery_interval_minutes;
         let result = transaction_with_retry!(store.database, |mut tx| {
             if let Some(days) = retention {
                 crate::storage::Setting::upsert_by_name("log_retention_days")
+                    .value(days.to_string())
+                    .exec(&mut tx)
+                    .await?;
+            }
+            if let Some(days) = body_retention {
+                crate::storage::Setting::upsert_by_name("body_retention_days")
                     .value(days.to_string())
                     .exec(&mut tx)
                     .await?;

@@ -370,9 +370,12 @@ fn internal_error(err: &str) -> Response {
 /// Dashboard-visible global settings.
 #[derive(Serialize, ToSchema)]
 pub(crate) struct SettingsResponse {
-    /// Number of days to retain logs.
+    /// Number of days to retain log metadata, charts, and token totals.
     #[schema(format = Int64, minimum = 0, maximum = 4_294_967_295_u64)]
     log_retention_days: u32,
+    /// Number of days to retain captured request and response bodies.
+    #[schema(format = Int64, minimum = 1, maximum = 36_500)]
+    body_retention_days: u32,
     /// Datasheet refresh interval in hours; zero disables refresh.
     #[schema(format = Int64, minimum = 0)]
     pricing_interval_hours: u64,
@@ -387,6 +390,9 @@ pub(crate) struct UpdateSettings {
     /// Optional log retention in days.
     #[schema(format = Int64, minimum = 0, maximum = 4_294_967_295_u64)]
     log_retention_days: Option<u32>,
+    /// Optional body retention in days.
+    #[schema(format = Int64, minimum = 1, maximum = 36_500)]
+    body_retention_days: Option<u32>,
     /// Optional datasheet refresh interval in hours.
     #[schema(format = Int64, minimum = 0)]
     pricing_interval_hours: Option<u64>,

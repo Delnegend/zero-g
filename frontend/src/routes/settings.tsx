@@ -27,6 +27,15 @@ export const Route = createFileRoute("/settings")({
   component: SettingsPage,
 });
 
+/** Every editable setting; all are whole numbers. */
+const FIELDS = [
+  "log_retention_days",
+  "body_retention_days",
+  "pricing_interval_hours",
+  "discovery_interval_minutes",
+] as const;
+type Field = (typeof FIELDS)[number];
+
 export function SettingsPage() {
   const draftStarted = useRef(false);
   const [error, setError] = useState("");
@@ -55,7 +64,8 @@ export function SettingsPage() {
 
   const form = useForm({
     defaultValues: {
-      log_retention_days: settings?.log_retention_days ?? 30,
+      log_retention_days: settings?.log_retention_days ?? 90,
+      body_retention_days: settings?.body_retention_days ?? 7,
       pricing_interval_hours: settings?.pricing_interval_hours ?? 24,
       discovery_interval_minutes: settings?.discovery_interval_minutes ?? 60,
     },
@@ -64,23 +74,11 @@ export function SettingsPage() {
 
   useEffect(() => {
     if (settings && !draftStarted.current) {
-      form.setFieldValue("log_retention_days", settings.log_retention_days);
-      form.setFieldValue(
-        "pricing_interval_hours",
-        settings.pricing_interval_hours,
-      );
-      form.setFieldValue(
-        "discovery_interval_minutes",
-        settings.discovery_interval_minutes,
-      );
+      for (const name of FIELDS) form.setFieldValue(name, settings[name]);
     }
   }, [settings, form]);
 
-  async function save(value: {
-    log_retention_days: number;
-    pricing_interval_hours: number;
-    discovery_interval_minutes: number;
-  }) {
+  async function save(value: SettingsUpdate & Record<Field, number>) {
     if (!settings) return;
     saveController.current?.abort();
     const controller = new AbortController();
@@ -89,39 +87,23 @@ export function SettingsPage() {
     setError("");
     setSaved(false);
     try {
-      const body: SettingsUpdate = {
-        log_retention_days: value.log_retention_days,
-        pricing_interval_hours: value.pricing_interval_hours,
-        discovery_interval_minutes: value.discovery_interval_minutes,
-      };
       const updated = await saveMutation.mutateAsync({
-        body,
+        body: value,
         signal: controller.signal,
       });
       if (controller.signal.aborted) return;
       await queryClient.cancelQueries({ queryKey: settingsOptions().queryKey });
       if (controller.signal.aborted) return;
+      // Keep edits made while the save was in flight; take the server value otherwise.
       const current = form.state.values;
-      const logRetention =
-        current.log_retention_days === value.log_retention_days
-          ? updated.log_retention_days
-          : current.log_retention_days;
-      const pricingInterval =
-        current.pricing_interval_hours === value.pricing_interval_hours
-          ? updated.pricing_interval_hours
-          : current.pricing_interval_hours;
-      const discoveryInterval =
-        current.discovery_interval_minutes === value.discovery_interval_minutes
-          ? updated.discovery_interval_minutes
-          : current.discovery_interval_minutes;
-      draftStarted.current =
-        logRetention !== updated.log_retention_days ||
-        pricingInterval !== updated.pricing_interval_hours ||
-        discoveryInterval !== updated.discovery_interval_minutes;
+      draftStarted.current = false;
+      for (const name of FIELDS) {
+        const next =
+          current[name] === value[name] ? updated[name] : current[name];
+        if (next !== updated[name]) draftStarted.current = true;
+        form.setFieldValue(name, next);
+      }
       queryClient.setQueryData(settingsOptions().queryKey, updated);
-      form.setFieldValue("log_retention_days", logRetention);
-      form.setFieldValue("pricing_interval_hours", pricingInterval);
-      form.setFieldValue("discovery_interval_minutes", discoveryInterval);
       setSaved(true);
     } catch (err) {
       if (!controller.signal.aborted) setError(message(err));
@@ -130,6 +112,32 @@ export function SettingsPage() {
       if (!controller.signal.aborted) setBusy(false);
     }
   }
+
+  const dayField = (
+    name: "log_retention_days" | "body_retention_days",
+    label: string,
+  ) => (
+    <form.Field name={name}>
+      {(field) => (
+        <Label className="grid gap-2">
+          {label}
+          <Input
+            className="h-10"
+            type="number"
+            min={1}
+            max={36500}
+            required
+            value={field.state.value}
+            onBlur={field.handleBlur}
+            onChange={(e) => {
+              draftStarted.current = true;
+              field.handleChange(Number(e.target.value));
+            }}
+          />
+        </Label>
+      )}
+    </form.Field>
+  );
 
   return (
     <Page
@@ -161,31 +169,14 @@ export function SettingsPage() {
                 <h2>Log retention</h2>
               </CardTitle>
               <CardDescription>
-                Configure how long request logs and traces are retained. Expired
+                Request bodies (the full prompt and response) take most of the
+                space, so they expire sooner than the rest of the log. Expired
                 records are removed at startup and then hourly.
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              <form.Field name="log_retention_days">
-                {(field) => (
-                  <Label className="grid gap-2">
-                    Log retention (days)
-                    <Input
-                      className="h-10"
-                      type="number"
-                      min={1}
-                      max={36500}
-                      required
-                      value={field.state.value}
-                      onBlur={field.handleBlur}
-                      onChange={(e) => {
-                        draftStarted.current = true;
-                        field.handleChange(Number(e.target.value));
-                      }}
-                    />
-                  </Label>
-                )}
-              </form.Field>
+            <CardContent className="grid gap-4 sm:grid-cols-2">
+              {dayField("log_retention_days", "Logs, charts and totals (days)")}
+              {dayField("body_retention_days", "Prompts and responses (days)")}
             </CardContent>
           </Card>
 

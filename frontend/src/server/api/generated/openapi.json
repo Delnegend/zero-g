@@ -3678,12 +3678,12 @@
             "description": "Provider extracted from the request path."
           },
           "request_body": {
-            "type": "string",
-            "description": "Captured request body."
+            "type": ["string", "null"],
+            "description": "Captured request body, or null once body retention has removed it."
           },
           "response_body": {
-            "type": "string",
-            "description": "Captured response body."
+            "type": ["string", "null"],
+            "description": "Captured response body, or null once body retention has removed it."
           },
           "status": {
             "type": "integer",
@@ -4272,10 +4272,18 @@
         "description": "Dashboard-visible global settings.",
         "required": [
           "log_retention_days",
+          "body_retention_days",
           "pricing_interval_hours",
           "discovery_interval_minutes"
         ],
         "properties": {
+          "body_retention_days": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of days to retain captured request and response bodies.",
+            "maximum": 36500,
+            "minimum": 1
+          },
           "discovery_interval_minutes": {
             "type": "integer",
             "format": "int64",
@@ -4285,7 +4293,7 @@
           "log_retention_days": {
             "type": "integer",
             "format": "int64",
-            "description": "Number of days to retain logs.",
+            "description": "Number of days to retain log metadata, charts, and token totals.",
             "maximum": 4294967295,
             "minimum": 0
           },
@@ -4350,6 +4358,13 @@
         "type": "object",
         "description": "Partial settings update supplied by the dashboard.",
         "properties": {
+          "body_retention_days": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Optional body retention in days.",
+            "maximum": 36500,
+            "minimum": 1
+          },
           "discovery_interval_minutes": {
             "type": ["integer", "null"],
             "format": "int64",

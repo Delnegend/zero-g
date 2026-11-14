@@ -36,9 +36,10 @@ pub(crate) struct RequestLog {
     pub credential_name: Option<String>,
 }
 
-/// Captured request and response bodies, kept apart so metadata scans stay small.
+/// Captured request and response bodies, zstd-compressed and kept apart so
+/// metadata scans stay small.
 #[derive(Debug, toasty::Model)]
-#[table = "request_log_bodies"]
+#[table = "request_log_payloads"]
 pub(crate) struct RequestLogBody {
     /// Identifier of the owning request log.
     #[key]
@@ -46,10 +47,10 @@ pub(crate) struct RequestLogBody {
     /// Creation timestamp copied from the owning log, used for retention.
     #[index]
     pub created_at: i64,
-    /// Stored request body.
-    pub request_body: String,
-    /// Stored response body.
-    pub response_body: String,
+    /// zstd-compressed request body.
+    pub request_body: Vec<u8>,
+    /// zstd-compressed response body.
+    pub response_body: Vec<u8>,
 }
 
 /// Retention-maintained log filter dimension and identity-name snapshot.

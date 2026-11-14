@@ -81,13 +81,7 @@ export function useRequestLogs(
   const selected = data?.logs.find((log) => log.id === selectedId);
   const detail = useQuery({
     queryKey: ["observability-log", selectedId],
-    queryFn: async ({ signal }) => {
-      const log = await getLog(signal, selectedId!);
-      if (log.request_body == null || log.response_body == null) {
-        throw new Error("Request details are no longer available.");
-      }
-      return log;
-    },
+    queryFn: ({ signal }) => getLog(signal, selectedId!),
     enabled: selectedId != null,
     retry: false,
     gcTime: 0,
@@ -246,7 +240,18 @@ export function RequestLogs({
                     </AlertDescription>
                   </Alert>
                 ) : (
-                  detail.data && (
+                  detail.data &&
+                  (detail.data.request_body == null ||
+                  detail.data.response_body == null ? (
+                    <p
+                      role="status"
+                      className="mt-6 text-sm text-muted-foreground"
+                    >
+                      The prompt and response for this request have expired.
+                      They are kept for the number of days set under Settings,
+                      Prompts and responses.
+                    </p>
+                  ) : (
                     <>
                       <style>{jsonTheme}</style>
                       <div className="mt-5 grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
@@ -254,16 +259,16 @@ export function RequestLogs({
                           <h3 className="mb-2 text-sm font-medium">
                             Request body
                           </h3>
-                          <RequestBody body={detail.data.request_body ?? ""} />
+                          <RequestBody body={detail.data.request_body} />
                         </div>
                         <ResponseBody
                           key={selected.id}
-                          body={detail.data.response_body ?? ""}
+                          body={detail.data.response_body}
                           status={selected.status}
                         />
                       </div>
                     </>
-                  )
+                  ))
                 )}
               </div>
               <DrawerFooter>

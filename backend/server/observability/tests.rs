@@ -56,8 +56,8 @@ pub(in crate::server::observability) async fn range_fixture() -> (std::path::Pat
         virtual_key_name: None,
         credential_id: None,
         credential_name: None,
-        request_body: body,
-        response_body: "response".into(),
+        request_body: Some(body),
+        response_body: Some("response".into()),
     };
     fixture(&database, entry(-86401, 500, "before".into()))
         .await
@@ -107,8 +107,8 @@ pub(in crate::server::observability) async fn dimension_fixture() -> (std::path:
         virtual_key_name: None,
         credential_id: None,
         credential_name: None,
-        request_body: "private".into(),
-        response_body: "response".into(),
+        request_body: Some("private".into()),
+        response_body: Some("response".into()),
     };
     fixture(&database, entry(100, "alpha", "m1", "/a", 399, None, None))
         .await
@@ -208,6 +208,9 @@ async fn migrates_existing_log_filter_options() {
             .bind(now()).exec(&mut db).await.unwrap();
     drop(db);
     let database = Database::open(path.to_str().unwrap()).await.unwrap();
+    super::compress_legacy_bodies(&database).await.unwrap();
+    // A second run finds the legacy table gone and does nothing.
+    super::compress_legacy_bodies(&database).await.unwrap();
     let result = dashboard_json(&database, &Filter::default()).await;
     assert_eq!(result["summary"]["requests"], 2);
     let logs = logs_json(&database).await;
@@ -216,7 +219,7 @@ async fn migrates_existing_log_filter_options() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(stored.request_body, "old request");
+    assert_eq!(stored.request_body.as_deref(), Some("old request"));
     for field in [
         "virtual_key_id",
         "virtual_key_name",
@@ -280,8 +283,8 @@ async fn retained_filter_options_follow_renames_and_pruning() {
         latency_ms: 1,
         input_tokens: None,
         output_tokens: None,
-        request_body: String::new(),
-        response_body: String::new(),
+        request_body: Some(String::new()),
+        response_body: Some(String::new()),
         virtual_key_id: Some("key".into()),
         virtual_key_name: Some(name.into()),
         credential_id: None,
@@ -332,17 +335,17 @@ async fn retained_filter_options_follow_renames_and_pruning() {
     std::fs::remove_file(path).unwrap();
 }
 
-/// Persist request bodies and prune expired logs.
+/// Bodies expire after the body policy while their log rows stay until the log policy.
 #[tokio::test]
-async fn stores_and_expires_private_request_logs() {
+async fn bodies_expire_before_their_logs() {
     let path = std::env::temp_dir().join(format!("zero-g-log-test-{}.db", uuid::Uuid::new_v4()));
     let database = Database::open(path.to_str().unwrap()).await.unwrap();
-    let entry = |created_at| LogEntry {
+    let entry = |days: i64| LogEntry {
         id: 0,
-        created_at,
+        created_at: now().saturating_sub(days * 86400),
         provider: "codex".into(),
         model: "model".into(),
-        path: "/codex/v1/responses".into(),
+        path: format!("/{days}"),
         status: 200,
         latency_ms: 42,
         input_tokens: Some(10),
@@ -351,30 +354,36 @@ async fn stores_and_expires_private_request_logs() {
         virtual_key_name: None,
         credential_id: None,
         credential_name: None,
-        request_body: "private prompt".into(),
-        response_body: "private response".into(),
+        request_body: Some("private prompt".into()),
+        response_body: Some("private response".into()),
     };
-    fixture(&database, entry(now().saturating_sub(31 * 86400)))
-        .await
-        .unwrap();
-    fixture(&database, entry(now())).await.unwrap();
-    let pending = dashboard::query(&database, &Filter::default())
-        .await
-        .unwrap();
-    assert_eq!(pending.summary.requests, 2);
+    // Default policies: bodies 7 days, logs 90 days.
+    for days in [0, 8, 91] {
+        fixture(&database, entry(days)).await.unwrap();
+    }
     prune_expired(&database).await.unwrap();
     let result = dashboard_json(&database, &Filter::default()).await;
-    assert_eq!(result["summary"]["requests"], 1);
-    assert_eq!(result["summary"]["input_tokens"], 10);
+    assert_eq!(result["summary"]["requests"], 2);
+    assert_eq!(result["summary"]["input_tokens"], 20);
     let logs = logs_json(&database).await;
     assert!(logs["logs"][0].get("request_body").is_none());
-    assert!(logs["logs"][0].get("response_body").is_none());
-    let stored = detail(&database, logs["logs"][0]["id"].as_i64().unwrap())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(stored.request_body, "private prompt");
-    assert_eq!(stored.response_body, "private response");
+    let mut bodies = std::collections::HashMap::new();
+    for log in logs["logs"].as_array().unwrap() {
+        let stored = detail(&database, log["id"].as_i64().unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        bodies.insert(stored.path, (stored.request_body, stored.response_body));
+    }
+    assert_eq!(
+        bodies["/0"],
+        (
+            Some("private prompt".into()),
+            Some("private response".into())
+        )
+    );
+    assert_eq!(bodies["/8"], (None, None));
+    assert!(!bodies.contains_key("/91"));
     drop(database);
     std::fs::remove_file(path).unwrap();
 }

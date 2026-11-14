@@ -112,8 +112,8 @@ pub(in crate::server) async fn capture(
                 virtual_key_name: identity.virtual_key_name,
                 credential_id: identity.credential_id,
                 credential_name: identity.credential_name,
-                request_body,
-                response_body,
+                request_body: Some(request_body),
+                response_body: Some(response_body),
             };
             tokio::spawn(async move {
                 let result = transaction_with_retry!(database, |mut tx| {
@@ -502,8 +502,8 @@ mod tests {
             let id = log.path.trim_start_matches('/');
             if id == "anonymous" {
                 assert!(log.virtual_key_id.is_none());
-                assert_eq!(log.request_body, "");
-                assert_eq!(log.response_body, "");
+                assert_eq!(log.request_body.as_deref(), Some(""));
+                assert_eq!(log.response_body.as_deref(), Some(""));
                 assert!(log.credential_id.is_none());
             } else {
                 assert_eq!(log.virtual_key_id.as_deref(), Some(id));
@@ -654,23 +654,20 @@ mod tests {
         let logs = details;
         let large = logs.iter().find(|log| log.path == "/large").unwrap();
         assert_eq!(large.status, 200);
-        assert!(large.response_body.len() <= RESPONSE_CAPTURE_LIMIT);
-        assert!(
-            large
-                .response_body
-                .starts_with(&"a".repeat(RESPONSE_CAPTURE_LIMIT - 1))
-        );
+        let large_body = large.response_body.as_deref().unwrap();
+        assert!(large_body.len() <= RESPONSE_CAPTURE_LIMIT);
+        assert!(large_body.starts_with(&"a".repeat(RESPONSE_CAPTURE_LIMIT - 1)));
         assert_eq!(large.input_tokens, Some(9));
         assert_eq!(large.output_tokens, Some(4));
         let anonymous = logs.iter().find(|log| log.path == "/anonymous").unwrap();
         assert_eq!(anonymous.status, 499);
-        assert_eq!(anonymous.request_body, "");
-        assert_eq!(anonymous.response_body, "");
+        assert_eq!(anonymous.request_body.as_deref(), Some(""));
+        assert_eq!(anonymous.response_body.as_deref(), Some(""));
         assert_eq!(anonymous.provider, "");
         assert_eq!(anonymous.model, "");
         let error = logs.iter().find(|log| log.path == "/error").unwrap();
         assert_eq!(error.status, 499);
-        assert_eq!(error.response_body, "partial");
+        assert_eq!(error.response_body.as_deref(), Some("partial"));
         assert!(error.input_tokens.is_none());
         assert!(error.output_tokens.is_none());
         drop(app);

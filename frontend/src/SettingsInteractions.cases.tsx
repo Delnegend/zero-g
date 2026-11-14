@@ -32,7 +32,8 @@ test("settings page saves model sync intervals in the new card", async () => {
   await screen.findByText("Settings saved.");
   assert.deepEqual(bodies, [
     {
-      log_retention_days: 30,
+      log_retention_days: 90,
+      body_retention_days: 7,
       pricing_interval_hours: 12,
       discovery_interval_minutes: 30,
     },
@@ -48,13 +49,14 @@ test("settings save log retention without provider OAuth settings", async () => 
   }) as typeof fetch;
   const user = userEvent.setup();
   mount(<SettingsPage />);
-  await screen.findByDisplayValue("30");
+  await screen.findByDisplayValue("90");
   assert.equal(screen.queryByLabelText(/Google OAuth/), null);
   await user.click(screen.getByRole("button", { name: "Save settings" }));
   await screen.findByText("Settings saved.");
   assert.deepEqual(bodies, [
     {
-      log_retention_days: 30,
+      log_retention_days: 90,
+      body_retention_days: 7,
       pricing_interval_hours: 24,
       discovery_interval_minutes: 60,
     },
@@ -75,7 +77,9 @@ test("edits made during a delayed settings save survive the response", async () 
   }) as typeof fetch;
   const user = userEvent.setup();
   mount(<SettingsPage />);
-  const retention = await screen.findByLabelText("Log retention (days)");
+  const retention = await screen.findByLabelText(
+    "Logs, charts and totals (days)",
+  );
   await user.clear(retention);
   await user.type(retention, "35");
   await user.click(screen.getByRole("button", { name: "Save settings" }));

@@ -18,12 +18,24 @@ pub(crate) async fn get_settings(State(store): State<SettingsStore>) -> Response
     /// Loads the global settings.
     async fn load(store: &SettingsStore) -> Result<SettingsResponse, String> {
         transaction_with_retry!(store.database, |mut tx| {
-            let retention = Setting::filter_by_name("log_retention_days")
-                .first()
-                .exec(&mut tx)
-                .await?
-                .and_then(|row| row.value.parse::<u32>().ok())
-                .unwrap_or(30);
+            let days = |row: Option<Setting>, default: i64| {
+                row.and_then(|row| row.value.parse::<u32>().ok())
+                    .unwrap_or_else(|| u32::try_from(default).unwrap_or(u32::MAX))
+            };
+            let retention = days(
+                Setting::filter_by_name("log_retention_days")
+                    .first()
+                    .exec(&mut tx)
+                    .await?,
+                crate::server::observability::LOG_RETENTION_DEFAULT,
+            );
+            let body_retention = days(
+                Setting::filter_by_name("body_retention_days")
+                    .first()
+                    .exec(&mut tx)
+                    .await?,
+                crate::server::observability::BODY_RETENTION_DEFAULT,
+            );
             let pricing_interval = Setting::filter_by_name("pricing_interval_hours")
                 .first()
                 .exec(&mut tx)
@@ -39,6 +51,7 @@ pub(crate) async fn get_settings(State(store): State<SettingsStore>) -> Response
             tx.commit().await?;
             Ok(SettingsResponse {
                 log_retention_days: retention,
+                body_retention_days: body_retention,
                 pricing_interval_hours: pricing_interval,
                 discovery_interval_minutes: discovery_interval,
             })

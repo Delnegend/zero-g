@@ -46,6 +46,7 @@ openidconnect = "4.0.1"
 prost = "0.14.4"
 prost-types = "0.14.4"
 xxhash-rust = { version = "0.8.19", features = ["xxh64"] }
+zstd = "0.14.3"
 
 [build-dependencies]
 base64 = "0.22.1"

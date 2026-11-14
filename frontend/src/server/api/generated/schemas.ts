@@ -1396,8 +1396,18 @@ export const LogEntry = zod
     provider: zod
       .string()
       .describe("Provider extracted from the request path."),
-    request_body: zod.string().describe("Captured request body."),
-    response_body: zod.string().describe("Captured response body."),
+    request_body: zod
+      .string()
+      .nullable()
+      .describe(
+        "Captured request body, or null once body retention has removed it.",
+      ),
+    response_body: zod
+      .string()
+      .nullable()
+      .describe(
+        "Captured response body, or null once body retention has removed it.",
+      ),
     status: zod
       .int()
       .describe("HTTP status, or 499 for an incomplete response stream."),
@@ -1980,6 +1990,8 @@ export const QuotaSnapshot = zod
 export type QuotaSnapshot = zod.input<typeof QuotaSnapshot>;
 export type QuotaSnapshotOutput = zod.output<typeof QuotaSnapshot>;
 
+export const settingsResponseBodyRetentionDaysMax = 36500;
+
 export const settingsResponseDiscoveryIntervalMinutesMin = 0;
 
 export const settingsResponseLogRetentionDaysMin = 0;
@@ -1989,6 +2001,13 @@ export const settingsResponsePricingIntervalHoursMin = 0;
 
 export const SettingsResponse = zod
   .object({
+    body_retention_days: zod
+      .int()
+      .min(1)
+      .max(settingsResponseBodyRetentionDaysMax)
+      .describe(
+        "Number of days to retain captured request and response bodies.",
+      ),
     discovery_interval_minutes: zod
       .int()
       .min(settingsResponseDiscoveryIntervalMinutesMin)
@@ -1999,7 +2018,9 @@ export const SettingsResponse = zod
       .int()
       .min(settingsResponseLogRetentionDaysMin)
       .max(settingsResponseLogRetentionDaysMax)
-      .describe("Number of days to retain logs."),
+      .describe(
+        "Number of days to retain log metadata, charts, and token totals.",
+      ),
     pricing_interval_hours: zod
       .int()
       .min(settingsResponsePricingIntervalHoursMin)
@@ -2051,6 +2072,8 @@ export const UpdateProvider = zod
 export type UpdateProvider = zod.input<typeof UpdateProvider>;
 export type UpdateProviderOutput = zod.output<typeof UpdateProvider>;
 
+export const updateSettingsBodyRetentionDaysMax = 36500;
+
 export const updateSettingsDiscoveryIntervalMinutesMin = 0;
 
 export const updateSettingsLogRetentionDaysMin = 0;
@@ -2060,6 +2083,12 @@ export const updateSettingsPricingIntervalHoursMin = 0;
 
 export const UpdateSettings = zod
   .object({
+    body_retention_days: zod
+      .int()
+      .min(1)
+      .max(updateSettingsBodyRetentionDaysMax)
+      .nullish()
+      .describe("Optional body retention in days."),
     discovery_interval_minutes: zod
       .int()
       .min(updateSettingsDiscoveryIntervalMinutesMin)
@@ -2362,6 +2391,8 @@ export type SaveOpenrouterManagementKeyBodyOutput = zod.output<
   typeof SaveOpenrouterManagementKeyBody
 >;
 
+export const updateSettingsBodyBodyRetentionDaysMax = 36500;
+
 export const updateSettingsBodyDiscoveryIntervalMinutesMin = 0;
 
 export const updateSettingsBodyLogRetentionDaysMin = 0;
@@ -2371,6 +2402,12 @@ export const updateSettingsBodyPricingIntervalHoursMin = 0;
 
 export const UpdateSettingsBody = zod
   .object({
+    body_retention_days: zod
+      .int()
+      .min(1)
+      .max(updateSettingsBodyBodyRetentionDaysMax)
+      .nullish()
+      .describe("Optional body retention in days."),
     discovery_interval_minutes: zod
       .int()
       .min(updateSettingsBodyDiscoveryIntervalMinutesMin)

@@ -2,6 +2,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Request capture middleware.
 mod capture;
+/// One-time compression of legacy plain-text bodies.
+mod compress;
 /// Observability dashboard endpoint.
 mod dashboard;
 /// Filters and filter choices shared by the dashboard and log list.
@@ -12,6 +14,7 @@ mod logs;
 mod retention;
 
 pub(super) use capture::capture;
+pub(crate) use compress::compress_legacy_bodies;
 pub(super) use dashboard::dashboard;
 use dashboard::{
     __path_dashboard, Breakdown, BreakdownEntry, DashboardResponse, Interval, ObservabilityBucket,
@@ -20,7 +23,7 @@ use dashboard::{
 use filter::{FilterOptions, IdentityOption};
 use logs::{__path_log_detail, __path_logs, LogEntry, LogSummary, LogsResponse};
 pub(super) use logs::{log_detail, logs};
-pub(crate) use retention::prune_expired;
+pub(crate) use retention::{BODY_RETENTION_DEFAULT, LOG_RETENTION_DEFAULT, prune_expired};
 
 /// Request observability dashboard operation.
 #[derive(utoipa::OpenApi)]

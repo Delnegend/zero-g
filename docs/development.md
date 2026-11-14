@@ -93,10 +93,14 @@ All queries are built with Toasty, without hand-written SQL.
 
 Request capture writes each completed or interrupted inference log, its
 captured bodies, and its filter snapshots in one transaction. Bodies live in
-`request_log_bodies`, apart from the `request_logs` metadata, so listing,
-filtering, and dashboard scans never read prompt or response text; retention
-prunes both tables by `created_at`. Query tests seed historical records
-directly, while capture tests exercise request and response recording.
+`request_log_payloads`, zstd-compressed at level 3 (about 2.7x smaller on
+agent conversations), apart from the `request_logs` metadata, so listing,
+filtering, and dashboard scans never read prompt or response text. Retention
+prunes bodies after `body_retention_days` (default 7) and log rows after
+`log_retention_days` (default 90). Startup compresses bodies left in the older
+plain-text `request_log_bodies` table in resumable batches, then drops it.
+Query tests seed historical records directly, while capture tests exercise
+request and response recording.
 
 
 The dashboard reads aggregate statistics from `GET /api/dashboard`. The log

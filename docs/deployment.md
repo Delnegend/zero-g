@@ -101,3 +101,17 @@ flowchart TD
 | **Database File** | `/app/data/zero-g.db` (+ any `-wal` / `-shm` sidecars) | Contains credentials, provider definitions, virtual keys, and request telemetry. |
 | **Encryption Key** | `ZERO_G_ENCRYPTION_KEY` | Without this key, existing stored credentials and secrets **cannot be decrypted**. |
 | **Dashboard Password / OIDC Config** | `.env` file | Needed for dashboard administrative access. |
+
+### Reclaiming disk space
+
+Pruned and compressed data leaves free pages that new logs reuse, but the file
+itself does not shrink. Turso does not support `VACUUM`, so shrink it offline
+after a large cleanup, such as the first start of a release that compresses
+stored bodies:
+
+1. `docker compose stop zero-g`
+2. Back up the volume (Upgrade Checklist step 2).
+3. `docker run --rm -v zero-g-data:/data alpine sh -c 'apk add -q sqlite && sqlite3 /data/zero-g.db VACUUM'`
+4. `docker compose start zero-g`
+
+`VACUUM` needs free disk space roughly equal to the database size while it runs.

@@ -302,9 +302,23 @@ pub(super) async fn query(
     })
 }
 
+/// zstd level for stored bodies: about 2.7x smaller on agent conversations at low CPU cost.
+const BODY_COMPRESSION_LEVEL: i32 = 3;
+
+/// Compress a captured body for storage.
+pub(super) fn compress(text: &str) -> std::io::Result<Vec<u8>> {
+    zstd::bulk::compress(text.as_bytes(), BODY_COMPRESSION_LEVEL)
+}
+
+/// Restore a stored body; bytes that are not valid UTF-8 are replaced, as at capture.
+fn decompress(bytes: &[u8]) -> std::io::Result<String> {
+    let text = zstd::stream::decode_all(bytes)?;
+    Ok(String::from_utf8(text).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into()))
+}
+
 /// Retrieve one captured log and its bodies without loading unrelated records.
 pub(super) async fn detail(database: &Database, id: i64) -> Result<Option<LogEntry>, String> {
-    transaction_with_retry!(database, |mut tx| {
+    let found = transaction_with_retry!(database, |mut tx| {
         let Some(record) = RequestLog::filter_by_id(id).first().exec(&mut tx).await? else {
             return Ok(None);
         };
@@ -312,12 +326,16 @@ pub(super) async fn detail(database: &Database, id: i64) -> Result<Option<LogEnt
             .first()
             .exec(&mut tx)
             .await?;
-        Ok(Some(LogEntry::from_parts(record, body)))
+        Ok(Some((record, body)))
     })
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    found
+        .map(|(record, body)| LogEntry::from_parts(record, body))
+        .transpose()
+        .map_err(|e| format!("Stored body is corrupt: {e}"))
 }
 
-/// Store a captured log, its bodies, and its filter snapshots atomically.
+/// Store a captured log, its compressed bodies, and its filter snapshots atomically.
 pub(super) async fn insert(tx: &mut toasty::Transaction<'_>, log: &LogEntry) -> toasty::Result<()> {
     let record = toasty::create!(RequestLog {
         created_at: log.created_at,
@@ -335,11 +353,15 @@ pub(super) async fn insert(tx: &mut toasty::Transaction<'_>, log: &LogEntry) -> 
     })
     .exec(tx)
     .await?;
+    let body = |text: &Option<String>| {
+        compress(text.as_deref().unwrap_or_default())
+            .map_err(|e| toasty::Error::from_args(format_args!("Could not compress body: {e}")))
+    };
     toasty::create!(RequestLogBody {
         log_id: record.id,
         created_at: log.created_at,
-        request_body: log.request_body.clone(),
-        response_body: log.response_body.clone(),
+        request_body: body(&log.request_body)?,
+        response_body: body(&log.response_body)?,
     })
     .exec(tx)
     .await?;
@@ -460,10 +482,12 @@ pub(super) struct LogEntry {
     /// Reported output token count, when available.
     #[schema(required = true)]
     pub(super) output_tokens: Option<i64>,
-    /// Captured request body.
-    pub(super) request_body: String,
-    /// Captured response body.
-    pub(super) response_body: String,
+    /// Captured request body, or null once body retention has removed it.
+    #[schema(required = true)]
+    pub(super) request_body: Option<String>,
+    /// Captured response body, or null once body retention has removed it.
+    #[schema(required = true)]
+    pub(super) response_body: Option<String>,
     /// Authenticated virtual key ID and name snapshot, if known.
     #[schema(required = true)]
     pub(super) virtual_key_id: Option<String>,
@@ -479,11 +503,16 @@ pub(super) struct LogEntry {
 }
 
 impl LogEntry {
-    /// Combine log metadata with its separately stored bodies, which are empty when absent.
-    fn from_parts(r: RequestLog, body: Option<RequestLogBody>) -> Self {
-        let (request_body, response_body) =
-            body.map_or_else(Default::default, |b| (b.request_body, b.response_body));
-        Self {
+    /// Combine log metadata with its separately stored bodies, which are null when expired.
+    fn from_parts(r: RequestLog, body: Option<RequestLogBody>) -> std::io::Result<Self> {
+        let (request_body, response_body) = match body {
+            Some(b) => (
+                Some(decompress(&b.request_body)?),
+                Some(decompress(&b.response_body)?),
+            ),
+            None => (None, None),
+        };
+        Ok(Self {
             id: r.id,
             created_at: r.created_at,
             provider: r.provider,
@@ -499,7 +528,7 @@ impl LogEntry {
             virtual_key_name: r.virtual_key_name,
             credential_id: r.credential_id,
             credential_name: r.credential_name,
-        }
+        })
     }
 }
 
@@ -594,8 +623,8 @@ mod tests {
                 virtual_key_name: Some("Historical key".into()),
                 credential_id: Some("cred-a".into()),
                 credential_name: Some("Historical credential".into()),
-                request_body: "identity match".into(),
-                response_body: String::new(),
+                request_body: Some("identity match".into()),
+                response_body: Some(String::new()),
             },
         )
         .await
@@ -831,8 +860,8 @@ mod tests {
             latency_ms: 1,
             input_tokens: None,
             output_tokens: None,
-            request_body: "request".into(),
-            response_body: "response".into(),
+            request_body: Some("request".into()),
+            response_body: Some("response".into()),
             virtual_key_id: None,
             virtual_key_name: None,
             credential_id: None,
