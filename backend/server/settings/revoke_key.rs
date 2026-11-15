@@ -15,7 +15,7 @@ pub(in crate::server) async fn revoke_key(
     Path(id): Path<String>,
 ) -> Response {
     let result = transaction_with_retry!(store.database, |mut tx| {
-        let Some(row) = VirtualKey::filter_by_id(id.as_str())
+        let Some(mut row) = VirtualKey::filter_by_id(id.as_str())
             .first()
             .exec(&mut tx)
             .await?
@@ -25,16 +25,11 @@ pub(in crate::server) async fn revoke_key(
         if row.revoked_at.is_some() {
             return Ok(false);
         }
-        VirtualKey::upsert_by_id(row.id.as_str())
-            .name(row.name)
-            .key_hash(row.key_hash)
-            .providers(row.providers)
-            .models(row.models)
-            .created_at(row.created_at)
-            .expires_at(row.expires_at)
-            .revoked_at(Some(super::unix_now()))
-            .exec(&mut tx)
-            .await?;
+        toasty::update!(row {
+            revoked_at: Some(super::unix_now())
+        })
+        .exec(&mut tx)
+        .await?;
         tx.commit().await?;
         Ok(true)
     });
@@ -55,7 +50,7 @@ pub(in crate::server) async fn unrevoke_key(
     Path(id): Path<String>,
 ) -> Response {
     let result = transaction_with_retry!(store.database, |mut tx| {
-        let Some(row) = VirtualKey::filter_by_id(id.as_str())
+        let Some(mut row) = VirtualKey::filter_by_id(id.as_str())
             .first()
             .exec(&mut tx)
             .await?
@@ -65,14 +60,7 @@ pub(in crate::server) async fn unrevoke_key(
         if row.revoked_at.is_none() {
             return Ok(false);
         }
-        VirtualKey::upsert_by_id(row.id.as_str())
-            .name(row.name)
-            .key_hash(row.key_hash)
-            .providers(row.providers)
-            .models(row.models)
-            .created_at(row.created_at)
-            .expires_at(row.expires_at)
-            .revoked_at(None)
+        toasty::update!(row { revoked_at: None })
             .exec(&mut tx)
             .await?;
         tx.commit().await?;
