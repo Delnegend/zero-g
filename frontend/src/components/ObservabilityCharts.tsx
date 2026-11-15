@@ -141,7 +141,6 @@ function GraphPanel({
   domain,
   comparison,
   comparisons,
-  summary,
   timeSeries,
   timeRange,
   stacked = false,
@@ -156,7 +155,6 @@ function GraphPanel({
   domain: string[];
   comparison?: Comparison;
   comparisons?: { title: string; value: Comparison }[];
-  summary: string;
   /** Bucket size when the x axis is time; bars then span their whole bucket. */
   timeSeries?: Interval;
   timeRange?: readonly [number, number];
@@ -344,10 +342,7 @@ function GraphPanel({
   return (
     <Card className="flex min-w-0 flex-col gap-0 p-3 shadow-none sm:p-5">
       <div className="flex min-h-8 min-w-0 items-start justify-between gap-2">
-        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
-          <h2 className="text-sm font-medium">{title}</h2>
-          <span className="text-xs text-muted-foreground">{summary}</span>
-        </div>
+        <h2 className="shrink-0 text-sm font-medium">{title}</h2>
         {comparison && <GraphTrend title={title} comparison={comparison} />}
         {comparisons && (
           <div className="flex flex-wrap justify-end">
@@ -496,17 +491,6 @@ export function ObservabilityCharts({
   const volumeRows = (p: (typeof periods)[number]) =>
     `${number.format(p.requests)} requests; ${number.format(p.successes)} successful, ${number.format(p.errors)} errors`;
   const requests = periods.reduce((sum, p) => sum + p.requests, 0);
-  const tokenTotal = (field: "input_tokens" | "output_tokens") => {
-    const reported = periods
-      .map((p) => p[field])
-      .filter((value): value is number => value !== null);
-    return reported.length
-      ? number.format(reported.reduce((sum, value) => sum + value, 0))
-      : "not reported";
-  };
-  const latency = requests
-    ? `${number.format(periods.reduce((sum, p) => sum + p.avg_latency_ms * p.requests, 0) / requests)} ms avg`
-    : "No requests";
   const models = [...breakdown.models].sort((a, b) => b.requests - a.requests);
   const topModels = models.slice(0, 4);
   const otherModels = models.slice(4).map((model) => model.name);
@@ -601,12 +585,73 @@ export function ObservabilityCharts({
   return (
     <div className="grid min-w-0 grid-cols-1 gap-3 @min-[768px]:grid-cols-2">
       <GraphPanel
+        title="Token usage by type"
+        timeSeries={interval}
+        showLegend={false}
+        timeRange={timeRange}
+        stacked
+        domain={domain}
+        comparisons={(
+          [
+            ["Input", "input_tokens"],
+            ["Output", "output_tokens"],
+          ] as const
+        ).map(([name, field]) => ({
+          title: `${name} tokens`,
+          value: compare(
+            totalTokens(periods, field),
+            previousData ? totalTokens(previousData.buckets, field) : null,
+            "tokens",
+          ),
+        }))}
+        description={`${dateDescription} Input and output tokens are stacked. Unreported counts are omitted, not zero.`}
+        unit="Tokens"
+        emptyMessage={
+          periods.length
+            ? "Token counts were not reported."
+            : "No requests to chart."
+        }
+        series={(
+          [
+            ["Input", "input_tokens", "#38bdf8"],
+            ["Output", "output_tokens", "#f97316"],
+          ] as const
+        ).map(([name, field, color]) => ({
+          name,
+          color,
+          points: periods.flatMap((p) =>
+            p[field] === null
+              ? []
+              : [{ label: p.label, start: p.start, value: p[field] }],
+          ),
+        }))}
+        alternative={periodRows(
+          (p) =>
+            `Input: ${p.input_tokens === null ? "not reported" : `${number.format(p.input_tokens)} tokens`}; output: ${p.output_tokens === null ? "not reported" : `${number.format(p.output_tokens)} tokens`}`,
+        )}
+      />
+      <GraphPanel
+        title="Token usage by provider"
+        timeSeries={interval}
+        timeRange={timeRange}
+        stacked
+        domain={domain}
+        description={`${dateDescription} Reported input and output tokens combined by provider. Missing counts are not zero.`}
+        unit="Tokens"
+        series={providerSeries(true)}
+        alternative={providerRows(true)}
+        emptyMessage={
+          periods.length
+            ? "Token counts were not reported."
+            : "No requests to chart."
+        }
+      />
+      <GraphPanel
         title="Request volume"
         timeSeries={interval}
         showLegend={false}
         timeRange={timeRange}
         stacked
-        summary={`${number.format(requests)} requests`}
         domain={domain}
         comparison={compare(requests, previousRequests, "requests")}
         description={`${dateDescription} Success: HTTP 200–399; error: HTTP 400 and above.`}
@@ -638,7 +683,6 @@ export function ObservabilityCharts({
         timeSeries={interval}
         showLegend={false}
         timeRange={timeRange}
-        summary={latency}
         domain={domain}
         comparison={compare(
           averageLatency(periods),
@@ -661,58 +705,10 @@ export function ObservabilityCharts({
         alternative={periodRows((p) => `${p.avg_latency_ms} ms`)}
       />
       <GraphPanel
-        title="Token usage"
-        timeSeries={interval}
-        showLegend={false}
-        timeRange={timeRange}
-        stacked
-        summary={`Input: ${tokenTotal("input_tokens")}; output: ${tokenTotal("output_tokens")} tokens`}
-        domain={domain}
-        comparisons={(
-          [
-            ["Input", "input_tokens"],
-            ["Output", "output_tokens"],
-          ] as const
-        ).map(([name, field]) => ({
-          title: `${name} tokens`,
-          value: compare(
-            totalTokens(periods, field),
-            previousData ? totalTokens(previousData.buckets, field) : null,
-            "tokens",
-          ),
-        }))}
-        description={`${dateDescription} Input and output tokens are stacked. Unreported counts are omitted, not zero.`}
-        unit="Tokens"
-        emptyMessage={
-          periods.length
-            ? "Token counts were not reported."
-            : "No requests to chart."
-        }
-        series={(
-          [
-            ["Input", "input_tokens", "#3b82f6"],
-            ["Output", "output_tokens", "#a855f7"],
-          ] as const
-        ).map(([name, field, color]) => ({
-          name,
-          color,
-          points: periods.flatMap((p) =>
-            p[field] === null
-              ? []
-              : [{ label: p.label, start: p.start, value: p[field] }],
-          ),
-        }))}
-        alternative={periodRows(
-          (p) =>
-            `Input: ${p.input_tokens === null ? "not reported" : `${number.format(p.input_tokens)} tokens`}; output: ${p.output_tokens === null ? "not reported" : `${number.format(p.output_tokens)} tokens`}`,
-        )}
-      />
-      <GraphPanel
         title="Model usage"
         timeSeries={interval}
         timeRange={timeRange}
         stacked
-        summary={`${number.format(requests)} requests`}
         domain={domain}
         description={`Recorded requests grouped by UTC ${interval}. Models beyond the four most used are combined as other models.`}
         unit="Requests"
@@ -732,30 +728,12 @@ export function ObservabilityCharts({
         timeSeries={interval}
         timeRange={timeRange}
         stacked
-        summary={`${number.format(requests)} requests`}
         domain={domain}
         comparison={requestComparison}
         description={`${dateDescription} Requests grouped by provider; providers beyond the four most used are combined.`}
         unit="Requests"
         series={providerSeries(false)}
         alternative={providerRows(false)}
-      />
-      <GraphPanel
-        title="Token usage by provider"
-        timeSeries={interval}
-        timeRange={timeRange}
-        stacked
-        summary={`Input: ${tokenTotal("input_tokens")}; output: ${tokenTotal("output_tokens")} tokens`}
-        domain={domain}
-        description={`${dateDescription} Reported input and output tokens combined by provider. Missing counts are not zero.`}
-        unit="Tokens"
-        series={providerSeries(true)}
-        alternative={providerRows(true)}
-        emptyMessage={
-          periods.length
-            ? "Token counts were not reported."
-            : "No requests to chart."
-        }
       />
     </div>
   );

@@ -88,7 +88,7 @@ test("summary charts hide legends while provider and model legends remain", () =
       (item) => item.textContent === title,
     );
     assert.ok(heading);
-    return heading.parentElement!.parentElement!.parentElement!;
+    return heading.parentElement!.parentElement!;
   };
   assert.equal(
     panel("Request volume").querySelector('[title="Success"]'),
@@ -98,7 +98,10 @@ test("summary charts hide legends while provider and model legends remain", () =
     panel("Average latency").querySelector('[title="Latency"]'),
     null,
   );
-  assert.equal(panel("Token usage").querySelector('[title="Input"]'), null);
+  assert.equal(
+    panel("Token usage by type").querySelector('[title="Input"]'),
+    null,
+  );
   assert.ok(panel("Model usage").querySelector('[title="model"]'));
   assert.ok(panel("Requests by provider").querySelector('[title="provider"]'));
 });
@@ -123,8 +126,7 @@ test("token usage combines input and output while preserving totals, trends and 
   const document = parseDocument(html);
   const charts = [...document.querySelectorAll(".request-chart")];
   assert.equal(charts.length, 6);
-  const panel = charts[2].parentElement!;
-  assert.match(panel.textContent ?? "", /Input: 4; output: 6 tokens/);
+  const panel = charts[0].parentElement!;
   const trends = [...panel.querySelectorAll("button")].map(
     (button) => button.getAttribute("aria-label") ?? "",
   );
@@ -139,11 +141,12 @@ test("token usage combines input and output while preserving totals, trends and 
     ),
   );
   assert.match(
-    panel.querySelector('[aria-label="Token usage data"]')?.textContent ?? "",
+    panel.querySelector('[aria-label="Token usage by type data"]')
+      ?.textContent ?? "",
     /Input: 4 tokens; output: 0 tokens.*Input: not reported; output: 6 tokens/,
   );
-  assert.equal(charts[2].querySelectorAll("rect[fill]").length, 3);
-  assert.equal(charts[2].querySelectorAll("g.ts-chart__line").length, 0);
+  assert.equal(charts[0].querySelectorAll("rect[fill]").length, 3);
+  assert.equal(charts[0].querySelectorAll("g.ts-chart__line").length, 0);
 });
 
 test("unavailable and zero-baseline comparisons are distinguished", () => {
@@ -185,7 +188,7 @@ test("sparse and single-bucket charts retain the selected time range", () => {
         comparison={{ ...comparison, currentSince: 0, currentUntil: 36000 }}
       />,
     );
-    return parseDocument(html).querySelector(".request-chart")!;
+    return parseDocument(html).querySelectorAll(".request-chart")[2]!;
   };
   const two = [...render([3600, 7200]).querySelectorAll("rect[fill]")];
   const first = Number(two[0].getAttribute("x"));
@@ -220,7 +223,7 @@ test("seven-day current points render their matching bars cleanly", () => {
     />,
   );
   const document = parseDocument(html);
-  const chart = document.querySelector(".request-chart");
+  const chart = document.querySelectorAll(".request-chart")[2];
   assert.ok(chart);
   const bars = [...chart.querySelectorAll("rect[fill]")];
   assert.equal(bars.length, 6);
@@ -254,7 +257,7 @@ test("charts render bar series for current period without dashed line series", (
     />,
   );
   const document = parseDocument(html);
-  const chart = document.querySelector(".request-chart");
+  const chart = document.querySelectorAll(".request-chart")[2];
   assert.ok(chart);
   const lines = chart.querySelectorAll("g.ts-chart__line");
   assert.equal(lines.length, 0);
@@ -299,7 +302,7 @@ test("model usage stacks only current models without previous period content", (
   const document = parseDocument(html);
   const panels = [...document.querySelectorAll(".request-chart")];
   assert.equal(panels.length, 6);
-  const chart = panels[3];
+  const chart = panels[4];
   assert.ok(chart);
   const bars = [...chart.querySelectorAll("rect[fill]")];
   assert.equal(bars.length, 2);
