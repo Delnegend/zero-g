@@ -40,10 +40,6 @@ impl super::common::Provider for Backend {
         fixed_name: Some("Cursor"),
         keyless: false,
         default_base_url: None,
-        legacy: super::common::LegacyPolicy {
-            key: None,
-            same_base: false,
-        },
     };
 
     fn router(

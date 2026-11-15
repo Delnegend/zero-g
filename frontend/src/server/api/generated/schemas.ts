@@ -1799,7 +1799,7 @@ export const ProviderDescriptor = zod
     oauth: zod.boolean().describe("Whether OAuth credentials are supported."),
     value: zod.string().describe("Stable provider kind identifier."),
   })
-  .describe("Provider identity, authentication options, and migration policy.");
+  .describe("Provider identity and authentication options.");
 
 export type ProviderDescriptor = zod.input<typeof ProviderDescriptor>;
 export type ProviderDescriptorOutput = zod.output<typeof ProviderDescriptor>;
@@ -1832,9 +1832,7 @@ export const ProviderKindsResponse = zod
               .describe("Whether OAuth credentials are supported."),
             value: zod.string().describe("Stable provider kind identifier."),
           })
-          .describe(
-            "Provider identity, authentication options, and migration policy.",
-          ),
+          .describe("Provider identity and authentication options."),
       )
       .describe("Available kinds."),
   })

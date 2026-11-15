@@ -137,10 +137,6 @@ impl super::common::Provider for Backend {
         fixed_name: Some("Google Antigravity"),
         keyless: false,
         default_base_url: None,
-        legacy: super::common::LegacyPolicy {
-            key: None,
-            same_base: false,
-        },
     };
     fn router(
         settings: &crate::server::settings::SettingsStore,

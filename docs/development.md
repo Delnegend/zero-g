@@ -89,8 +89,7 @@ Dashboard totals and charts cover the entire selected range, not just a page.
 Both endpoints share one filter (`backend/server/observability/filter.rs`):
 time range, dimensions, statuses, and the filter choices offered for a range.
 `dashboard.rs` owns aggregation and `logs.rs` owns paging, search, and details.
-Queries are built with Toasty. The only hand-written SQL is the one-time legacy
-body conversion in `compress.rs`, whose table has no model.
+Queries are built with Toasty; there is no hand-written SQL.
 
 Request capture writes each completed or interrupted inference log, its
 captured bodies, and its filter snapshots in one transaction. Bodies live in
@@ -98,8 +97,7 @@ captured bodies, and its filter snapshots in one transaction. Bodies live in
 agent conversations), apart from the `request_logs` metadata, so listing,
 filtering, and dashboard scans never read prompt or response text. Retention
 prunes bodies after `body_retention_days` (default 7) and log rows after
-`log_retention_days` (default 90). Startup compresses bodies left in the older
-plain-text `request_log_bodies` table in resumable batches, then drops it.
+`log_retention_days` (default 90).
 Query tests seed historical records directly, while capture tests exercise
 request and response recording.
 

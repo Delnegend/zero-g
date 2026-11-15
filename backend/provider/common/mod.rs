@@ -61,7 +61,7 @@ pub(crate) trait DashboardProvider {
     fn dashboard_router(state: AppState) -> Router;
 }
 
-/// Provider identity, authentication options, and migration policy.
+/// Provider identity and authentication options.
 #[derive(Clone, Copy, serde::Serialize, utoipa::ToSchema)]
 pub(crate) struct ProviderDescriptor {
     /// Stable provider kind identifier.
@@ -85,16 +85,4 @@ pub(crate) struct ProviderDescriptor {
     /// Default upstream base URL, if supplied by the backend.
     #[serde(skip)]
     pub(crate) default_base_url: Option<&'static str>,
-    /// Rules for matching legacy configuration.
-    #[serde(skip)]
-    pub(crate) legacy: LegacyPolicy,
-}
-
-/// Rules for associating legacy settings with a provider.
-#[derive(Clone, Copy)]
-pub(crate) struct LegacyPolicy {
-    /// Legacy settings key, if one exists.
-    pub(crate) key: Option<&'static str>,
-    /// Whether matching requires the same base URL.
-    pub(crate) same_base: bool,
 }

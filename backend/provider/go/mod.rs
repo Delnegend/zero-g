@@ -178,10 +178,6 @@ impl super::common::Provider for Backend {
         fixed_name: Some("OpenCode Go"),
         keyless: false,
         default_base_url: Some(DEFAULT_BASE),
-        legacy: super::common::LegacyPolicy {
-            key: None,
-            same_base: false,
-        },
     };
     fn router(settings: &SettingsStore) -> Router<AppState> {
         router(settings)

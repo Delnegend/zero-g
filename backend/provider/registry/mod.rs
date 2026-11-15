@@ -13,7 +13,7 @@ use crate::{
     database::{Database, transaction_with_retry},
     provider::{PROVIDER_KINDS, common::ProviderDescriptor, credentials},
     server::settings::SettingsStore,
-    storage::{ProviderCredential, ProviderRecord, Secret, Setting, VirtualKey},
+    storage::{ProviderCredential, ProviderRecord, Secret, VirtualKey},
 };
 
 /// Active configured provider instance exposed by the registry.
@@ -453,71 +453,6 @@ async fn delete_provider(State(store): State<SettingsStore>, Path(id): Path<Stri
         Ok(_) => (StatusCode::NOT_FOUND, "Provider not found").into_response(),
         Err(e) => internal_error(&e.to_string()),
     }
-}
-
-/// Cut over built-in identities atomically, refusing occupied IDs and stale grants.
-pub(crate) async fn migrate_fixed_identities(store: &SettingsStore) -> Result<(), String> {
-    const MARKER: &str = "provider_fixed_identities_v1";
-    transaction_with_retry!(store.database, |mut tx| {
-        if Setting::filter_by_name(MARKER).first().exec(&mut tx).await?.is_some() {
-            return Ok(Ok(()));
-        }
-        let rows = ProviderRecord::all().exec(&mut tx).await?;
-        let mut remap = std::collections::HashMap::new();
-        for row in rows.iter().filter(|row| !row.deleted) {
-            let Some(target) = PROVIDER_KINDS.iter().find(|kind| kind.value == row.kind).and_then(|kind| kind.fixed_id) else { continue };
-            if rows.iter().any(|other| other.id == target && other.id != row.id) {
-                return Ok(Err(format!("Cannot migrate provider '{}' to '{target}': ID is occupied, including by deleted providers. Resolve the identity conflict before upgrading.", row.id)));
-            }
-            if rows.iter().any(|other| !other.deleted && other.kind == row.kind && other.id != row.id) {
-                return Ok(Err(format!("Cannot migrate multiple '{}' providers; reconcile them before upgrading.", row.kind)));
-            }
-            if row.id != target {
-                remap.insert(row.id.clone(), target.to_string());
-            }
-        }
-        let keys = VirtualKey::all().exec(&mut tx).await?;
-        for key in keys {
-            let mut permissions: Vec<String> = match serde_json::from_str(&key.providers) {
-                Ok(value) => value,
-                Err(e) => return Ok(Err(format!("Cannot migrate virtual key '{}' provider restrictions: {e}", key.id))),
-            };
-            for (old, target) in &remap {
-                if permissions.contains(target) && !permissions.contains(old) {
-                    return Ok(Err(format!("Virtual key '{}' ({}) already references destination provider '{}'; revoke or correct this key before migration.", key.name, key.id, target)));
-                }
-            }
-            for permission in &mut permissions {
-                if let Some(target) = remap.get(permission) { *permission = target.clone(); }
-            }
-            permissions.sort();
-            permissions.dedup();
-            let permissions = match serde_json::to_string(&permissions) {
-                Ok(value) => value,
-                Err(e) => return Ok(Err(e.to_string())),
-            };
-            toasty::update!(VirtualKey::filter_by_id(key.id.as_str()) { providers: permissions }).exec(&mut tx).await?;
-        }
-        for credential in ProviderCredential::all().exec(&mut tx).await? {
-            if let Some(target) = remap.get(&credential.provider_id) {
-                toasty::update!(ProviderCredential::filter_by_id(credential.id.as_str()) { provider_id: target.clone() }).exec(&mut tx).await?;
-            }
-        }
-        for row in rows.iter().filter(|row| !row.deleted) {
-            let Some((target, name)) = PROVIDER_KINDS.iter().find(|kind| kind.value == row.kind).and_then(|kind| kind.fixed_id.zip(kind.fixed_name)) else { continue };
-            let keyless = target == "chatjimmy";
-            ProviderRecord::upsert_by_id(target).name(name.to_string()).kind(row.kind.clone()).base_url(row.base_url.clone()).keyless(keyless).deleted(false).exec(&mut tx).await?;
-            if row.id != target {
-                toasty::update!(ProviderRecord::filter_by_id(row.id.as_str()) { name: String::new(), base_url: String::new(), keyless: false, deleted: true }).exec(&mut tx).await?;
-            }
-        }
-        if !remap.is_empty() {
-            Setting::delete_by_name(&mut tx, "model_catalog").await?;
-        }
-        Setting::upsert_by_name(MARKER).value("1".to_string()).exec(&mut tx).await?;
-        tx.commit().await?;
-        Ok(Ok(()))
-    }).map_err(|e| e.to_string())?
 }
 
 /// Builds provider registry management routes.

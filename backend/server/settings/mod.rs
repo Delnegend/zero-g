@@ -227,7 +227,7 @@ struct CreatedKey {
 pub(crate) struct Api;
 
 impl SettingsStore {
-    /// Initializes the store, validates its encryption key, and migrates legacy data.
+    /// Initializes the store and validates its encryption key.
     pub(crate) async fn new(database: Database, encryption_key: &str) -> Result<Self, String> {
         let encryption_key = EncryptionKey::parse(encryption_key)?;
         let store = Self {
@@ -262,8 +262,6 @@ impl SettingsStore {
             Ok(Ok(()))
         })
         .map_err(|e| e.to_string())??;
-        crate::provider::credentials::migrate_legacy(&store).await?;
-        crate::provider::registry::migrate_fixed_identities(&store).await?;
         Ok(store)
     }
 

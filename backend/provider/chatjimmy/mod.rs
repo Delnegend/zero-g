@@ -6,7 +6,7 @@ use std::sync::LazyLock;
 use std::time::Duration;
 
 use crate::openai::Model;
-use crate::provider::common::{LegacyPolicy, Provider, ProviderDescriptor};
+use crate::provider::common::{Provider, ProviderDescriptor};
 use crate::provider::registry;
 use crate::server::{AppState, settings::SettingsStore};
 
@@ -58,10 +58,6 @@ impl Provider for Backend {
         fixed_name: Some("ChatJimmy"),
         keyless: true,
         default_base_url: Some(DEFAULT_BASE),
-        legacy: LegacyPolicy {
-            key: None,
-            same_base: false,
-        },
     };
 
     fn router(settings: &SettingsStore) -> Router<AppState> {

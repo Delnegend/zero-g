@@ -343,10 +343,6 @@ impl common::Provider for GoBackend {
         fixed_name: Some("Command Code Go"),
         keyless: false,
         default_base_url: Some(API_ROOT),
-        legacy: common::LegacyPolicy {
-            key: None,
-            same_base: false,
-        },
     };
 
     fn router(settings: &SettingsStore) -> Router<AppState> {

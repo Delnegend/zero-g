@@ -9,7 +9,7 @@ mod routes;
 use crate::{
     openai::Model,
     provider::{
-        common::{DashboardProvider, LegacyPolicy, Provider, ProviderDescriptor},
+        common::{DashboardProvider, Provider, ProviderDescriptor},
         registry,
     },
     server::{AppState, settings::SettingsStore},
@@ -31,10 +31,6 @@ impl Provider for Backend {
         fixed_name: Some("Grok"),
         keyless: false,
         default_base_url: Some("https://api.x.ai/v1"),
-        legacy: LegacyPolicy {
-            key: None,
-            same_base: false,
-        },
     };
     fn router(settings: &SettingsStore) -> Router<AppState> {
         routes::router(settings, "grok")
@@ -56,10 +52,6 @@ impl Provider for BuildBackend {
         fixed_name: Some("Grok Build"),
         keyless: false,
         default_base_url: Some("https://cli-chat-proxy.grok.com/v1"),
-        legacy: LegacyPolicy {
-            key: None,
-            same_base: false,
-        },
     };
     fn router(settings: &SettingsStore) -> Router<AppState> {
         routes::router(settings, "grok-build")

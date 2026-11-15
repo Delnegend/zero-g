@@ -12,7 +12,7 @@ use crate::{
     database::transaction_with_retry,
     provider::registry,
     server::settings::SettingsStore,
-    storage::{ProviderCredential, ProviderRecord, Secret, Setting, VirtualKey},
+    storage::{ProviderCredential, ProviderRecord, Secret},
 };
 
 /// Credential metadata exposed without the underlying secret.
@@ -585,120 +585,6 @@ pub(crate) fn router(store: SettingsStore) -> Router {
         .merge(crate::provider::quota::router(store))
 }
 
-/// Migrate encrypted legacy credentials after the encryption key has been verified.
-/// All provider, permission and credential changes commit together; old secrets are
-/// removed only after their replacement is encrypted in that same transaction.
-#[allow(clippy::too_many_lines)]
-pub(crate) async fn migrate_legacy(store: &SettingsStore) -> Result<(), String> {
-    const MARKER: &str = "credential_pool_migrated_v1";
-    if store.setting_get(MARKER).await?.is_some() {
-        return Ok(());
-    }
-    let mut providers = registry::list(&store.database).await?;
-    providers.sort_by(|a, b| a.id.cmp(&b.id));
-    let mut canonical = std::collections::HashMap::<String, String>::new();
-    let mut remap = std::collections::HashMap::<String, String>::new();
-    let mut groups = std::collections::HashMap::<String, Vec<String>>::new();
-    let mut entries = Vec::new();
-    let mut singleton_urls = std::collections::HashMap::new();
-    for provider in &providers {
-        let kind = crate::provider::ProviderKind::from_str(&provider.kind)
-            .ok_or_else(|| format!("Unsupported provider kind: {}", provider.kind))?;
-        let descriptor = kind.descriptor();
-        let name = descriptor
-            .label
-            .or(descriptor.fixed_name)
-            .unwrap_or(descriptor.value);
-        if descriptor.legacy.same_base {
-            let url = reqwest::Url::parse(provider.base_url.trim_end_matches('/'))
-                .map_err(|e| format!("Invalid existing {name} provider URL: {e}"))?;
-            if singleton_urls
-                .get(&provider.kind)
-                .is_some_and(|existing| existing != &url)
-            {
-                return Err(format!(
-                    "Existing {name} providers use different base URLs. Reconcile them before upgrading; no credentials have been changed."
-                ));
-            }
-            singleton_urls.insert(provider.kind.clone(), url);
-        }
-        let group = if descriptor.fixed_id.is_none() {
-            let url = reqwest::Url::parse(provider.base_url.trim_end_matches('/'))
-                .map_err(|e| format!("Invalid existing provider URL: {e}"))?;
-            format!("{}:{url}", provider.kind)
-        } else {
-            provider.kind.clone()
-        };
-        let target = canonical
-            .entry(group)
-            .or_insert_with(|| provider.id.clone())
-            .clone();
-        groups
-            .entry(target.clone())
-            .or_default()
-            .push(provider.id.clone());
-        remap.insert(provider.id.clone(), target.clone());
-        let id = uuid::Uuid::new_v4().to_string();
-        let suffix = if kind.oauth() {
-            "credential"
-        } else {
-            "api_key"
-        };
-        let old_name = format!("provider.{}.{suffix}", provider.id);
-        let value = store.secret_get(&old_name).await?;
-        let value = value.or_else(|| descriptor.legacy.key.map(str::to_owned));
-        let new_name = if kind.oauth() {
-            SecretKind::OAuth
-        } else {
-            SecretKind::ApiKey
-        }
-        .name(&id);
-        let encrypted = value
-            .as_deref()
-            .map(|value| store.encrypt(&new_name, value))
-            .transpose()?;
-        entries.push((provider.clone(), target, id, old_name, new_name, encrypted));
-    }
-    transaction_with_retry!(store.database, |mut tx| {
-        if Setting::filter_by_name(MARKER).first().exec(&mut tx).await?.is_some() { return Ok(Ok(())); }
-        let keys = VirtualKey::all().exec(&mut tx).await?;
-        for key in keys {
-            let mut permissions: Vec<String> = match serde_json::from_str(&key.providers) {
-                Ok(value) => value, Err(e) => return Ok(Err(format!("Cannot migrate virtual key provider restrictions: {e}"))),
-            };
-            if !permissions.is_empty() {
-                for ids in groups.values().filter(|ids| ids.len() > 1) {
-                    let allowed = ids.iter().filter(|id| permissions.contains(id)).count();
-                    if allowed > 0 && allowed < ids.len() {
-                        return Ok(Err(format!(
-                            "Virtual key '{}' ({}) restricts only some providers being merged ({}). Remove or recreate this key with access to all or none of those providers before migration.",
-                            key.name, key.id, ids.join(", ")
-                        )));
-                    }
-                }
-            }
-            for provider in &mut permissions { if let Some(id) = remap.get(provider) { *provider = id.clone(); } }
-            permissions.sort(); permissions.dedup();
-            let permissions = match serde_json::to_string(&permissions) { Ok(value) => value, Err(e) => return Ok(Err(e.to_string())) };
-            toasty::update!(VirtualKey::filter_by_id(key.id.as_str()) { providers: permissions }).exec(&mut tx).await?;
-        }
-        for (provider, target, id, old_name, new_name, encrypted) in &entries {
-            toasty::create!(ProviderCredential { id: id.clone(), provider_id: target.clone(), name: provider.name.clone(), weight: 1, enabled: true }).exec(&mut tx).await?;
-            if let Some(value) = encrypted { Secret::upsert_by_name(new_name.as_str()).value(value.clone()).exec(&mut tx).await?; }
-            Secret::delete_by_name(&mut tx, old_name.as_str()).await?;
-            if provider.id != *target {
-                toasty::update!(ProviderRecord::filter_by_id(provider.id.as_str()) { name: String::new(), base_url: String::new(), keyless: false, deleted: true }).exec(&mut tx).await?;
-            }
-        }
-        Setting::upsert_by_name(MARKER).value("1".to_string()).exec(&mut tx).await?;
-        tx.commit().await?;
-        Ok(Ok(()))
-    }).map_err(|e| e.to_string())?
-}
-
-/// Checks for incompatible legacy provider configurations.
-#[cfg(test)]
-mod incompatible_legacy_tests;
-/// Legacy credential migration checks.
+/// Credential storage checks.
 #[cfg(test)]
 mod tests;

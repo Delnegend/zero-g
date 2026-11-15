@@ -215,10 +215,6 @@ impl super::common::Provider for Backend {
         fixed_name: Some("OpenCode Zen"),
         keyless: true,
         default_base_url: Some(routes::BASE_URL),
-        legacy: super::common::LegacyPolicy {
-            key: None,
-            same_base: false,
-        },
     };
     fn router(settings: &SettingsStore) -> axum::Router<crate::server::AppState> {
         routes::router(settings)

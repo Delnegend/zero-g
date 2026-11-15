@@ -170,10 +170,6 @@ impl common::Provider for Backend {
         fixed_name: Some("OpenRouter"),
         keyless: false,
         default_base_url: Some(BASE_URL),
-        legacy: common::LegacyPolicy {
-            key: None,
-            same_base: false,
-        },
     };
 
     fn router(settings: &SettingsStore) -> Router<AppState> {

@@ -23,7 +23,7 @@ use tracing_subscriber::FmtSubscriber;
 
 use crate::database::Database;
 use crate::provider::Providers;
-use crate::server::observability::{compress_legacy_bodies, prune_expired};
+use crate::server::observability::prune_expired;
 use crate::server::settings::SettingsStore;
 use crate::server::{AppState, create_router};
 
@@ -100,7 +100,6 @@ async fn open_stores() -> Result<(SettingsStore, Database), String> {
     let database = Database::open(&path).await?;
     let settings = SettingsStore::new(database.clone(), &key).await?;
     prune_expired(&database).await?;
-    compress_legacy_bodies(&database).await?;
     Ok((settings, database))
 }
 
