@@ -110,6 +110,7 @@ impl Wire {
             return Err(UpstreamError {
                 status: Some(response.status()),
                 message: format!("Cursor BidiAppend returned {}", response.status()),
+                headers: Box::new(response.headers().clone()),
             });
         }
         Ok(())
@@ -165,6 +166,7 @@ pub(super) async fn start(
         return Err(UpstreamError {
             status: Some(response.status()),
             message: format!("Cursor RunSSE returned {}", response.status()),
+            headers: Box::new(response.headers().clone()),
         });
     }
     let (tx, rx) = mpsc::channel(32);

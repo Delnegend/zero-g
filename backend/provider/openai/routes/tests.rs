@@ -417,6 +417,9 @@ async fn credentials_fail_over_before_forwarding_for_both_providers() {
             StatusCode::TOO_MANY_REQUESTS,
         ] {
             for all_fail in [false, true] {
+                for id in ["open-0", "open-1"] {
+                    crate::provider::common::cooldown::clear(id);
+                }
                 let count = Arc::new(AtomicUsize::new(0));
                 let (tx, mut rx) = mpsc::unbounded_channel();
                 let app = Router::new().route(
@@ -482,6 +485,9 @@ async fn credentials_fail_over_before_forwarding_for_both_providers() {
                 assert_eq!(snapshot.credential_id.as_deref(), expected);
                 assert_eq!(snapshot.credential_name.as_deref(), expected);
                 assert_eq!(count.load(Ordering::SeqCst), 2);
+                for id in ["open-0", "open-1"] {
+                    crate::provider::common::cooldown::clear(id);
+                }
                 server.abort();
             }
         }

@@ -11,6 +11,7 @@ use crate::openai::ChatCompletionRequest;
 use crate::provider::codex::CodexAuthManager;
 use crate::provider::codex::auth::Credentials;
 use crate::provider::codex::models::fetch_codex_models;
+use crate::provider::common::cooldown;
 use crate::provider::common::errors::{UpstreamError, retryable_status};
 use crate::provider::common::request_identity::RequestIdentity;
 use crate::provider::common::session::RequestSession;
@@ -70,6 +71,10 @@ pub(crate) struct PoolError {
     status: Option<StatusCode>,
     /// Whether another credential may be tried.
     retryable: bool,
+    /// Rate-limit headers returned by the upstream.
+    headers: Box<reqwest::header::HeaderMap>,
+    /// Remaining wait if all credentials are cooling down.
+    wait: Option<std::time::Duration>,
 }
 
 impl PoolError {
@@ -80,6 +85,8 @@ impl PoolError {
             local: true,
             status: None,
             retryable: false,
+            headers: Box::default(),
+            wait: None,
         }
     }
 
@@ -90,6 +97,8 @@ impl PoolError {
             message: error.message,
             status: error.status,
             local: false,
+            headers: error.headers,
+            wait: None,
         }
     }
 
@@ -101,11 +110,30 @@ impl PoolError {
             local: error.upstream_status.is_none(),
             status: error.upstream_status,
             retryable,
+            headers: Box::default(),
+            wait: None,
         }
     }
 
     /// Converts the failure into a local or upstream error response.
     fn response(self) -> Response {
+        if let Some(wait) = self.wait {
+            let mut response = (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(crate::server::error_body(
+                    "All Codex accounts are rate limited",
+                    "rate_limit_error",
+                    Some("rate_limited"),
+                )),
+            )
+                .into_response();
+            if let Ok(value) = cooldown::retry_after_secs(wait).to_string().parse() {
+                response
+                    .headers_mut()
+                    .insert(axum::http::header::RETRY_AFTER, value);
+            }
+            return response;
+        }
         let (status, kind, code) = if self.local {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -119,11 +147,13 @@ impl PoolError {
                 "bad_gateway",
             )
         };
-        (
+        let mut response = (
             status,
             Json(crate::server::error_body(&self.message, kind, Some(code))),
         )
-            .into_response()
+            .into_response();
+        cooldown::copy_rate_limit_headers(&self.headers, response.headers_mut());
+        response
     }
 }
 
@@ -138,22 +168,60 @@ where
     F: Fn(Credentials) -> Fut + Send + Sync,
     Fut: Future<Output = Result<T, UpstreamError>> + Send,
 {
-    let credentials = crate::provider::credentials::list(&state.settings, provider)
+    let mut credentials = crate::provider::credentials::list(&state.settings, provider)
         .await
         .map_err(PoolError::local)?;
+    let mut earliest = None;
+    credentials.retain(|credential| {
+        cooldown::remaining(&credential.id).is_none_or(|wait| {
+            earliest = Some(earliest.map_or(wait, |old: std::time::Duration| old.min(wait)));
+            false
+        })
+    });
+    if credentials.is_empty()
+        && let Some(wait) = earliest
+    {
+        let mut error = PoolError::local("All Codex accounts are rate limited");
+        error.wait = Some(wait);
+        return Err(error);
+    }
     try_credentials(credentials, |credential| {
         let request = &request;
         async move {
-            let creds = CodexAuthManager::credentials(&state.settings, &provider.id, &credential.id)
-                .await.map_err(PoolError::credential)?
-                .ok_or_else(|| PoolError::local("OpenAI Codex is not configured. Authenticate on the dashboard Providers page."))?;
-            let result = request(creds).await.map_err(PoolError::upstream)?;
+            let creds = CodexAuthManager::credentials(
+                &state.settings,
+                &provider.id,
+                &credential.id,
+            )
+            .await
+            .map_err(|error| {
+                if error.upstream_status == Some(StatusCode::TOO_MANY_REQUESTS) {
+                    cooldown::start(
+                        &credential.id,
+                        cooldown::wait_for(&reqwest::header::HeaderMap::new()),
+                    );
+                }
+                PoolError::credential(error)
+            })?
+            .ok_or_else(|| {
+                PoolError::local(
+                    "OpenAI Codex is not configured. Authenticate on the dashboard Providers page.",
+                )
+            })?;
+            let result = request(creds).await.map_err(|error| {
+                if error.status == Some(StatusCode::TOO_MANY_REQUESTS) {
+                    cooldown::start(&credential.id, cooldown::wait_for(&error.headers));
+                }
+                PoolError::upstream(error)
+            })?;
+            cooldown::clear(&credential.id);
             if let Some(identity) = identity {
                 identity.set_credential(&credential.id, &credential.name);
             }
             Ok(result)
         }
-    }).await
+    })
+    .await
 }
 
 /// Tries credentials in order until one succeeds or a non-retryable error occurs.
@@ -288,6 +356,25 @@ async fn responses_handler(
 mod tests {
     use super::*;
 
+    #[test]
+    fn cooldown_and_upstream_responses_keep_retry_hints() {
+        let mut local = PoolError::local("limited");
+        local.wait = Some(std::time::Duration::from_millis(1200));
+        let response = local.response();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(response.headers()["retry-after"], "2");
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("retry-after", "17".parse().unwrap());
+        let response = PoolError::upstream(UpstreamError {
+            status: Some(StatusCode::TOO_MANY_REQUESTS),
+            message: "limited".into(),
+            headers: Box::new(headers),
+        })
+        .response();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(response.headers()["retry-after"], "17");
+    }
+
     #[tokio::test]
     async fn exhausted_pool_returns_last_upstream_status() {
         let mut attempts = Vec::new();
@@ -299,6 +386,7 @@ mod tests {
                     Err(PoolError::upstream(UpstreamError {
                         status: Some(status),
                         message: "upstream failure".into(),
+                        headers: Box::default(),
                     }))
                 }
             },
@@ -318,6 +406,7 @@ mod tests {
         assert_eq!(
             PoolError::upstream(UpstreamError {
                 status: None,
+                headers: Box::default(),
                 message: "network".into()
             })
             .response()
@@ -337,6 +426,7 @@ mod tests {
                         Err(PoolError::upstream(UpstreamError {
                             status: Some(StatusCode::from_u16(status).unwrap()),
                             message: "upstream".into(),
+                            headers: Box::default(),
                         }))
                     } else {
                         Ok(())
@@ -359,6 +449,7 @@ mod tests {
                     Err(PoolError::upstream(UpstreamError {
                         status,
                         message: "failure".into(),
+                        headers: Box::default(),
                     }))
                 }
             })
@@ -431,6 +522,7 @@ mod tests {
                     "last failure"
                 }
                 .into(),
+                headers: Box::default(),
             }))
         })
         .await;

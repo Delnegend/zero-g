@@ -2,6 +2,7 @@
 
 use crate::openai::ChatCompletionRequest;
 use crate::provider::antigravity::{AntigravityClient, AntigravityModelInfo, AuthManager};
+use crate::provider::common::cooldown;
 use crate::provider::common::errors::retryable_status;
 use crate::provider::common::{errors::UpstreamError, request_identity::RequestIdentity};
 use crate::provider::registry::Provider;
@@ -19,6 +20,8 @@ pub(super) enum PoolError {
     Internal(String),
     /// An upstream request failure.
     Upstream(UpstreamError),
+    /// Every credential is temporarily rate limited.
+    Cooling(std::time::Duration),
 }
 
 impl std::fmt::Display for PoolError {
@@ -26,6 +29,7 @@ impl std::fmt::Display for PoolError {
         match self {
             Self::Internal(message) => f.write_str(message),
             Self::Upstream(error) => write!(f, "{error}"),
+            Self::Cooling(_) => f.write_str("All Antigravity accounts are rate limited"),
         }
     }
 }
@@ -64,23 +68,52 @@ where
     F: Fn(crate::provider::antigravity::Credentials) -> Fut + Send + Sync,
     Fut: Future<Output = Result<T, UpstreamError>> + Send,
 {
-    let credentials = crate::provider::credentials::list(&state.settings, provider)
+    let mut credentials = crate::provider::credentials::list(&state.settings, provider)
         .await
         .map_err(PoolError::Internal)?;
+    let mut earliest = None;
+    credentials.retain(|credential| {
+        cooldown::remaining(&credential.id).is_none_or(|wait| {
+            earliest = Some(earliest.map_or(wait, |old: std::time::Duration| old.min(wait)));
+            false
+        })
+    });
+    if credentials.is_empty()
+        && let Some(wait) = earliest
+    {
+        return Err(PoolError::Cooling(wait));
+    }
     try_candidates(credentials, |credential| {
         let operation = &operation;
         async move {
             let creds = AuthManager::credentials(&state.settings, &provider.id, &credential.id)
                 .await
-                .map_err(|error| match error.upstream_status {
-                    status if retryable_status(status) => PoolError::Upstream(UpstreamError {
-                        status,
-                        message: error.message,
-                    }),
-                    _ => PoolError::Internal(error.message),
+                .map_err(|error| {
+                    if error.upstream_status == Some(StatusCode::TOO_MANY_REQUESTS) {
+                        cooldown::start(
+                            &credential.id,
+                            cooldown::wait_for(&reqwest::header::HeaderMap::new()),
+                        );
+                    }
+                    match error.upstream_status {
+                        status if retryable_status(status) => PoolError::Upstream(UpstreamError {
+                            status,
+                            message: error.message,
+                            headers: Box::default(),
+                        }),
+                        _ => PoolError::Internal(error.message),
+                    }
                 })?
-                .ok_or_else(|| PoolError::Internal("Antigravity credentials no longer exist".into()))?;
-            let result = operation(creds).await.map_err(PoolError::Upstream)?;
+                .ok_or_else(|| {
+                    PoolError::Internal("Antigravity credentials no longer exist".into())
+                })?;
+            let result = operation(creds).await.map_err(|error| {
+                if error.status == Some(StatusCode::TOO_MANY_REQUESTS) {
+                    cooldown::start(&credential.id, cooldown::wait_for(&error.headers));
+                }
+                PoolError::Upstream(error)
+            })?;
+            cooldown::clear(&credential.id);
             if let Some(identity) = identity {
                 identity.set_credential(&credential.id, &credential.name);
             }
@@ -144,23 +177,61 @@ pub(crate) async fn fetch_models(
 
 /// Converts a pool failure into an API error response.
 pub(super) fn pool_error_response(error: PoolError) -> Response {
-    let (status, kind, code, message) = match error {
+    let (status, kind, code, message, headers) = match error {
+        PoolError::Cooling(wait) => {
+            let mut response = (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(crate::server::error_body(
+                    "All Antigravity accounts are rate limited",
+                    "rate_limit_error",
+                    Some("rate_limited"),
+                )),
+            )
+                .into_response();
+            if let Ok(value) = cooldown::retry_after_secs(wait).to_string().parse() {
+                response
+                    .headers_mut()
+                    .insert(axum::http::header::RETRY_AFTER, value);
+            }
+            return response;
+        }
         PoolError::Internal(message) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             "server_error",
             "internal_error",
             message,
+            None,
         ),
-        PoolError::Upstream(error) => (
-            StatusCode::BAD_GATEWAY,
-            "upstream_error",
-            "bad_gateway",
-            error.message,
-        ),
+        PoolError::Upstream(error) => {
+            let limited = error.status == Some(StatusCode::TOO_MANY_REQUESTS);
+            (
+                if limited {
+                    StatusCode::TOO_MANY_REQUESTS
+                } else {
+                    StatusCode::BAD_GATEWAY
+                },
+                if limited {
+                    "rate_limit_error"
+                } else {
+                    "upstream_error"
+                },
+                if limited {
+                    "rate_limited"
+                } else {
+                    "bad_gateway"
+                },
+                error.message,
+                Some(error.headers),
+            )
+        }
     };
-    (
+    let mut response = (
         status,
         Json(crate::server::error_body(&message, kind, Some(code))),
     )
-        .into_response()
+        .into_response();
+    if let Some(headers) = headers {
+        cooldown::copy_rate_limit_headers(&headers, response.headers_mut());
+    }
+    response
 }

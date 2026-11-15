@@ -7,6 +7,8 @@ pub(crate) struct UpstreamError {
     pub(crate) status: Option<StatusCode>,
     /// Human-readable error detail.
     pub(crate) message: String,
+    /// Headers received with the upstream error response.
+    pub(crate) headers: Box<reqwest::header::HeaderMap>,
 }
 
 impl UpstreamError {
@@ -35,6 +37,7 @@ impl From<String> for UpstreamError {
         Self {
             status: None,
             message,
+            headers: Box::default(),
         }
     }
 }

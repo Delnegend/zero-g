@@ -102,10 +102,12 @@ impl CodexClient {
 
         if !resp.status().is_success() {
             let status = resp.status();
+            let headers = Box::new(resp.headers().clone());
             let body = resp.text().await.unwrap_or_default();
             return Err(UpstreamError {
                 status: Some(status),
                 message: format!("Codex upstream returned {status}: {body}"),
+                headers,
             });
         }
 

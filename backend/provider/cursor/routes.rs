@@ -6,6 +6,7 @@ use axum::{
     routing::{get, post},
 };
 
+use crate::provider::common::cooldown;
 use crate::{
     openai::{ChatCompletionRequest, ModelListResponse},
     provider::{common::request_identity::RequestIdentity, registry::Provider},
@@ -88,14 +89,14 @@ async fn chat(
     identity: Option<Extension<RequestIdentity>>,
     Json(req): Json<ChatCompletionRequest>,
 ) -> Response {
-    complete(
+    Box::pin(complete(
         state,
         permissions,
         provider,
         identity.map(|Extension(identity)| identity),
         req,
         false,
-    )
+    ))
     .await
 }
 
@@ -107,18 +108,19 @@ async fn responses(
     identity: Option<Extension<RequestIdentity>>,
     Json(req): Json<ResponseCreateRequest>,
 ) -> Response {
-    complete(
+    Box::pin(complete(
         state,
         permissions,
         provider,
         identity.map(|Extension(identity)| identity),
         req.into_chat_request(),
         true,
-    )
+    ))
     .await
 }
 
 /// Authorizes the model and tries eligible Cursor credentials.
+#[allow(clippy::too_many_lines)]
 async fn complete(
     state: AppState,
     permissions: Permissions,
@@ -161,11 +163,22 @@ async fn complete(
     };
     let mut last =
         "Cursor is not configured. Authenticate on the dashboard Providers page.".to_string();
+    let mut earliest = None;
+    let mut attempted = false;
+    let mut headers = reqwest::header::HeaderMap::new();
+    let mut limited = false;
     for credential in credentials {
+        if let Some(wait) = cooldown::remaining(&credential.id) {
+            earliest = Some(earliest.map_or(wait, |old: std::time::Duration| old.min(wait)));
+            continue;
+        }
+        attempted = true;
         let token =
             match super::auth::access_token(&state.settings, &provider.id, &credential.id).await {
                 Ok(token) => token,
                 Err(message) => {
+                    headers.clear();
+                    limited = false;
                     last = message;
                     continue;
                 }
@@ -183,6 +196,9 @@ async fn complete(
                         .unwrap_or(false),
                 )
                 .await;
+                if response.status().is_success() {
+                    cooldown::clear(&credential.id);
+                }
                 if response.status().is_success()
                     && let Some(identity) = &identity
                 {
@@ -190,8 +206,25 @@ async fn complete(
                 }
                 return response;
             }
-            Err(failure) => {
+            Err(mut failure) => {
                 let retry = failure.retryable();
+                limited = failure.status == Some(StatusCode::TOO_MANY_REQUESTS);
+                if limited {
+                    let wait = cooldown::wait_for(&failure.headers);
+                    cooldown::start(&credential.id, wait);
+                    if !failure
+                        .headers
+                        .contains_key(axum::http::header::RETRY_AFTER)
+                    {
+                        let value = cooldown::retry_after_secs(wait).to_string();
+                        if let Ok(value) = value.parse() {
+                            failure
+                                .headers
+                                .insert(axum::http::header::RETRY_AFTER, value);
+                        }
+                    }
+                }
+                headers = *failure.headers;
                 last = failure.message;
                 if !retry {
                     break;
@@ -210,10 +243,30 @@ async fn complete(
             }
         }
     }
-    error(
-        StatusCode::BAD_GATEWAY,
-        &last,
-        "upstream_error",
-        "bad_gateway",
-    )
+    if !attempted && let Some(wait) = earliest {
+        let mut response = error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "All Cursor accounts are rate limited",
+            "rate_limit_error",
+            "rate_limited",
+        );
+        if let Ok(value) = cooldown::retry_after_secs(wait).to_string().parse() {
+            response
+                .headers_mut()
+                .insert(axum::http::header::RETRY_AFTER, value);
+        }
+        return response;
+    }
+    let (status, kind, code) = if limited {
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate_limit_error",
+            "rate_limited",
+        )
+    } else {
+        (StatusCode::BAD_GATEWAY, "upstream_error", "bad_gateway")
+    };
+    let mut response = error(status, &last, kind, code);
+    cooldown::copy_rate_limit_headers(&headers, response.headers_mut());
+    response
 }

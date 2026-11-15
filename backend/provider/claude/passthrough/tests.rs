@@ -29,6 +29,7 @@ async fn upstream(refused: &'static [&'static str]) -> (String, Seen) {
                 {
                     return (
                         StatusCode::TOO_MANY_REQUESTS,
+                        [(header::RETRY_AFTER, "60"), (header::HeaderName::from_static("anthropic-ratelimit-unified-status"), "rejected")],
                         r#"{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}"#,
                     )
                         .into_response();
@@ -251,6 +252,123 @@ async fn refused_accounts_fail_over() {
     let reply: Value =
         serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
     assert_eq!(reply["error"]["message"], "slow down");
+}
+
+/// Upstream limits are forwarded, cached per model, and exposed locally with Retry-After.
+#[tokio::test]
+async fn cooldown_is_model_specific_and_preserves_rate_limit_headers() {
+    let state = state().await;
+    let (root, seen) = upstream(&["token-a", "token-b"]).await;
+    let body = json!({"model": "cooldown-test-model", "messages": []}).to_string();
+    let first = send(
+        &state,
+        &unrestricted(),
+        &RequestIdentity::default(),
+        &root,
+        HeaderMap::new(),
+        &body,
+    )
+    .await;
+    assert_eq!(first.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(first.headers()[header::RETRY_AFTER], "60");
+    assert_eq!(
+        first.headers()["anthropic-ratelimit-unified-status"],
+        "rejected"
+    );
+    let count = seen.lock().unwrap().len();
+    assert_eq!(count, 2);
+    let second = send(
+        &state,
+        &unrestricted(),
+        &RequestIdentity::default(),
+        &root,
+        HeaderMap::new(),
+        &body,
+    )
+    .await;
+    assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(
+        second.headers()[header::RETRY_AFTER]
+            .to_str()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap()
+            > 0
+    );
+    let reply: Value =
+        serde_json::from_slice(&to_bytes(second.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(reply["error"]["type"], "rate_limit_error");
+    assert_eq!(seen.lock().unwrap().len(), count);
+    let other = json!({"model": "cooldown-test-other-model", "messages": []}).to_string();
+    let response = send(
+        &state,
+        &unrestricted(),
+        &RequestIdentity::default(),
+        &root,
+        HeaderMap::new(),
+        &other,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(seen.lock().unwrap().len(), count + 2);
+}
+
+/// A cached limit must not hide a different upstream refusal.
+#[tokio::test]
+async fn mixed_cooldown_and_refusal_reports_refusal() {
+    let state = state().await;
+    let model = "mixed-outcome-model";
+    crate::provider::common::cooldown::start(
+        &format!("claude:1:a:{model}"),
+        std::time::Duration::from_secs(60),
+    );
+    let app = Router::new().route("/v1/messages", post(|| async { StatusCode::UNAUTHORIZED }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let root = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let body = json!({"model": model, "messages": []}).to_string();
+    let response = send(
+        &state,
+        &unrestricted(),
+        &RequestIdentity::default(),
+        &root,
+        HeaderMap::new(),
+        &body,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// A bare upstream 429 gets the same fallback delay used for its cooldown.
+#[tokio::test]
+async fn upstream_without_retry_after_gets_fallback() {
+    let state = state().await;
+    let app = Router::new().route(
+        "/v1/messages",
+        post(|| async {
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                [("x-should-retry", "true")],
+                "limited",
+            )
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let root = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let body = json!({"model": "fallback-delay-model", "messages": []}).to_string();
+    let response = send(
+        &state,
+        &unrestricted(),
+        &RequestIdentity::default(),
+        &root,
+        HeaderMap::new(),
+        &body,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(response.headers()[header::RETRY_AFTER], "30");
+    assert_eq!(response.headers()["x-should-retry"], "true");
 }
 
 /// Key restrictions are enforced before anything is sent upstream.

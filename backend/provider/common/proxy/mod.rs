@@ -3,6 +3,7 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Json, Response};
 use serde_json::Value;
 
+use crate::provider::common::cooldown;
 use crate::server::settings::Permissions;
 use crate::server::settings::SettingsStore;
 use std::future::Future;
@@ -39,9 +40,14 @@ where
         .await
         .map_err(|_| settings_error())?;
     let mut last = None;
+    let mut soonest: Option<std::time::Duration> = None;
     for credential in credentials {
+        if let Some(wait) = cooldown::remaining(&credential.id) {
+            soonest = Some(soonest.map_or(wait, |current| current.min(wait)));
+            continue;
+        }
         let key = settings
-            .secret_get(&format!("credential.{}.api_key", credential.id))
+            .secret_get(&crate::provider::credentials::SecretKind::ApiKey.name(&credential.id))
             .await
             .map_err(|_| settings_error())?
             .ok_or_else(settings_error)?;
@@ -53,22 +59,39 @@ where
                 "bad_gateway",
             )
         })?;
+        if response.status() == StatusCode::TOO_MANY_REQUESTS {
+            cooldown::start(&credential.id, cooldown::wait_for(response.headers()));
+        }
         if !crate::provider::common::errors::retryable_status(Some(response.status())) {
-            if response.status().is_success()
-                && let Some(identity) = identity
-            {
-                identity.set_credential(&credential.id, &credential.name);
+            if response.status().is_success() {
+                cooldown::clear(&credential.id);
+                if let Some(identity) = identity {
+                    identity.set_credential(&credential.id, &credential.name);
+                }
             }
             return Ok(response);
         }
         last = Some(response);
     }
     last.ok_or_else(|| {
-        error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            no_credentials,
-            "upstream_error",
-            "no_credentials",
+        soonest.map_or_else(
+            || {
+                error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    no_credentials,
+                    "upstream_error",
+                    "no_credentials",
+                )
+            },
+            |wait| {
+                error(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "All credentials for this provider are rate limited",
+                    "rate_limit_error",
+                    "rate_limited",
+                )
+                .with_retry_after(wait)
+            },
         )
     })
 }
@@ -110,18 +133,35 @@ fn invalid_model_list() -> Response {
 
 /// OpenAI-compatible error response with its HTTP status and error metadata.
 #[derive(Debug)]
-pub(crate) struct ProxyError(StatusCode, &'static str, &'static str, &'static str);
+pub(crate) struct ProxyError(
+    StatusCode,
+    &'static str,
+    &'static str,
+    &'static str,
+    Option<u64>,
+);
 
 impl IntoResponse for ProxyError {
     fn into_response(self) -> Response {
-        (
+        let mut response = (
             self.0,
             Json(crate::server::error_body(self.1, self.2, Some(self.3))),
         )
-            .into_response()
+            .into_response();
+        if let Some(seconds) = self.4
+            && let Ok(value) = seconds.to_string().parse()
+        {
+            response.headers_mut().insert(header::RETRY_AFTER, value);
+        }
+        response
     }
 }
 impl ProxyError {
+    /// Attach a retry delay for a locally enforced cooldown.
+    fn with_retry_after(mut self, wait: std::time::Duration) -> Self {
+        self.4 = Some(cooldown::retry_after_secs(wait));
+        self
+    }
     /// HTTP status.
     pub(crate) const fn status(&self) -> StatusCode {
         self.0
@@ -147,7 +187,7 @@ pub(crate) const fn error(
     kind: &'static str,
     code: &'static str,
 ) -> ProxyError {
-    ProxyError(status, message, kind, code)
+    ProxyError(status, message, kind, code, None)
 }
 
 /// Reports failure to load OpenAI-compatible provider settings.

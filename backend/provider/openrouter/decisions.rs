@@ -141,7 +141,7 @@ mod tests {
         .exec(&mut db)
         .await
         .unwrap();
-        for id in ["first", "second"] {
+        for id in ["decisions-first", "decisions-second"] {
             toasty::create!(ProviderCredential {
                 id: id.to_string(),
                 provider_id: "openrouter".to_string(),
@@ -207,10 +207,8 @@ mod tests {
         let second = received.recv().await.unwrap();
         for (headers, body) in [&first, &second] {
             let authorization = headers[header::AUTHORIZATION].to_str().unwrap();
-            assert!(
-                authorization == "Bearer upstream-first"
-                    || authorization == "Bearer upstream-second"
-            );
+            let token = authorization.strip_prefix("Bearer upstream-").unwrap();
+            assert!(["decisions-first", "decisions-second"].contains(&token));
             assert_eq!(body["model"], "cloudflare/clef");
             assert_eq!(
                 body["state"][1]["image_url"]["url"],
@@ -222,6 +220,8 @@ mod tests {
             first.0[header::AUTHORIZATION],
             second.0[header::AUTHORIZATION]
         );
+        crate::provider::common::cooldown::clear("decisions-first");
+        crate::provider::common::cooldown::clear("decisions-second");
         server.abort();
     }
 }

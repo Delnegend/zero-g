@@ -362,10 +362,12 @@ impl AntigravityClient {
                 }
                 Ok(r) => {
                     let status = r.status();
+                    let headers = Box::new(r.headers().clone());
                     let body = r.text().await.unwrap_or_default();
                     last_err = UpstreamError {
                         status: Some(status),
                         message: format!("Endpoint {endpoint} returned {status}: {body}"),
+                        headers,
                     };
                     if !status.is_server_error() {
                         return Err(last_err);

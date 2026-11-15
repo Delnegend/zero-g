@@ -1,5 +1,7 @@
 /// Normalized model metadata shared with the dashboard catalog.
 pub(crate) mod catalog;
+/// In-process cooldowns for rate-limited credentials.
+pub(crate) mod cooldown;
 /// Shared upstream error classification.
 pub(crate) mod errors;
 /// Helpers for OpenAI-compatible proxy responses and permissions.
@@ -44,7 +46,8 @@ pub(crate) trait Provider {
 
 /// Provider backend capable of reporting credential quota.
 pub(crate) trait QuotaProvider {
-    /// Fetches quota for the named provider and credential.
+    /// Fetches quota for the named provider and credential. Callers must already
+    /// have verified that the credential belongs to a provider of this kind.
     async fn quota(
         store: &SettingsStore,
         provider: &str,

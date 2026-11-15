@@ -48,6 +48,7 @@ async fn pool_retries_only_upstream_auth_and_rate_limit_statuses() {
                     Err(PoolError::Upstream(UpstreamError {
                         status: Some(status),
                         message: "upstream".into(),
+                        headers: Box::default(),
                     }))
                 } else {
                     Ok(())
@@ -75,6 +76,7 @@ async fn pool_stops_on_non_retryable_and_after_exhaustion() {
                 Err(PoolError::Upstream(UpstreamError {
                     status,
                     message: "failed".into(),
+                    headers: Box::default(),
                 }))
             }
         })
@@ -86,6 +88,7 @@ async fn pool_stops_on_non_retryable_and_after_exhaustion() {
         Err(PoolError::Upstream(UpstreamError {
             status: Some(StatusCode::TOO_MANY_REQUESTS),
             message: "last failure".into(),
+            headers: Box::default(),
         }))
     })
     .await;
@@ -99,6 +102,24 @@ async fn pool_stops_on_non_retryable_and_after_exhaustion() {
     })
     .await;
     assert!(matches!(internal, Err(PoolError::Internal(_))));
+}
+
+#[test]
+fn cooldown_and_upstream_responses_keep_retry_hints() {
+    let response = super::pool::pool_error_response(PoolError::Cooling(
+        std::time::Duration::from_millis(1200),
+    ));
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(response.headers()["retry-after"], "2");
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert("retry-after", "17".parse().unwrap());
+    let response = super::pool::pool_error_response(PoolError::Upstream(UpstreamError {
+        status: Some(StatusCode::TOO_MANY_REQUESTS),
+        message: "limited".into(),
+        headers: Box::new(headers),
+    }));
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(response.headers()["retry-after"], "17");
 }
 
 fn models(ids: &[&str]) -> Vec<(String, AntigravityModelInfo)> {
@@ -399,6 +420,9 @@ async fn chat_route_preserves_signatures_and_applies_discovered_profile() {
                             return ([(axum::http::header::CONTENT_TYPE, "text/event-stream")], format!("data: {event}\n\n")).into_response();
                         }
                     }
+                    if body.pointer("/request/contents/0/parts/0/text").and_then(Value::as_str) == Some("rate-limit") {
+                        return (StatusCode::TOO_MANY_REQUESTS, [(axum::http::header::RETRY_AFTER, "41")], "limited").into_response();
+                    }
                     let truncated = body.pointer("/request/contents/0/parts/0/text").and_then(Value::as_str) == Some("truncate");
                     tx.send(body).unwrap();
                     if truncated {
@@ -437,7 +461,7 @@ async fn chat_route_preserves_signatures_and_applies_discovered_profile() {
     .await
     .unwrap();
     toasty::create!(ProviderCredential {
-        id: "credential".to_string(),
+        id: "antigravity-route-credential".to_string(),
         provider_id: "agy".to_string(),
         name: "credential".to_string(),
         weight: 1,
@@ -446,7 +470,7 @@ async fn chat_route_preserves_signatures_and_applies_discovered_profile() {
     .exec(&mut (*store.database.db).clone())
     .await
     .unwrap();
-    let name = "credential.credential.credential";
+    let name = "credential.antigravity-route-credential.credential";
     let credential = json!({"access_token":"fake-token","project_id":"project"}).to_string();
     Secret::upsert_by_name(name)
         .value(store.encrypt(name, &credential).unwrap())
@@ -503,7 +527,10 @@ async fn chat_route_preserves_signatures_and_applies_discovered_profile() {
         .unwrap();
     assert_eq!(first.status(), StatusCode::OK);
     let snapshot = identity.snapshot();
-    assert_eq!(snapshot.credential_id.as_deref(), Some("credential"));
+    assert_eq!(
+        snapshot.credential_id.as_deref(),
+        Some("antigravity-route-credential")
+    );
     assert_eq!(snapshot.credential_name.as_deref(), Some("credential"));
     let response: Value = serde_json::from_slice(
         &axum::body::to_bytes(first.into_body(), 1024 * 1024)
@@ -620,7 +647,10 @@ async fn chat_route_preserves_signatures_and_applies_discovered_profile() {
         .unwrap();
     assert_eq!(streamed.status(), StatusCode::OK);
     let snapshot = stream_identity.snapshot();
-    assert_eq!(snapshot.credential_id.as_deref(), Some("credential"));
+    assert_eq!(
+        snapshot.credential_id.as_deref(),
+        Some("antigravity-route-credential")
+    );
     assert_eq!(snapshot.credential_name.as_deref(), Some("credential"));
     let bytes = axum::body::to_bytes(streamed.into_body(), 1024 * 1024)
         .await
@@ -910,6 +940,23 @@ async fn chat_route_preserves_signatures_and_applies_discovered_profile() {
         }
         let _ = rx.recv().await.unwrap();
     }
+    let limited = || {
+        request(json!({"model":"model-high", "messages":[{"role":"user","content":"rate-limit"}]}))
+    };
+    let upstream = app.clone().oneshot(limited()).await.unwrap();
+    assert_eq!(upstream.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(upstream.headers()["retry-after"], "41");
+    let local = app.clone().oneshot(limited()).await.unwrap();
+    assert_eq!(local.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(
+        local.headers()["retry-after"]
+            .to_str()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap()
+            > 0
+    );
+    crate::provider::common::cooldown::clear("antigravity-route-credential");
     assert_eq!(discovery_count.load(Ordering::SeqCst), 1);
     server.abort();
 }

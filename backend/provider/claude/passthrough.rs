@@ -220,6 +220,7 @@ pub(crate) async fn messages(
 }
 
 /// Authorize, prepare, and send the request to `url`, streaming the reply back unchanged.
+#[allow(clippy::too_many_lines)]
 async fn forward(
     state: &AppState,
     permissions: &Permissions,
@@ -282,29 +283,30 @@ async fn forward(
         Ok(http) => http,
         Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, &message),
     };
-    let attempt = client::first_accepted(&state.settings, &provider, |creds, credential| {
-        let body = match &outgoing {
-            Outgoing::Exact(body) => Ok(body.clone()),
-            Outgoing::Normalized {
-                value,
-                needs_user_id,
-            } => {
-                let mut value = value.clone();
-                if *needs_user_id && let Some(object) = value.as_object_mut() {
-                    let user_id =
-                        client::user_id(&credential.id, session, creds.account_id.as_deref());
-                    let metadata = object.entry("metadata").or_insert_with(|| json!({}));
-                    if let Some(metadata) = metadata.as_object_mut() {
-                        metadata.insert("user_id".into(), json!(user_id));
+    let attempt =
+        client::first_accepted(&state.settings, &provider, &model, |creds, credential| {
+            let body = match &outgoing {
+                Outgoing::Exact(body) => Ok(body.clone()),
+                Outgoing::Normalized {
+                    value,
+                    needs_user_id,
+                } => {
+                    let mut value = value.clone();
+                    if *needs_user_id && let Some(object) = value.as_object_mut() {
+                        let user_id =
+                            client::user_id(&credential.id, session, creds.account_id.as_deref());
+                        let metadata = object.entry("metadata").or_insert_with(|| json!({}));
+                        if let Some(metadata) = metadata.as_object_mut() {
+                            metadata.insert("user_id".into(), json!(user_id));
+                        }
                     }
+                    client::attest(&value).map(Bytes::from)
                 }
-                client::attest(&value).map(Bytes::from)
-            }
-        };
-        let (http, headers) = (&http, upstream_headers.clone());
-        async move { client::forward(http, url, &creds.access_token, headers, body?).await }
-    })
-    .await;
+            };
+            let (http, headers) = (&http, upstream_headers.clone());
+            async move { client::forward(http, url, &creds.access_token, headers, body?).await }
+        })
+        .await;
     match attempt {
         Ok((response, credential)) => {
             if response.status().is_success()
@@ -312,9 +314,30 @@ async fn forward(
             {
                 identity.set_credential(&credential.id, &credential.name);
             }
-            crate::provider::openai::forward(response)
+            let wait = (response.status() == StatusCode::TOO_MANY_REQUESTS
+                && !response.headers().contains_key("retry-after"))
+            .then(|| crate::provider::common::cooldown::wait_for(response.headers()));
+            let mut reply = crate::provider::openai::forward(response);
+            if let Some(wait) = wait {
+                let secs = crate::provider::common::cooldown::retry_after_secs(wait);
+                if let Ok(value) = secs.to_string().parse() {
+                    reply.headers_mut().insert("retry-after", value);
+                }
+            }
+            reply
         }
-        Err((status, message)) => error(status, &message),
+        Err(client::Refusal::CoolingDown(wait)) => {
+            let mut response = error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "All Claude accounts are rate limited; retry after the Retry-After delay",
+            );
+            let secs = crate::provider::common::cooldown::retry_after_secs(wait);
+            if let Ok(value) = secs.to_string().parse() {
+                response.headers_mut().insert("retry-after", value);
+            }
+            response
+        }
+        Err(client::Refusal::Failed(status, message)) => error(status, &message),
     }
 }
 

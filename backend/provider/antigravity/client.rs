@@ -57,10 +57,12 @@ impl AntigravityClient {
                             *cache = None;
                         }
                     }
+                    let headers = Box::new(resp.headers().clone());
                     let body = resp.text().await.unwrap_or_default();
                     last_err = UpstreamError {
                         status: Some(status),
                         message: format!("Antigravity error ({status}): {body}"),
+                        headers,
                     };
                     if status.is_server_error() {
                         continue;

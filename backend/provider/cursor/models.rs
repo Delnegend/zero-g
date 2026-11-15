@@ -218,6 +218,7 @@ async fn unary(
         return Err(UpstreamError {
             status: Some(status),
             message: format!("Cursor model discovery returned {status}"),
+            headers: Box::new(response.headers().clone()),
         });
     }
     response

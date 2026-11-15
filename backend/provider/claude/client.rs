@@ -114,46 +114,83 @@ pub(super) fn user_id(credential: &str, session: &str, account: Option<&str>) ->
     identity.to_string()
 }
 
+/// Why no credential produced a usable response.
+pub(super) enum Refusal {
+    /// Every connected credential is cooling down; retry after this long.
+    CoolingDown(std::time::Duration),
+    /// A gateway-side failure, reported with this status and message.
+    Failed(StatusCode, String),
+}
+
 /// Try connected credentials in weighted order until one is not refused.
 ///
-/// A 401, 403, 429, or 503 moves on to the next credential; when every credential is
-/// refused, the last refusal is returned so callers can report it.
+/// A 401, 403, 429, or 503 moves on to the next credential. Rate limits are
+/// scoped to the requested model; other refusals take precedence over a 429.
 pub(super) async fn first_accepted<F, Fut>(
     store: &crate::server::settings::SettingsStore,
     provider: &crate::provider::registry::Provider,
+    model: &str,
     mut send: F,
-) -> Result<(reqwest::Response, Credential), (StatusCode, String)>
+) -> Result<(reqwest::Response, Credential), Refusal>
 where
     F: FnMut(super::auth::Credentials, &Credential) -> Fut,
     Fut: Future<Output = Result<reqwest::Response, String>>,
 {
+    use crate::provider::common::cooldown;
     let credentials = crate::provider::credentials::list(store, provider)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    let mut last = Err((
-        StatusCode::SERVICE_UNAVAILABLE,
-        "No connected Claude credentials".to_owned(),
-    ));
+        .map_err(|e| Refusal::Failed(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let mut last = None;
+    let mut limited = None;
+    let mut failure = None;
+    let mut soonest: Option<std::time::Duration> = None;
     for credential in credentials {
+        let cooldown_id = format!("claude:{}:{}:{}", credential.id.len(), credential.id, model);
+        if let Some(wait) = cooldown::remaining(&cooldown_id) {
+            soonest = Some(soonest.map_or(wait, |s| s.min(wait)));
+            continue;
+        }
         let creds = match super::auth::load(store, &provider.id, &credential.id).await {
             Ok(creds) => creds,
             Err(e) => {
-                if last.is_err() {
-                    last = Err((StatusCode::SERVICE_UNAVAILABLE, e));
-                }
+                failure = Some(Refusal::Failed(StatusCode::SERVICE_UNAVAILABLE, e));
                 continue;
             }
         };
-        let response = send(creds, &credential)
-            .await
-            .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
-        if matches!(response.status().as_u16(), 401 | 403 | 429 | 503) {
-            last = Ok((response, credential));
+        let response = match send(creds, &credential).await {
+            Ok(response) => response,
+            Err(e) => {
+                failure = Some(Refusal::Failed(StatusCode::BAD_GATEWAY, e));
+                continue;
+            }
+        };
+        let status = response.status().as_u16();
+        if status == 429 {
+            cooldown::start(&cooldown_id, cooldown::wait_for(response.headers()));
+            limited = Some((response, credential));
             continue;
         }
+        if matches!(status, 401 | 403 | 503) {
+            last = Some((response, credential));
+            continue;
+        }
+        cooldown::clear(&cooldown_id);
         return Ok((response, credential));
     }
-    last
+    if let Some(refused) = last {
+        return Ok(refused);
+    }
+    if let Some(failure) = failure {
+        return Err(failure);
+    }
+    match (limited, soonest) {
+        (Some(refused), _) => Ok(refused),
+        (None, Some(wait)) => Err(Refusal::CoolingDown(wait)),
+        (None, None) => Err(Refusal::Failed(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "No connected Claude credentials".to_owned(),
+        )),
+    }
 }
 
 /// Dispatches a single upstream event with bounded buffering.

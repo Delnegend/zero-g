@@ -1,3 +1,4 @@
+use crate::provider::common::cooldown;
 use crate::provider::common::request_identity::RequestIdentity;
 use crate::provider::common::session::RequestSession;
 use axum::http::StatusCode;
@@ -48,19 +49,26 @@ pub(super) fn router(settings: &SettingsStore) -> Router<AppState> {
 }
 /// Construct a gateway error response.
 fn failure(status: StatusCode, message: &str) -> Response {
-    (
-        status,
-        Json(crate::server::error_body(
-            message,
-            if status.is_client_error() {
-                "invalid_request_error"
-            } else {
-                "upstream_error"
-            },
-            None,
-        )),
-    )
-        .into_response()
+    let kind = if status == StatusCode::TOO_MANY_REQUESTS {
+        "rate_limit_error"
+    } else if status.is_client_error() {
+        "invalid_request_error"
+    } else {
+        "upstream_error"
+    };
+    (status, Json(crate::server::error_body(message, kind, None))).into_response()
+}
+
+/// A 429 answered by the gateway because every Claude account is cooling down.
+fn cooling_down(wait: std::time::Duration) -> Response {
+    let mut response = failure(
+        StatusCode::TOO_MANY_REQUESTS,
+        "All Claude accounts are rate limited; retry after the Retry-After delay",
+    );
+    if let Ok(value) = cooldown::retry_after_secs(wait).to_string().parse() {
+        response.headers_mut().insert("retry-after", value);
+    }
+    response
 }
 
 /// Report the known billing restriction without exposing upstream response bodies.
@@ -190,19 +198,26 @@ async fn inference(
         Err(e) => return failure(StatusCode::INTERNAL_SERVER_ERROR, &e),
     };
     let url = format!("{}/v1/messages?beta=true", client::API_ROOT);
-    let attempt = client::first_accepted(&state.settings, &provider, |creds, credential| {
-        let mut payload = payload.clone();
-        if let Some(object) = payload.as_object_mut() {
-            let user_id = client::user_id(&credential.id, &session.id, creds.account_id.as_deref());
-            object.insert("metadata".into(), json!({ "user_id": user_id }));
-        }
-        let (http, url) = (&http, &url);
-        async move { client::send(http, url, &creds.access_token, &payload).await }
-    })
+    let attempt = client::first_accepted(
+        &state.settings,
+        &provider,
+        &req.model,
+        |creds, credential| {
+            let mut payload = payload.clone();
+            if let Some(object) = payload.as_object_mut() {
+                let user_id =
+                    client::user_id(&credential.id, &session.id, creds.account_id.as_deref());
+                object.insert("metadata".into(), json!({ "user_id": user_id }));
+            }
+            let (http, url) = (&http, &url);
+            async move { client::send(http, url, &creds.access_token, &payload).await }
+        },
+    )
     .await;
     let (response, credential) = match attempt {
         Ok(accepted) => accepted,
-        Err((status, message)) => return failure(status, &message),
+        Err(client::Refusal::CoolingDown(wait)) => return cooling_down(wait),
+        Err(client::Refusal::Failed(status, message)) => return failure(status, &message),
     };
     if !response.status().is_success() {
         let status = response.status();
@@ -211,8 +226,17 @@ async fn inference(
         } else {
             status
         };
+        let headers = response.headers().clone();
         let body = response.bytes().await.unwrap_or_default();
-        return failure(reported, &upstream_failure(status, &body));
+        let mut reply = failure(reported, &upstream_failure(status, &body));
+        cooldown::copy_rate_limit_headers(&headers, reply.headers_mut());
+        if status == StatusCode::TOO_MANY_REQUESTS && !reply.headers().contains_key("retry-after") {
+            let wait = cooldown::wait_for(&headers);
+            if let Ok(value) = cooldown::retry_after_secs(wait).to_string().parse() {
+                reply.headers_mut().insert("retry-after", value);
+            }
+        }
+        return reply;
     }
     let decoder = Decoder::new(req.model.clone());
     if req.stream.unwrap_or(false) {
