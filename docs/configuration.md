@@ -75,11 +75,10 @@ Built-in provider cards show their name without a separate type label. Custom Op
 
 ## Credential Pool & Failover Logic
 
-Enabled, connected credentials are selected in weighted order without replacement
-for each request. The initial selection is proportional to weight: weight 3 is
-about three times as likely as weight 1. An upstream 401, 403 or 429 before
-streaming causes the next candidate to be tried. Keyless providers bypass the
-credential pool; failover changes the eventual traffic distribution.
+- Each request tries enabled, connected credentials in weighted random order, each at most once.
+- Weight 3 is picked first about three times as often as weight 1.
+- An upstream 401, 403 or 429 before streaming moves on to the next credential, so actual traffic can differ from the weights.
+- Keyless providers skip the pool.
 
 ---
 

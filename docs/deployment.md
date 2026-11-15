@@ -104,10 +104,8 @@ flowchart TD
 
 ### Reclaiming disk space
 
-Pruned and compressed data leaves free pages that new logs reuse, but the file
-itself does not shrink. Turso does not support `VACUUM`, so shrink it offline
-after a large cleanup, such as the first start of a release that compresses
-stored bodies:
+Pruning frees pages that new logs reuse, but the file never shrinks. Turso has
+no `VACUUM`, so shrink it offline after a large cleanup:
 
 1. `docker compose stop zero-g`
 2. Back up the volume (Upgrade Checklist step 2).

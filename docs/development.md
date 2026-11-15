@@ -8,8 +8,7 @@
 | **Bun**     | 1.4.4        | Frontend package manager and task execution.                          |
 | **just**    | Latest       | Task runner for builds, tests, checks, and code generation.           |
 
-Copy `.env.example` to `.env` and set `ZERO_G_ENCRYPTION_KEY` and the dashboard
-authentication settings before starting the backend.
+Copy `.env.example` to `.env`; set `ZERO_G_ENCRYPTION_KEY` and dashboard auth before starting.
 
 ---
 
@@ -26,15 +25,15 @@ flowchart LR
 
 ### Common Commands
 
-| Command             | Action                     | Notes                                                                                                                                                        |
-| ------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `just dev`          | Start backend and frontend | Builds the frontend first, then runs the backend with `cargo run` and Vite with frontend HMR. Vite proxies `/api` to the backend at `http://127.0.0.1:5173`. |
-| `just check`        | Single CI gate check       | Formats, lints, frontend tests, Rust test suite, OpenAPI checks.                                                                                             |
-| `just test`         | Run all test suites        | Unit and integration tests for Rust and frontend.                                                                                                            |
-| `just lint`         | Lint and format code       | Runs Oxlint (any warning fails), `cargo fmt` and `bun fmt`.                                                                                                  |
-| `just build`        | Compile release binary     | Builds frontend assets and embeds them into `target/release/zero-g`.                                                                                         |
-| `just seed`         | Populate mock data         | Adds example providers, keys and logs to an initialized development database; stop the server first.                                                         |
-| `just api-generate` | Sync frontend API clients  | Regenerates Orval clients from OpenAPI spec.                                                                                                                 |
+| Command             | Action                     | Notes                                                                                                                                                   |
+| ------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `just dev`          | Start backend and frontend | Builds the frontend, then runs the backend (`cargo run`) and Vite with HMR at `http://127.0.0.1:5173`, which proxies `/api` and `/auth` to the backend. |
+| `just check`        | Single CI gate check       | Formats, lints, frontend tests, Rust test suite, OpenAPI checks.                                                                                        |
+| `just test`         | Run all test suites        | Unit and integration tests for Rust and frontend.                                                                                                       |
+| `just lint`         | Lint and format code       | Runs Oxlint (any warning fails), `cargo fmt` and `bun fmt`.                                                                                             |
+| `just build`        | Compile release binary     | Builds frontend assets and embeds them into `target/release/zero-g`.                                                                                    |
+| `just seed`         | Populate mock data         | Adds example providers, keys and logs to an initialized development database; stop the server first.                                                    |
+| `just api-generate` | Sync frontend API clients  | Regenerates Orval clients from OpenAPI spec.                                                                                                            |
 
 ---
 
@@ -43,78 +42,49 @@ flowchart LR
 ```
 zero-g/
 ├── backend/
-│   ├── database.rs          # Turso / SQLite connection pool
-│   ├── storage.rs           # Toasty models & schemas
-│   ├── server/              # Axum handlers, observability, and dashboard APIs
-│   │   └── observability/   # Request storage, retention, aggregation, and tests
-│   └── provider/            # LLM provider translation & passthrough engines
-│       ├── antigravity/     # Model routing, payload conversion, and OAuth
-│       ├── codex/           # ChatGPT payload and streaming translation
-│       ├── claude/          # Anthropic OAuth integration
-│       └── common/          # Provider traits, retry helpers, and shared SSE framing
-├── frontend/
-│   ├── src/
-│   │   ├── routes/          # TanStack Router page layouts
-│   │   ├── components/      # Reusable UI widgets (shadcn, charts)
-│   │   ├── routes/__root.tsx # Shared page layout, title, and actions
-│   │   ├── components/KeyForm.tsx # Virtual key form and expiration controls
-│   │   ├── components/      # Charts, log table, request/response views and related tests
-│   │   ├── *Interactions.cases.tsx # Feature-grouped interaction tests
-│   │   └── server/api/      # Generated fetch client and Zod schemas; separate query wrappers
+│   ├── database.rs          # Turso / SQLite connection
+│   ├── storage.rs           # Toasty models
+│   ├── server/              # Axum handlers and dashboard APIs
+│   │   └── observability/   # Request capture, retention, dashboard, logs
+│   └── provider/            # One directory per provider
+│       └── common/          # Shared traits, retry, SSE framing
+├── frontend/src/
+│   ├── routes/              # TanStack Router pages (__root.tsx: shared layout)
+│   ├── components/          # UI widgets, charts, log views and their tests
+│   ├── *Interactions.cases.tsx  # Feature-grouped interaction tests
+│   └── server/api/          # Generated client and Zod schemas
 └── toasty/                  # Database migrations
 ```
 
-Related Rust implementation and test modules live together in named directories
-with `mod.rs` as their entry point.
+- Rust modules with tests live in named directories with `mod.rs` as entry.
+- OAuth providers keep their stored credential fields private in their own `auth.rs`.
 
-OAuth providers define their stored credential fields in their own `auth.rs`;
-Antigravity and Codex keep those structures private to the provider module.
+### Observability
 
-The dashboard shows requests and reported input/output token totals by provider
-over time. Missing counts remain unreported rather than being treated as zero;
-provider totals can be partial when an upstream reports only one token count.
-Time-series charts span the selected date range, including periods without requests.
-The request log response viewer reconstructs supported streamed and JSON
-responses, with a raw view for the original captured bytes. Captured responses
-are limited to 100 MiB, so the readable view may be incomplete.
+| Endpoint             | Handler        | Serves                                                                                |
+| -------------------- | -------------- | ------------------------------------------------------------------------------------- |
+| `GET /api/dashboard` | `dashboard.rs` | Totals and charts for the whole selected range                                        |
+| `GET /api/logs`      | `logs.rs`      | One page of log metadata: `page` (from 1), `limit` 1-200 (default 20), matching total |
+| `GET /api/logs/{id}` | `logs.rs`      | Captured request and response bodies                                                  |
 
-The logs page searches and sorts all matching requests on the server, then loads
-one page of metadata at a time. Captured bodies are fetched only when a request
-is opened. `GET /api/logs` accepts a one-based `page` and a `limit` from 1 to
-200 (default 20), and returns the matching total along with the selected page.
-Search matches provider, model, or path text (ASCII case-insensitive); a whole
-number also matches an exact log ID, status, or timestamp.
-Dashboard totals and charts cover the entire selected range, not just a page.
+All three need dashboard auth and share one filter (`filter.rs`): range, dimensions, statuses, choices.
 
-Both endpoints share one filter (`backend/server/observability/filter.rs`):
-time range, dimensions, statuses, and the filter choices offered for a range.
-`dashboard.rs` owns aggregation and `logs.rs` owns paging, search, and details.
-Queries are built with Toasty; there is no hand-written SQL.
-
-Request capture writes each completed or interrupted inference log, its
-captured bodies, and its filter snapshots in one transaction. Bodies live in
-`request_log_payloads`, zstd-compressed at level 3 (about 2.7x smaller on
-agent conversations), apart from the `request_logs` metadata, so listing,
-filtering, and dashboard scans never read prompt or response text. Retention
-prunes bodies after `body_retention_days` (default 7) and log rows after
-`log_retention_days` (default 90).
-Query tests seed historical records directly, while capture tests exercise
-request and response recording.
-
-The dashboard reads aggregate statistics from `GET /api/dashboard`. The log
-list uses `GET /api/logs`, and opening a request fetches its captured bodies
-from `GET /api/logs/{id}`. These endpoints require dashboard authentication.
-Their handlers and endpoint tests live in `backend/server/observability/dashboard.rs`
-and `backend/server/observability/logs.rs`, respectively.
+| Topic        | Rule                                                                                                                                 |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Search       | Provider, model or path text (ASCII case-insensitive); a whole number also matches log ID, status or timestamp                       |
+| Token totals | Missing counts stay unreported, never zero, so a provider total can be partial                                                       |
+| Charts       | Span the whole range, including periods with no requests                                                                             |
+| Storage      | Bodies live in `request_log_payloads`, zstd level 3 (~2.7x smaller), apart from `request_logs`; list and chart scans never read them |
+| Capture      | Log row, bodies and filter snapshots commit in one transaction; bodies capped at 100 MiB, so the readable view can be incomplete     |
+| Retention    | Bodies after `body_retention_days` (7), rows after `log_retention_days` (90)                                                         |
+| Queries      | Built with Toasty; no hand-written SQL                                                                                               |
 
 ---
 
 ## Contract & Schema Lifecycle
 
-Public dashboard and inference operations are documented in the OpenAPI
-contract. Provider-specific inference routes are internal dispatch targets, not
-additional public endpoints. Dashboard assets and the client-side fallback are
-served separately; the root dashboard entry is documented as `GET /`.
+- The OpenAPI contract covers public dashboard and inference operations, plus `GET /` for the dashboard.
+- Provider-specific inference routes are internal dispatch targets, not public endpoints.
 
 ```mermaid
 sequenceDiagram
