@@ -314,6 +314,7 @@ async fn key_revocation_lifecycle() {
     assert!(serde_json::from_value::<UpdateKey>(json!({})).is_ok());
 }
 /// Updating key name, providers, and models updates stored permissions.
+#[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn key_configuration_update_lifecycle() {
     let store = SettingsStore::new(Database::open(":memory:").await.unwrap(), &key(1))
@@ -376,6 +377,53 @@ async fn key_configuration_update_lifecycle() {
     assert_eq!(updated["keys"][0]["name"], "Renamed Key");
     assert_eq!(updated["keys"][0]["providers"], json!(["p1"]));
     assert_eq!(updated["keys"][0]["models"], json!(["m1"]));
+    // An empty patch succeeds and changes nothing.
+    assert_eq!(
+        update_key(
+            State(store.clone()),
+            Path(id.clone()),
+            Json(UpdateKey::default())
+        )
+        .await
+        .status(),
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        json_body(list_keys(State(store.clone())).await).await,
+        updated
+    );
+    // A soft-deleted provider is rejected exactly as key creation rejects it.
+    toasty::update!(ProviderRecord::filter_by_id("p1") { deleted: true })
+        .exec(&mut (*store.database.db).clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        update_key(
+            State(store.clone()),
+            Path(id.clone()),
+            Json(UpdateKey {
+                providers: Some(vec!["p1".into()]),
+                ..Default::default()
+            })
+        )
+        .await
+        .status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        create_key(
+            State(store.clone()),
+            Json(CreateKey {
+                name: "deleted".into(),
+                providers: vec!["p1".into()],
+                models: vec![],
+                expires_at: None,
+            }),
+        )
+        .await
+        .status(),
+        StatusCode::BAD_REQUEST
+    );
 }
 
 /// Context from unified dispatch is reused only when it matches; it never replaces

@@ -1,6 +1,6 @@
-use super::{SettingsStore, UpdateKey, internal_error, unix_now};
+use super::{SettingsStore, UpdateKey, internal_error, providers_exist, unix_now};
 use crate::database::transaction_with_retry;
-use crate::storage::{ProviderRecord, VirtualKey};
+use crate::storage::VirtualKey;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
@@ -20,7 +20,7 @@ pub(in crate::server) async fn update_key(
     Json(input): Json<UpdateKey>,
 ) -> Response {
     let result = transaction_with_retry!(store.database, |mut tx| {
-        let Some(row) = VirtualKey::filter_by_id(id.as_str())
+        let Some(mut row) = VirtualKey::filter_by_id(id.as_str())
             .first()
             .exec(&mut tx)
             .await?
@@ -30,71 +30,56 @@ pub(in crate::server) async fn update_key(
         if row.revoked_at.is_some() {
             return Ok(StatusCode::CONFLICT);
         }
-
-        let new_name = match &input.name {
-            Some(name) => {
-                let trimmed = name.trim().to_string();
-                if trimmed.is_empty() {
-                    return Ok(StatusCode::BAD_REQUEST);
-                }
-                trimmed
-            }
-            None => row.name,
+        let name = input.name.as_deref().map(str::trim);
+        if name.is_some_and(str::is_empty)
+            || input
+                .expires_at
+                .flatten()
+                .is_some_and(|expires| expires <= unix_now())
+        {
+            return Ok(StatusCode::BAD_REQUEST);
+        }
+        if let Some(providers) = &input.providers
+            && !providers_exist(&mut tx, providers).await?
+        {
+            return Ok(StatusCode::BAD_REQUEST);
+        }
+        if input
+            .models
+            .as_ref()
+            .is_some_and(|models| models.iter().any(|m| m.trim().is_empty()))
+        {
+            return Ok(StatusCode::BAD_REQUEST);
+        }
+        let (Ok(providers), Ok(models)) = (
+            input
+                .providers
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose(),
+            input.models.as_ref().map(serde_json::to_string).transpose(),
+        ) else {
+            return Ok(StatusCode::BAD_REQUEST);
         };
-
-        let new_expires_at = match input.expires_at {
-            Some(Some(expires)) => {
-                if expires <= unix_now() {
-                    return Ok(StatusCode::BAD_REQUEST);
-                }
-                Some(expires)
-            }
-            Some(None) => None,
-            None => row.expires_at,
-        };
-
-        let new_providers = match &input.providers {
-            Some(providers) => {
-                for provider_id in providers {
-                    let provider_row = ProviderRecord::filter_by_id(provider_id.as_str())
-                        .first()
-                        .exec(&mut tx)
-                        .await?;
-                    if provider_row.is_none() {
-                        return Ok(StatusCode::BAD_REQUEST);
-                    }
-                }
-                match serde_json::to_string(providers) {
-                    Ok(v) => v,
-                    Err(_) => return Ok(StatusCode::BAD_REQUEST),
-                }
-            }
-            None => row.providers,
-        };
-
-        let new_models = match &input.models {
-            Some(models) => {
-                if models.iter().any(|m| m.trim().is_empty()) {
-                    return Ok(StatusCode::BAD_REQUEST);
-                }
-                match serde_json::to_string(models) {
-                    Ok(v) => v,
-                    Err(_) => return Ok(StatusCode::BAD_REQUEST),
-                }
-            }
-            None => row.models,
-        };
-
-        VirtualKey::upsert_by_id(row.id.as_str())
-            .name(new_name)
-            .key_hash(row.key_hash)
-            .providers(new_providers)
-            .models(new_models)
-            .created_at(row.created_at)
-            .expires_at(new_expires_at)
-            .revoked_at(row.revoked_at)
-            .exec(&mut tx)
-            .await?;
+        // Only supplied fields are written; Toasty rejects an update with no
+        // assignments, so an empty patch writes nothing.
+        if name.is_none() && input.expires_at.is_none() && providers.is_none() && models.is_none() {
+            return Ok(StatusCode::NO_CONTENT);
+        }
+        let mut update = row.update();
+        if let Some(name) = name {
+            update.set_name(name.to_owned());
+        }
+        if let Some(expires_at) = input.expires_at {
+            update.set_expires_at(expires_at);
+        }
+        if let Some(providers) = providers {
+            update.set_providers(providers);
+        }
+        if let Some(models) = models {
+            update.set_models(models);
+        }
+        update.exec(&mut tx).await?;
         tx.commit().await?;
         Ok(StatusCode::NO_CONTENT)
     });

@@ -153,6 +153,23 @@ pub(crate) fn unix_now() -> i64 {
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
 }
 
+/// Whether every listed provider exists and has not been deleted.
+async fn providers_exist(tx: &mut toasty::Transaction<'_>, ids: &[String]) -> toasty::Result<bool> {
+    if ids.is_empty() {
+        return Ok(true);
+    }
+    let rows = crate::storage::ProviderRecord::filter(
+        crate::storage::ProviderRecord::fields()
+            .id()
+            .in_list(ids.to_vec()),
+    )
+    .exec(tx)
+    .await?;
+    Ok(ids
+        .iter()
+        .all(|id| rows.iter().any(|row| row.id == *id && !row.deleted)))
+}
+
 /// Virtual keys returned without their tokens.
 #[derive(Serialize, ToSchema)]
 struct KeyList {

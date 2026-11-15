@@ -1,6 +1,6 @@
-use super::{CreateKey, CreatedKey, SettingsStore, internal_error};
+use super::{CreateKey, CreatedKey, SettingsStore, internal_error, providers_exist};
 use crate::database::transaction_with_retry;
-use crate::storage::{ProviderRecord, VirtualKey};
+use crate::storage::VirtualKey;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
@@ -59,14 +59,8 @@ pub(in crate::server) async fn create_key(
         {
             return Ok(Some("Expiration must be in the future"));
         }
-        for provider_id in &input.providers {
-            let row = ProviderRecord::filter_by_id(provider_id.as_str())
-                .first()
-                .exec(&mut tx)
-                .await?;
-            if !matches!(row, Some(row) if !row.deleted) {
-                return Ok(Some("Invalid key provider"));
-            }
+        if !providers_exist(&mut tx, &input.providers).await? {
+            return Ok(Some("Invalid key provider"));
         }
         toasty::create!(VirtualKey {
             id: id.clone(),
