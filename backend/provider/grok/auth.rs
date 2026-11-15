@@ -129,15 +129,10 @@ pub(super) async fn access_token(
 ) -> Result<String, String> {
     let lock = crate::provider::login::credential_lock(credential).await;
     let _guard = lock.lock().await;
-    crate::provider::login::require_credential(store, provider, credential, kind)
-        .await
-        .map_err(|(_, e)| e)?;
-    let stored = store
-        .secret_get(&format!("credential.{credential}.credential"))
-        .await?
-        .ok_or("Credential is not connected")?;
     let mut creds: Credentials =
-        serde_json::from_str(&stored).map_err(|_| "Invalid stored xAI credentials")?;
+        crate::provider::credentials::load_oauth(store, provider, credential, kind, "xAI")
+            .await?
+            .ok_or("Credential is not connected")?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| "Invalid system clock")?

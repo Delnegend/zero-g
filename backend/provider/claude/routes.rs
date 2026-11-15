@@ -190,7 +190,7 @@ async fn inference(
         Err(e) => return failure(StatusCode::INTERNAL_SERVER_ERROR, &e),
     };
     let url = format!("{}/v1/messages?beta=true", client::API_ROOT);
-    let attempt = client::first_accepted(&state.settings, &provider.id, |creds, credential| {
+    let attempt = client::first_accepted(&state.settings, &provider, |creds, credential| {
         let mut payload = payload.clone();
         if let Some(object) = payload.as_object_mut() {
             let user_id = client::user_id(&credential.id, &session.id, creds.account_id.as_deref());

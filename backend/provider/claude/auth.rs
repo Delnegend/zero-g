@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::provider::login::{credential_lock, require_credential};
+use crate::provider::login::credential_lock;
 use crate::server::settings::SettingsStore;
 
 /// Public OAuth client used by Claude Code.
@@ -143,15 +143,10 @@ pub(super) async fn load(
 ) -> Result<Credentials, String> {
     let lock = credential_lock(id).await;
     let _guard = lock.lock().await;
-    require_credential(store, provider, id, "claude")
-        .await
-        .map_err(|(_, e)| e)?;
-    let secret = store
-        .secret_get(&format!("credential.{id}.credential"))
-        .await?
-        .ok_or("Claude credential is not connected")?;
     let creds: Credentials =
-        serde_json::from_str(&secret).map_err(|e| format!("Invalid Claude credential: {e}"))?;
+        crate::provider::credentials::load_oauth(store, provider, id, "claude", "Claude")
+            .await?
+            .ok_or("Claude credential is not connected")?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| e.to_string())?;

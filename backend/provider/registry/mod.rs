@@ -379,14 +379,13 @@ async fn update_provider(
                 "Provider kind or base URL already exists",
             )));
         }
-        ProviderRecord::upsert_by_id(id.as_str())
-            .name(name.clone())
-            .kind(row.kind.clone())
-            .base_url(base_url.clone())
-            .keyless(keyless)
-            .deleted(false)
-            .exec(&mut tx)
-            .await?;
+        toasty::update!(ProviderRecord::filter_by_id(id.as_str()) {
+            name: name.clone(),
+            base_url: base_url.clone(),
+            keyless: keyless
+        })
+        .exec(&mut tx)
+        .await?;
         tx.commit().await?;
         Ok(Ok(Provider {
             id: id.clone(),
@@ -417,35 +416,30 @@ async fn delete_provider(State(store): State<SettingsStore>, Path(id): Path<Stri
         else {
             return Ok(StatusCode::NOT_FOUND);
         };
-        let credential =
-            ProviderCredential::filter(ProviderCredential::fields().provider_id().eq(id.as_str()))
-                .first()
-                .exec(&mut tx)
-                .await?;
-        if credential.is_some() {
-            if row.keyless {
-                for cred in ProviderCredential::filter(
-                    ProviderCredential::fields().provider_id().eq(id.as_str()),
-                )
-                .exec(&mut tx)
-                .await?
-                {
-                    ProviderCredential::delete_by_id(&mut tx, cred.id.as_str()).await?;
-                    Secret::delete_by_name(&mut tx, &format!("credential.{}.api_key", cred.id))
-                        .await?;
-                }
-            } else {
-                return Ok(StatusCode::CONFLICT);
-            }
-        }
-        ProviderRecord::upsert_by_id(id.as_str())
-            .name(String::new())
-            .kind(row.kind)
-            .base_url(String::new())
-            .keyless(false)
-            .deleted(true)
+        let credentials = ProviderCredential::filter_by_provider_id(id.as_str())
             .exec(&mut tx)
             .await?;
+        if !credentials.is_empty() {
+            if !row.keyless {
+                return Ok(StatusCode::CONFLICT);
+            }
+            for cred in credentials {
+                ProviderCredential::delete_by_id(&mut tx, cred.id.as_str()).await?;
+                Secret::delete_by_name(
+                    &mut tx,
+                    &crate::provider::credentials::SecretKind::ApiKey.name(&cred.id),
+                )
+                .await?;
+            }
+        }
+        toasty::update!(ProviderRecord::filter_by_id(id.as_str()) {
+            name: String::new(),
+            base_url: String::new(),
+            keyless: false,
+            deleted: true
+        })
+        .exec(&mut tx)
+        .await?;
         tx.commit().await?;
         Ok(StatusCode::NO_CONTENT)
     });
@@ -502,11 +496,11 @@ pub(crate) async fn migrate_fixed_identities(store: &SettingsStore) -> Result<()
                 Ok(value) => value,
                 Err(e) => return Ok(Err(e.to_string())),
             };
-            VirtualKey::upsert_by_id(key.id.as_str()).name(key.name).key_hash(key.key_hash).providers(permissions).models(key.models).created_at(key.created_at).expires_at(key.expires_at).revoked_at(key.revoked_at).exec(&mut tx).await?;
+            toasty::update!(VirtualKey::filter_by_id(key.id.as_str()) { providers: permissions }).exec(&mut tx).await?;
         }
         for credential in ProviderCredential::all().exec(&mut tx).await? {
             if let Some(target) = remap.get(&credential.provider_id) {
-                ProviderCredential::upsert_by_id(credential.id.as_str()).provider_id(target.clone()).name(credential.name).weight(credential.weight).enabled(credential.enabled).exec(&mut tx).await?;
+                toasty::update!(ProviderCredential::filter_by_id(credential.id.as_str()) { provider_id: target.clone() }).exec(&mut tx).await?;
             }
         }
         for row in rows.iter().filter(|row| !row.deleted) {
@@ -514,7 +508,7 @@ pub(crate) async fn migrate_fixed_identities(store: &SettingsStore) -> Result<()
             let keyless = target == "chatjimmy";
             ProviderRecord::upsert_by_id(target).name(name.to_string()).kind(row.kind.clone()).base_url(row.base_url.clone()).keyless(keyless).deleted(false).exec(&mut tx).await?;
             if row.id != target {
-                ProviderRecord::upsert_by_id(row.id.as_str()).name(String::new()).kind(row.kind.clone()).base_url(String::new()).keyless(false).deleted(true).exec(&mut tx).await?;
+                toasty::update!(ProviderRecord::filter_by_id(row.id.as_str()) { name: String::new(), base_url: String::new(), keyless: false, deleted: true }).exec(&mut tx).await?;
             }
         }
         if !remap.is_empty() {

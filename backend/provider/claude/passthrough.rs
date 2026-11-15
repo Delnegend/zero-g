@@ -282,7 +282,7 @@ async fn forward(
         Ok(http) => http,
         Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, &message),
     };
-    let attempt = client::first_accepted(&state.settings, &provider.id, |creds, credential| {
+    let attempt = client::first_accepted(&state.settings, &provider, |creds, credential| {
         let body = match &outgoing {
             Outgoing::Exact(body) => Ok(body.clone()),
             Outgoing::Normalized {

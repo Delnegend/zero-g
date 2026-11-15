@@ -158,7 +158,7 @@ pub(super) async fn discover(
     provider: &Provider,
     identity: Option<&crate::provider::common::request_identity::RequestIdentity>,
 ) -> Result<Vec<Model>, String> {
-    let credentials = crate::provider::credentials::list(&state.settings, &provider.id).await?;
+    let credentials = crate::provider::credentials::list(&state.settings, provider).await?;
     let http = super::client::http()?;
     let mut last = "No connected Claude credentials".to_string();
     for credential in credentials {

@@ -14,14 +14,10 @@ pub(crate) async fn fetch(
     provider_id: &str,
     credential_id: &str,
 ) -> Result<QuotaSnapshot, String> {
-    let auth = AuthManager::load(store.clone(), provider_id, credential_id)
+    let credentials = AuthManager::credentials(store, provider_id, credential_id)
         .await
-        .map_err(|_| "Failed to load Antigravity credentials".to_string())?
+        .map_err(|_| "Failed to obtain Antigravity credentials".to_string())?
         .ok_or_else(|| "Antigravity credentials are unavailable".to_string())?;
-    let credentials = auth
-        .get_credentials()
-        .await
-        .map_err(|_| "Failed to obtain Antigravity credentials".to_string())?;
     if credentials.access_token.is_empty() || credentials.project_id.is_empty() {
         return Err("Antigravity credentials lack an access token or project ID".to_string());
     }

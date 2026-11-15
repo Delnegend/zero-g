@@ -245,12 +245,9 @@ async fn oauth_pkce_project_and_expiry() {
     let (_, failed) = request(&router, "POST", &poll, json!({"id":state})).await;
     assert_eq!(failed["status"], "failed");
     assert!(failed["error"].as_str().unwrap().contains("project ID"));
-    let stored = AuthManager::load(store.clone(), "agy", id)
+    let stored = AuthManager::credentials(&store, "agy", id)
         .await
         .unwrap()
-        .unwrap()
-        .get_credentials()
-        .await
         .unwrap();
     assert_eq!(stored.access_token, "old-access");
     assert_eq!(stored.refresh_token.as_deref(), Some("old-refresh"));
@@ -302,22 +299,21 @@ async fn oauth_pkce_project_and_expiry() {
             .0,
         StatusCode::OK
     );
-    let stored = AuthManager::load(store.clone(), "agy", id)
+    let stored = AuthManager::credentials(&store, "agy", id)
         .await
         .unwrap()
-        .unwrap()
-        .get_credentials()
-        .await
         .unwrap();
     assert_eq!(stored.access_token, "new-access");
     assert_eq!(stored.project_id, "real-project");
-    let manager = AuthManager::load(store.clone(), "agy", id)
+    AuthManager::refresh_at(&store, "agy", id, stored, &flows.token_url)
         .await
-        .unwrap()
         .unwrap();
-    manager.refresh_at(&flows.token_url).await.unwrap();
     assert_eq!(
-        manager.get_credentials().await.unwrap().access_token,
+        AuthManager::credentials(&store, "agy", id)
+            .await
+            .unwrap()
+            .unwrap()
+            .access_token,
         "refreshed-access"
     );
     let (_, flow) = request(&router, "POST", &start, json!({})).await;

@@ -74,7 +74,7 @@ async fn oauth_load_revalidates_and_reads_current_secret() {
     let error = load_oauth::<serde_json::Value>(&store, "owner", "account", "codex", "Codex")
         .await
         .unwrap_err();
-    assert!(error.starts_with("Failed to parse stored Codex credentials: "));
+    assert_eq!(error, "Invalid stored Codex credentials");
 }
 
 /// Dashboard credential lists expose account profiles without exposing OAuth secrets.
@@ -223,7 +223,11 @@ async fn legacy_merge_preserves_credentials_and_refuses_to_widen_key_access() {
         .unwrap();
     migrate_legacy(&store).await.unwrap();
     assert_eq!(registry::list(&store.database).await.unwrap().len(), 1);
-    let credentials = list(&store, "first").await.unwrap();
+    let first = registry::get(&store.database, "first")
+        .await
+        .unwrap()
+        .unwrap();
+    let credentials = list(&store, &first).await.unwrap();
     assert_eq!(credentials.len(), 2);
     let mut values = Vec::new();
     for credential in credentials {
@@ -259,5 +263,5 @@ async fn legacy_merge_preserves_credentials_and_refuses_to_widen_key_access() {
         .unwrap();
     assert_eq!(key.providers, "[\"first\"]");
     migrate_legacy(&store).await.unwrap();
-    assert_eq!(list(&store, "first").await.unwrap().len(), 2);
+    assert_eq!(list(&store, &first).await.unwrap().len(), 2);
 }

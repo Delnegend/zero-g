@@ -35,7 +35,7 @@ where
         }
         return Ok(response);
     }
-    let credentials = crate::provider::credentials::list(settings, &provider.id)
+    let credentials = crate::provider::credentials::list(settings, provider)
         .await
         .map_err(|_| settings_error())?;
     let mut last = None;

@@ -64,30 +64,22 @@ where
     F: Fn(crate::provider::antigravity::Credentials) -> Fut + Send + Sync,
     Fut: Future<Output = Result<T, UpstreamError>> + Send,
 {
-    let credentials = crate::provider::credentials::list(&state.settings, &provider.id)
+    let credentials = crate::provider::credentials::list(&state.settings, provider)
         .await
         .map_err(PoolError::Internal)?;
     try_candidates(credentials, |credential| {
-        let store = state.settings.clone();
-        let provider_id = provider.id.clone();
         let operation = &operation;
         async move {
-            let auth = AuthManager::load(store, &provider_id, &credential.id)
+            let creds = AuthManager::credentials(&state.settings, &provider.id, &credential.id)
                 .await
-                .map_err(PoolError::Internal)?
-                .ok_or_else(|| {
-                    PoolError::Internal("Antigravity credentials no longer exist".into())
-                })?;
-            let creds =
-                auth.get_credentials()
-                    .await
-                    .map_err(|error| match error.upstream_status {
-                        status if retryable_status(status) => PoolError::Upstream(UpstreamError {
-                            status,
-                            message: error.message,
-                        }),
-                        _ => PoolError::Internal(error.message),
-                    })?;
+                .map_err(|error| match error.upstream_status {
+                    status if retryable_status(status) => PoolError::Upstream(UpstreamError {
+                        status,
+                        message: error.message,
+                    }),
+                    _ => PoolError::Internal(error.message),
+                })?
+                .ok_or_else(|| PoolError::Internal("Antigravity credentials no longer exist".into()))?;
             let result = operation(creds).await.map_err(PoolError::Upstream)?;
             if let Some(identity) = identity {
                 identity.set_credential(&credential.id, &credential.name);

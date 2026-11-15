@@ -220,7 +220,7 @@ async fn connection(
     {
         return (StatusCode::BAD_REQUEST, "Invalid management key").into_response();
     }
-    let name = format!("credential.{credential}.openrouter_management_key");
+    let name = crate::provider::credentials::SecretKind::OpenrouterManagementKey.name(credential);
     let Ok(encrypted) = input
         .as_ref()
         .map(|input| store.encrypt(&name, &input.management_key))
@@ -344,25 +344,13 @@ async fn read_balance(response: reqwest::Response) -> Result<QuotaSnapshot, Stri
 impl common::QuotaProvider for Backend {
     async fn quota(
         store: &SettingsStore,
-        provider: &str,
+        _provider: &str,
         credential: &str,
     ) -> Result<QuotaSnapshot, String> {
-        // Do not allow an unscoped credential identifier to access another provider's secret.
-        let p = crate::provider::registry::get(&store.database, provider)
-            .await
-            .map_err(|_| "Failed to load provider")?;
-        if !matches!(p, Some(p) if p.kind == "openrouter")
-            || crate::provider::credentials::get(store, provider, credential)
-                .await
-                .map_err(|_| "Failed to load credential")?
-                .is_none()
-        {
-            return Err("OpenRouter credential not found".into());
-        }
         let key = store
-            .secret_get(&format!(
-                "credential.{credential}.openrouter_management_key"
-            ))
+            .secret_get(
+                &crate::provider::credentials::SecretKind::OpenrouterManagementKey.name(credential),
+            )
             .await
             .map_err(|_| "Failed to load OpenRouter management key")?
             .ok_or("Connect an OpenRouter management key to see the balance")?;

@@ -52,7 +52,7 @@ pub(crate) async fn go_usage(
     credential: &str,
 ) -> Result<QuotaSnapshot, String> {
     let key = store
-        .secret_get(&format!("credential.{credential}.api_key"))
+        .secret_get(&crate::provider::credentials::SecretKind::ApiKey.name(credential))
         .await?
         .ok_or("OpenCode Go API key is not connected")?;
     if key.is_empty() {

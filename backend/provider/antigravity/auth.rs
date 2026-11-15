@@ -1,9 +1,7 @@
-use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
-use tokio::sync::RwLock;
 use tracing::info;
 
 use crate::provider::login::CredentialError;
@@ -55,17 +53,7 @@ pub(super) struct Credentials {
 }
 
 /// Loads, refreshes, and persists credentials for one provider credential.
-#[derive(Clone)]
-pub(crate) struct AuthManager {
-    /// Current credentials shared by manager clones.
-    creds: Arc<RwLock<Credentials>>,
-    /// Store containing account credentials.
-    store: SettingsStore,
-    /// Provider that owns the credential.
-    provider_id: String,
-    /// Identifier of the credential in the settings store.
-    credential_id: String,
-}
+pub(crate) struct AuthManager;
 
 /// Fields returned by Google's token refresh endpoint.
 #[derive(Deserialize)]
@@ -77,76 +65,54 @@ struct TokenRefreshResponse {
 }
 
 impl AuthManager {
-    /// Loads stored credentials after validating their provider association.
-    pub(crate) async fn load(
-        store: SettingsStore,
+    /// Loads stored credentials after validating their provider association and
+    /// refreshes an access token nearing expiration, under one hold of the
+    /// credential lock.
+    pub(super) async fn credentials(
+        store: &SettingsStore,
         provider_id: &str,
         credential_id: &str,
-    ) -> Result<Option<Self>, String> {
+    ) -> Result<Option<Credentials>, CredentialError> {
         let lock = crate::provider::login::credential_lock(credential_id).await;
         let _guard = lock.lock().await;
-        let creds = crate::provider::credentials::load_oauth(
-            &store,
+        let Some(creds) = crate::provider::credentials::load_oauth::<Credentials>(
+            store,
             provider_id,
             credential_id,
             "agy",
             "Antigravity",
         )
-        .await?;
-        Ok(creds.map(|creds| Self {
-            creds: Arc::new(RwLock::new(creds)),
-            store,
-            provider_id: provider_id.to_string(),
-            credential_id: credential_id.to_string(),
-        }))
-    }
-
-    /// Reloads credentials and refreshes an access token nearing expiration.
-    pub(super) async fn get_credentials(&self) -> Result<Credentials, CredentialError> {
-        let lock = crate::provider::login::credential_lock(&self.credential_id).await;
-        let _guard = lock.lock().await;
-        let current: Credentials = crate::provider::credentials::load_oauth(
-            &self.store,
-            &self.provider_id,
-            &self.credential_id,
-            "agy",
-            "Antigravity",
-        )
         .await?
-        .ok_or_else(|| "Antigravity credentials no longer exist in the store".to_string())?;
-        *self.creds.write().await = current;
-        let needs_refresh = {
-            let r = self.creds.read().await;
-            r.expires_at.is_some_and(|exp| {
-                let now_ms = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
-                // Refresh if within 60 seconds of expiration.
-                now_ms.saturating_add(60_000) >= exp
-            })
+        else {
+            return Ok(None);
         };
-
-        if needs_refresh {
-            self.refresh().await?;
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
+        // Refresh if within 60 seconds of expiration.
+        if creds
+            .expires_at
+            .is_some_and(|exp| now_ms.saturating_add(60_000) >= exp)
+        {
+            return Self::refresh_at(store, provider_id, credential_id, creds, OAUTH_TOKEN_URL)
+                .await
+                .map(Some);
         }
-
-        let r = self.creds.read().await;
-        Ok(r.clone())
+        Ok(Some(creds))
     }
 
     /// Refreshes and saves the access token when a refresh token is available.
-    async fn refresh(&self) -> Result<(), CredentialError> {
-        self.refresh_at(OAUTH_TOKEN_URL).await
-    }
-
-    /// Refreshes using the supplied token endpoint.
-    pub(super) async fn refresh_at(&self, token_url: &str) -> Result<(), CredentialError> {
-        let current = self.creds.read().await.clone();
-        let refresh_token = current.refresh_token.clone();
-
-        let refresh_token = match refresh_token {
+    /// Callers hold the credential lock.
+    pub(super) async fn refresh_at(
+        store: &SettingsStore,
+        provider_id: &str,
+        credential_id: &str,
+        current: Credentials,
+        token_url: &str,
+    ) -> Result<Credentials, CredentialError> {
+        let refresh_token = match current.refresh_token.clone() {
             Some(t) if !t.is_empty() => t,
-            _ => return Ok(()), // No refresh token available
+            _ => return Ok(current), // No refresh token available
         };
 
         info!("Refreshing Google Antigravity access token...");
@@ -192,16 +158,9 @@ impl AuthManager {
         let mut updated = current;
         updated.access_token = token_resp.access_token;
         updated.expires_at = Some(new_expires_at);
-        Self::save(
-            &self.store,
-            &self.provider_id,
-            &self.credential_id,
-            &updated,
-        )
-        .await?;
-        *self.creds.write().await = updated;
+        Self::save(store, provider_id, credential_id, &updated).await?;
         info!("Access token refreshed successfully.");
-        Ok(())
+        Ok(updated)
     }
 
     /// Serializes and stores credentials for the specified provider credential.

@@ -148,8 +148,7 @@ async fn complete(
             );
         }
     };
-    let credentials = match crate::provider::credentials::list(&state.settings, &provider.id).await
-    {
+    let credentials = match crate::provider::credentials::list(&state.settings, &provider).await {
         Ok(credentials) => credentials,
         Err(message) => {
             return error(

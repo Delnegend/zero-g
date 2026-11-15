@@ -138,16 +138,15 @@ where
     F: Fn(Credentials) -> Fut + Send + Sync,
     Fut: Future<Output = Result<T, UpstreamError>> + Send,
 {
-    let credentials = crate::provider::credentials::list(&state.settings, &provider.id)
+    let credentials = crate::provider::credentials::list(&state.settings, provider)
         .await
         .map_err(PoolError::local)?;
     try_credentials(credentials, |credential| {
         let request = &request;
         async move {
-            let auth = CodexAuthManager::load(state.settings.clone(), &provider.id, &credential.id)
-                .await.map_err(PoolError::local)?
+            let creds = CodexAuthManager::credentials(&state.settings, &provider.id, &credential.id)
+                .await.map_err(PoolError::credential)?
                 .ok_or_else(|| PoolError::local("OpenAI Codex is not configured. Authenticate on the dashboard Providers page."))?;
-            let creds = auth.get_credentials().await.map_err(PoolError::credential)?;
             let result = request(creds).await.map_err(PoolError::upstream)?;
             if let Some(identity) = identity {
                 identity.set_credential(&credential.id, &credential.name);

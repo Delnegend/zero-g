@@ -5,6 +5,7 @@ pub(crate) mod catalog;
 pub(crate) mod routes;
 
 use crate::database::transaction_with_retry;
+use crate::provider::credentials::SecretKind;
 use crate::provider::quota::QuotaSnapshot;
 use crate::server::settings::SettingsStore;
 use crate::storage::Secret;
@@ -58,8 +59,8 @@ pub(crate) async fn connection(
         )
             .into_response();
     }
-    let session_name = format!("credential.{credential}.console_session");
-    let workspace_name = format!("credential.{credential}.console_workspace");
+    let session_name = SecretKind::ConsoleSession.name(credential);
+    let workspace_name = SecretKind::ConsoleWorkspace.name(credential);
     let encrypted = input
         .as_ref()
         .map(|input| {
@@ -165,11 +166,11 @@ pub(crate) async fn zen_balance(
     credential: &str,
 ) -> Result<QuotaSnapshot, String> {
     let session = store
-        .secret_get(&format!("credential.{credential}.console_session"))
+        .secret_get(&SecretKind::ConsoleSession.name(credential))
         .await?
         .ok_or("Connect an OpenCode Console session to see the balance")?;
     let workspace = store
-        .secret_get(&format!("credential.{credential}.console_workspace"))
+        .secret_get(&SecretKind::ConsoleWorkspace.name(credential))
         .await?
         .ok_or("Connect an OpenCode Console workspace to see the balance")?;
     let client = reqwest::Client::builder()

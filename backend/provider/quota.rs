@@ -7,10 +7,7 @@ use axum::{
 };
 use serde::Serialize;
 
-use crate::{
-    provider::{credentials, registry},
-    server::settings::SettingsStore,
-};
+use crate::{provider::registry, server::settings::SettingsStore, storage::ProviderCredential};
 
 /// Usage remaining within a provider-defined time window.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -76,9 +73,15 @@ async fn usage(
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    match credentials::get(&store, &provider_id, &credential_id).await {
-        Ok(Some(_)) => {}
-        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+    // Ownership is established here once; quota backends trust it and read only
+    // their own secrets.
+    match ProviderCredential::filter_by_id(credential_id.as_str())
+        .first()
+        .exec(&mut (*store.database.db).clone())
+        .await
+    {
+        Ok(Some(row)) if row.provider_id == provider_id => {}
+        Ok(_) => return StatusCode::NOT_FOUND.into_response(),
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
     let Some(capability) =
@@ -112,6 +115,7 @@ pub(crate) fn router(store: SettingsStore) -> Router {
 mod tests {
     use super::*;
     use crate::database::Database;
+    use crate::provider::credentials;
     use crate::provider::{
         go::parse_go,
         zen::{ConsoleConnection, connection, parse_balance},

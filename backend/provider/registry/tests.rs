@@ -6,6 +6,12 @@ use axum::{
 };
 use tower::ServiceExt;
 
+/// Selectable credentials of an existing provider.
+async fn pool(store: &SettingsStore, id: &str) -> Vec<credentials::Credential> {
+    let provider = get(&store.database, id).await.unwrap().unwrap();
+    credentials::list(store, &provider).await.unwrap()
+}
+
 /// Sends a JSON request to a registry test router.
 async fn request(
     router: &Router,
@@ -98,7 +104,7 @@ async fn credentials_are_isolated_and_encrypted() {
         store.secret_get(&secret_name).await.unwrap().as_deref(),
         Some("secret")
     );
-    assert_eq!(credentials::list(&store, "first").await.unwrap().len(), 1);
+    assert_eq!(pool(&store, "first").await.len(), 1);
     assert_eq!(
         request(
             &router,
@@ -110,7 +116,7 @@ async fn credentials_are_isolated_and_encrypted() {
         .0,
         StatusCode::OK
     );
-    assert!(credentials::list(&store, "first").await.unwrap().is_empty());
+    assert!(pool(&store, "first").await.is_empty());
     assert_eq!(
         request(
             &router,
@@ -126,7 +132,7 @@ async fn credentials_are_isolated_and_encrypted() {
         store.secret_get(&secret_name).await.unwrap().as_deref(),
         Some("")
     );
-    assert_eq!(credentials::list(&store, "first").await.unwrap().len(), 1);
+    assert_eq!(pool(&store, "first").await.len(), 1);
 }
 
 /// Both disabled and enabled credentials block deletion without losing secrets.
@@ -237,9 +243,9 @@ async fn credential_creation_and_provider_deletion_are_serialized() {
         (StatusCode::CREATED, StatusCode::CONFLICT) => {
             assert!(get(&store.database, "agy").await.unwrap().is_some());
             assert_eq!(
-                credentials::all(&store, "agy")
+                ProviderCredential::filter_by_provider_id("agy")
+                    .exec(&mut (*store.database.db).clone())
                     .await
-                    .unwrap()
                     .unwrap()
                     .len(),
                 1
@@ -722,7 +728,8 @@ async fn keyless_provider_lifecycle_and_cascade_delete() {
 
     assert!(get(&store.database, "ollama").await.unwrap().is_none());
     assert!(
-        credentials::list(&store, "ollama")
+        ProviderCredential::filter_by_provider_id("ollama")
+            .exec(&mut (*store.database.db).clone())
             .await
             .unwrap()
             .is_empty()

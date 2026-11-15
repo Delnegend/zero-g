@@ -120,7 +120,7 @@ pub(super) fn user_id(credential: &str, session: &str, account: Option<&str>) ->
 /// refused, the last refusal is returned so callers can report it.
 pub(super) async fn first_accepted<F, Fut>(
     store: &crate::server::settings::SettingsStore,
-    provider: &str,
+    provider: &crate::provider::registry::Provider,
     mut send: F,
 ) -> Result<(reqwest::Response, Credential), (StatusCode, String)>
 where
@@ -135,7 +135,7 @@ where
         "No connected Claude credentials".to_owned(),
     ));
     for credential in credentials {
-        let creds = match super::auth::load(store, provider, &credential.id).await {
+        let creds = match super::auth::load(store, &provider.id, &credential.id).await {
             Ok(creds) => creds,
             Err(e) => {
                 if last.is_err() {

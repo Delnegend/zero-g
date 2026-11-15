@@ -94,13 +94,18 @@ pub(crate) fn error(message: impl Into<String>) -> (StatusCode, String) {
     (StatusCode::BAD_REQUEST, message.into())
 }
 
-/// Requires a configured provider of the expected kind.
-pub(crate) async fn require_provider(
+/// Requires an enabled credential belonging to a provider of the expected kind.
+/// Reads the provider and credential rows directly: two point queries, no secrets.
+pub(crate) async fn require_credential(
     store: &crate::server::settings::SettingsStore,
-    id: &str,
+    provider_id: &str,
+    credential_id: &str,
     kind: &str,
 ) -> Result<(), (StatusCode, String)> {
-    let provider = crate::provider::registry::get(&store.database, id)
+    let mut db = (*store.database.db).clone();
+    let provider = crate::storage::ProviderRecord::filter_by_id(provider_id)
+        .first()
+        .exec(&mut db)
         .await
         .map_err(|_| {
             (
@@ -108,22 +113,14 @@ pub(crate) async fn require_provider(
                 "Failed to load provider".into(),
             )
         })?
+        .filter(|row| !row.deleted)
         .ok_or_else(|| (StatusCode::NOT_FOUND, "Provider not found".into()))?;
     if provider.kind != kind {
         return Err(error("Provider kind does not match login"));
     }
-    Ok(())
-}
-
-/// Requires an enabled credential belonging to a provider of the expected kind.
-pub(crate) async fn require_credential(
-    store: &crate::server::settings::SettingsStore,
-    provider_id: &str,
-    credential_id: &str,
-    kind: &str,
-) -> Result<(), (StatusCode, String)> {
-    require_provider(store, provider_id, kind).await?;
-    let credential = crate::provider::credentials::get(store, provider_id, credential_id)
+    let credential = crate::storage::ProviderCredential::filter_by_id(credential_id)
+        .first()
+        .exec(&mut db)
         .await
         .map_err(|_| {
             (
@@ -131,6 +128,7 @@ pub(crate) async fn require_credential(
                 "Failed to load credential".into(),
             )
         })?
+        .filter(|row| row.provider_id == provider_id)
         .ok_or_else(|| (StatusCode::NOT_FOUND, "Credential not found".into()))?;
     if !credential.enabled {
         return Err(error("Credential is disabled"));

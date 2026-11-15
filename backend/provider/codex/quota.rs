@@ -12,14 +12,11 @@ pub(crate) async fn fetch(
     provider_id: &str,
     credential_id: &str,
 ) -> Result<QuotaSnapshot, String> {
-    let auth = CodexAuthManager::load(store.clone(), provider_id, credential_id)
-        .await?
-        .ok_or_else(|| "OpenAI Codex is not connected".to_string())?;
     // Refresh errors can contain upstream response bodies; never return them to the caller.
-    let creds = auth
-        .get_credentials()
+    let creds = CodexAuthManager::credentials(store, provider_id, credential_id)
         .await
-        .map_err(|_| "Unable to load OpenAI Codex credentials".to_string())?;
+        .map_err(|_| "Unable to load OpenAI Codex credentials".to_string())?
+        .ok_or_else(|| "OpenAI Codex is not connected".to_string())?;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(15))

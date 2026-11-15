@@ -4,7 +4,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::provider::login::{credential_lock, require_credential};
+use crate::provider::login::credential_lock;
 use crate::server::settings::SettingsStore;
 
 /// Cursor OAuth token refresh endpoint.
@@ -60,15 +60,10 @@ pub(super) async fn access_token(
 ) -> Result<String, String> {
     let lock = credential_lock(credential).await;
     let _guard = lock.lock().await;
-    require_credential(store, provider, credential, "cursor")
-        .await
-        .map_err(|(_, message)| message)?;
-    let secret = store
-        .secret_get(&format!("credential.{credential}.credential"))
-        .await?
-        .ok_or_else(|| "Cursor credential has not been authorized".to_string())?;
     let mut credentials: Credentials =
-        serde_json::from_str(&secret).map_err(|e| format!("Invalid Cursor credential: {e}"))?;
+        crate::provider::credentials::load_oauth(store, provider, credential, "cursor", "Cursor")
+            .await?
+            .ok_or_else(|| "Cursor credential has not been authorized".to_string())?;
     if now_ms().saturating_add(300_000) >= credentials.expires_at {
         credentials = refresh(&reqwest::Client::new(), REFRESH_URL, &credentials).await?;
         save(store, provider, credential, &credentials).await?;

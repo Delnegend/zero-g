@@ -155,7 +155,7 @@ pub(crate) async fn fetch_catalog_pool(
     provider: &Provider,
     identity: Option<&crate::provider::common::request_identity::RequestIdentity>,
 ) -> Result<Vec<Model>, String> {
-    let credentials = crate::provider::credentials::list(&state.settings, &provider.id).await?;
+    let credentials = crate::provider::credentials::list(&state.settings, provider).await?;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(10))

@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::provider::login::CredentialError;
@@ -7,7 +6,6 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
-use tokio::sync::RwLock;
 use tracing::info;
 
 /// OAuth client identifier used by Codex.
@@ -55,17 +53,7 @@ pub(super) struct Credentials {
 }
 
 /// Loads, refreshes, and persists credentials for one Codex account.
-#[derive(Clone)]
-pub(crate) struct CodexAuthManager {
-    /// Cached credentials shared by manager clones.
-    creds: Arc<RwLock<Credentials>>,
-    /// Store holding the credential secret.
-    store: SettingsStore,
-    /// Provider owning the credential.
-    provider_id: String,
-    /// Identifier of the stored credential.
-    credential_id: String,
-}
+pub(crate) struct CodexAuthManager;
 
 /// OAuth token refresh response.
 #[derive(Deserialize)]
@@ -166,71 +154,49 @@ fn decode_jwt_payload(token: &str) -> Option<serde_json::Value> {
 }
 
 impl CodexAuthManager {
-    /// Loads a credential after checking its provider association.
-    pub(crate) async fn load(
-        store: SettingsStore,
+    /// Loads a credential after checking its provider association, refreshing it
+    /// within 60 seconds of expiry, all under one hold of the credential lock.
+    pub(super) async fn credentials(
+        store: &SettingsStore,
         provider_id: &str,
         credential_id: &str,
-    ) -> Result<Option<Self>, String> {
+    ) -> Result<Option<Credentials>, CredentialError> {
         let lock = crate::provider::login::credential_lock(credential_id).await;
         let _guard = lock.lock().await;
-        let creds = crate::provider::credentials::load_oauth(
-            &store,
+        let Some(creds) = crate::provider::credentials::load_oauth::<Credentials>(
+            store,
             provider_id,
             credential_id,
             "codex",
             "Codex",
         )
-        .await?;
-        Ok(creds.map(|creds| Self {
-            creds: Arc::new(RwLock::new(creds)),
-            store,
-            provider_id: provider_id.to_string(),
-            credential_id: credential_id.to_string(),
-        }))
-    }
-
-    /// Reloads stored credentials and refreshes tokens within 60 seconds of expiry.
-    pub(super) async fn get_credentials(&self) -> Result<Credentials, CredentialError> {
-        let lock = crate::provider::login::credential_lock(&self.credential_id).await;
-        let _guard = lock.lock().await;
-        let current: Credentials = crate::provider::credentials::load_oauth(
-            &self.store,
-            &self.provider_id,
-            &self.credential_id,
-            "codex",
-            "Codex",
-        )
         .await?
-        .ok_or_else(|| "Codex credentials no longer exist in the store".to_string())?;
-        *self.creds.write().await = current;
-        let needs_refresh = {
-            let r = self.creds.read().await;
-            r.expires_at.is_some_and(|exp| {
-                let now_ms = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
-                // Refresh if within 60 seconds of expiration.
-                now_ms.saturating_add(60_000) >= exp
-            })
+        else {
+            return Ok(None);
         };
-
-        if needs_refresh {
-            self.refresh().await?;
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
+        if creds
+            .expires_at
+            .is_some_and(|exp| now_ms.saturating_add(60_000) >= exp)
+        {
+            return Self::refresh_at(store, provider_id, credential_id, creds, CODEX_TOKEN_URL)
+                .await
+                .map(Some);
         }
-
-        let r = self.creds.read().await;
-        Ok(r.clone())
+        Ok(Some(creds))
     }
 
-    /// Refreshes the cached access token and persists the updated credentials.
-    async fn refresh(&self) -> Result<(), CredentialError> {
-        self.refresh_at(CODEX_TOKEN_URL).await
-    }
-
-    /// Refreshes using the supplied token endpoint.
-    async fn refresh_at(&self, token_url: &str) -> Result<(), CredentialError> {
-        let mut updated = self.creds.read().await.clone();
+    /// Refreshes credentials at the supplied token endpoint and persists them.
+    /// Callers hold the credential lock.
+    async fn refresh_at(
+        store: &SettingsStore,
+        provider_id: &str,
+        credential_id: &str,
+        mut updated: Credentials,
+        token_url: &str,
+    ) -> Result<Credentials, CredentialError> {
         let refresh_token = updated.refresh_token.clone();
 
         let Some(rt) = refresh_token else {
@@ -296,16 +262,9 @@ impl CodexAuthManager {
             updated.residency = profile.residency;
         }
         updated.expires_at = Some(new_expires_at);
-        Self::save(
-            &self.store,
-            &self.provider_id,
-            &self.credential_id,
-            &updated,
-        )
-        .await?;
-        *self.creds.write().await = updated;
+        Self::save(store, provider_id, credential_id, &updated).await?;
         info!("OpenAI Codex access token refreshed successfully.");
-        Ok(())
+        Ok(updated)
     }
 
     /// Persists OAuth credentials for the specified provider and credential.
@@ -402,13 +361,16 @@ mod tests {
         CodexAuthManager::save(&store, "codex", "account", &creds)
             .await
             .unwrap();
-        let manager = CodexAuthManager::load(store, "codex", "account")
+        let refreshed = CodexAuthManager::refresh_at(&store, "codex", "account", creds, &endpoint)
             .await
-            .unwrap()
             .unwrap();
-        manager.refresh_at(&endpoint).await.unwrap();
+        assert_eq!(refreshed.access_token, "refreshed");
         assert_eq!(
-            manager.get_credentials().await.unwrap().access_token,
+            CodexAuthManager::credentials(&store, "codex", "account")
+                .await
+                .unwrap()
+                .unwrap()
+                .access_token,
             "refreshed"
         );
         server.abort();

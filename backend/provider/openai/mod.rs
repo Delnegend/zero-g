@@ -89,11 +89,11 @@ pub(crate) async fn discover<E: ModelEndpoint>(
     let response = if provider.keyless {
         E::request(provider, "").await.map_err(str::to_owned)?
     } else {
-        let credentials = crate::provider::credentials::list(store, &provider.id).await?;
+        let credentials = crate::provider::credentials::list(store, provider).await?;
         let mut response = None;
         for credential in credentials {
             let key = store
-                .secret_get(&format!("credential.{}.api_key", credential.id))
+                .secret_get(&crate::provider::credentials::SecretKind::ApiKey.name(&credential.id))
                 .await
                 .map_err(|_| "Failed to load provider credentials")?
                 .ok_or("Provider credential is not connected")?;

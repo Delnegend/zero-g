@@ -179,7 +179,7 @@ async fn send(
         url.push('?');
         url.push_str(query);
     }
-    let credentials = crate::provider::credentials::list(&state.settings, &provider.id).await?;
+    let credentials = crate::provider::credentials::list(&state.settings, provider).await?;
     let mut last = None;
     let mut last_error = None;
     for credential in credentials {

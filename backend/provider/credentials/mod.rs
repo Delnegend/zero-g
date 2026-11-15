@@ -36,32 +36,84 @@ pub(crate) struct Credential {
     pub(crate) plan_type: Option<String>,
 }
 
-/// Builds public credential metadata and checks for its stored secret.
-async fn info(
+/// Provider-specific secrets stored per credential.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SecretKind {
+    /// API key for API-key providers.
+    ApiKey,
+    /// Serialized OAuth state for OAuth providers.
+    OAuth,
+    /// `OpenCode` Console session cookie.
+    ConsoleSession,
+    /// `OpenCode` Console workspace identifier.
+    ConsoleWorkspace,
+    /// `OpenRouter` management key used for balances.
+    OpenrouterManagementKey,
+}
+
+impl SecretKind {
+    /// Every kind, so deletion removes all of a credential's secrets.
+    pub(crate) const ALL: [Self; 5] = [
+        Self::ApiKey,
+        Self::OAuth,
+        Self::ConsoleSession,
+        Self::ConsoleWorkspace,
+        Self::OpenrouterManagementKey,
+    ];
+
+    /// The secret whose presence marks a credential of a provider kind as connected.
+    fn primary(kind: &str) -> Self {
+        if crate::provider::ProviderKind::from_str(kind)
+            .is_some_and(crate::provider::ProviderKind::oauth)
+        {
+            Self::OAuth
+        } else {
+            Self::ApiKey
+        }
+    }
+
+    /// Stored secret name, which is also the encryption associated data.
+    pub(crate) fn name(self, credential_id: &str) -> String {
+        let suffix = match self {
+            Self::ApiKey => "api_key",
+            Self::OAuth => "credential",
+            Self::ConsoleSession => "console_session",
+            Self::ConsoleWorkspace => "console_workspace",
+            Self::OpenrouterManagementKey => "openrouter_management_key",
+        };
+        format!("credential.{credential_id}.{suffix}")
+    }
+}
+
+/// Builds public credential metadata, checking which rows have their primary
+/// secret with one name query and no decryption.
+async fn describe(
     store: &SettingsStore,
-    row: ProviderCredential,
+    rows: Vec<ProviderCredential>,
     kind: &str,
-) -> Result<Credential, String> {
-    let suffix = if crate::provider::ProviderKind::from_str(kind)
-        .is_some_and(crate::provider::ProviderKind::oauth)
-    {
-        "credential"
-    } else {
-        "api_key"
-    };
-    let connected = store
-        .secret_get(&format!("credential.{}.{suffix}", row.id))
-        .await?
-        .is_some();
-    Ok(Credential {
-        id: row.id,
-        name: row.name,
-        weight: row.weight,
-        enabled: row.enabled,
-        connected,
-        email: None,
-        plan_type: None,
-    })
+) -> Result<Vec<Credential>, String> {
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+    let secret = SecretKind::primary(kind);
+    let names: Vec<String> = rows.iter().map(|row| secret.name(&row.id)).collect();
+    let present = Secret::filter(Secret::fields().name().in_list(names))
+        .select(Secret::fields().name())
+        .exec(&mut (*store.database.db).clone())
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(rows
+        .into_iter()
+        .map(|row| Credential {
+            connected: present.contains(&secret.name(&row.id)),
+            id: row.id,
+            name: row.name,
+            weight: row.weight,
+            enabled: row.enabled,
+            email: None,
+            plan_type: None,
+        })
+        .collect())
 }
 
 /// Profile information stored alongside an OAuth token.
@@ -76,13 +128,10 @@ struct AccountProfile {
 /// Populate dashboard-only identity metadata without parsing it on inference requests.
 async fn include_profiles(
     store: &SettingsStore,
-    provider_id: &str,
+    kind: &str,
     credentials: &mut [Credential],
 ) -> Result<(), String> {
-    let Some(provider) = registry::get(&store.database, provider_id).await? else {
-        return Ok(());
-    };
-    if !matches!(provider.kind.as_str(), "agy" | "codex" | "claude") {
+    if !matches!(kind, "agy" | "codex" | "claude") {
         return Ok(());
     }
     for credential in credentials
@@ -90,13 +139,13 @@ async fn include_profiles(
         .filter(|credential| credential.connected)
     {
         if let Some(secret) = store
-            .secret_get(&format!("credential.{}.credential", credential.id))
+            .secret_get(&SecretKind::OAuth.name(&credential.id))
             .await?
         {
             let profile: AccountProfile = serde_json::from_str(&secret)
                 .map_err(|_| "Invalid stored account profile".to_string())?;
             credential.email = profile.email.filter(|email| !email.trim().is_empty());
-            if provider.kind == "codex" {
+            if kind == "codex" {
                 credential.plan_type = profile.plan_type.filter(|plan| !plan.trim().is_empty());
             }
         }
@@ -104,56 +153,51 @@ async fn include_profiles(
     Ok(())
 }
 
-/// Retrieves a credential belonging to the named provider, if present.
-pub(crate) async fn get(
+/// Retrieves a credential belonging to a provider, if present.
+async fn get(
     store: &SettingsStore,
-    provider_id: &str,
+    provider: &registry::Provider,
     credential_id: &str,
 ) -> Result<Option<Credential>, String> {
-    let Some(provider) = registry::get(&store.database, provider_id).await? else {
-        return Ok(None);
-    };
     let row = ProviderCredential::filter_by_id(credential_id)
         .first()
         .exec(&mut (*store.database.db).clone())
         .await
-        .map_err(|e| e.to_string())?;
-    match row.filter(|row| row.provider_id == provider_id) {
-        Some(row) => Ok(Some(info(store, row, &provider.kind).await?)),
-        None => Ok(None),
-    }
+        .map_err(|e| e.to_string())?
+        .filter(|row| row.provider_id == provider.id);
+    Ok(describe(store, row.into_iter().collect(), &provider.kind)
+        .await?
+        .pop())
 }
 
-/// Lists credentials for a provider, or returns none if it does not exist.
-pub(crate) async fn all(
+/// Lists every credential of a provider.
+async fn all(
     store: &SettingsStore,
-    provider_id: &str,
-) -> Result<Option<Vec<Credential>>, String> {
-    let Some(provider) = registry::get(&store.database, provider_id).await? else {
-        return Ok(None);
-    };
-    let rows =
-        ProviderCredential::filter(ProviderCredential::fields().provider_id().eq(provider_id))
-            .exec(&mut (*store.database.db).clone())
-            .await
-            .map_err(|e| e.to_string())?;
-    let mut result = Vec::with_capacity(rows.len());
-    for row in rows {
-        result.push(info(store, row, &provider.kind).await?);
-    }
-    Ok(Some(result))
+    provider: &registry::Provider,
+) -> Result<Vec<Credential>, String> {
+    let rows = ProviderCredential::filter_by_provider_id(provider.id.as_str())
+        .exec(&mut (*store.database.db).clone())
+        .await
+        .map_err(|e| e.to_string())?;
+    describe(store, rows, &provider.kind).await
 }
 
-/// Draw without replacement, proportional to each remaining credential's weight.
+/// Draw enabled, connected credentials without replacement, proportional to
+/// each remaining credential's weight.
 pub(crate) async fn list(
     store: &SettingsStore,
-    provider_id: &str,
+    provider: &registry::Provider,
 ) -> Result<Vec<Credential>, String> {
-    let mut remaining: Vec<_> = all(store, provider_id)
+    let rows = ProviderCredential::filter_by_provider_id(provider.id.as_str())
+        .filter(ProviderCredential::fields().enabled().eq(true))
+        .exec(&mut (*store.database.db).clone())
+        .await
+        .map_err(|e| e.to_string())?;
+    let rows = rows.into_iter().filter(|row| row.weight > 0).collect();
+    let mut remaining: Vec<_> = describe(store, rows, &provider.kind)
         .await?
-        .unwrap_or_default()
         .into_iter()
-        .filter(|item| item.enabled && item.connected && item.weight > 0)
+        .filter(|item| item.connected)
         .collect();
     let mut result = Vec::with_capacity(remaining.len());
     while !remaining.is_empty() {
@@ -176,8 +220,9 @@ pub(crate) async fn list(
     Ok(result)
 }
 
-/// Loads typed OAuth state after revalidating its owner. The caller must hold
-/// the credential lock until it has finished using or refreshing the state.
+/// Loads typed OAuth state after revalidating its owner: the provider must exist
+/// with this kind and the credential must belong to it and be enabled. The caller
+/// must hold the credential lock until it has finished using or refreshing the state.
 pub(crate) async fn load_oauth<T: serde::de::DeserializeOwned>(
     store: &SettingsStore,
     provider_id: &str,
@@ -189,11 +234,11 @@ pub(crate) async fn load_oauth<T: serde::de::DeserializeOwned>(
         .await
         .map_err(|(_, message)| message)?;
     store
-        .secret_get(&format!("credential.{credential_id}.credential"))
+        .secret_get(&SecretKind::OAuth.name(credential_id))
         .await?
         .map(|json| {
             serde_json::from_str(&json)
-                .map_err(|e| format!("Failed to parse stored {provider_name} credentials: {e}"))
+                .map_err(|_| format!("Invalid stored {provider_name} credentials"))
         })
         .transpose()
 }
@@ -227,7 +272,7 @@ pub(crate) async fn save_oauth(
     kind: &str,
     value: &str,
 ) -> Result<(), String> {
-    let name = format!("credential.{credential_id}.credential");
+    let name = SecretKind::OAuth.name(credential_id);
     let encrypted = store.encrypt(&name, value)?;
     transaction_with_retry!(store.database, |mut tx| {
         let provider = ProviderRecord::filter_by_id(provider_id).first().exec(&mut tx).await?;
@@ -298,16 +343,38 @@ async fn list_endpoint(
     State(store): State<SettingsStore>,
     Path(provider_id): Path<String>,
 ) -> Response {
-    match all(&store, &provider_id).await {
-        Ok(Some(mut credentials)) => {
-            match include_profiles(&store, &provider_id, &mut credentials).await {
-                Ok(()) => Json(CredentialsResponse { credentials }).into_response(),
-                Err(e) => internal(&e),
-            }
-        }
-        Ok(None) => (StatusCode::NOT_FOUND, "Provider not found").into_response(),
+    let provider = match registry::get(&store.database, &provider_id).await {
+        Ok(Some(provider)) => provider,
+        Ok(None) => return (StatusCode::NOT_FOUND, "Provider not found").into_response(),
+        Err(e) => return internal(&e),
+    };
+    let mut credentials = match all(&store, &provider).await {
+        Ok(credentials) => credentials,
+        Err(e) => return internal(&e),
+    };
+    match include_profiles(&store, &provider.kind, &mut credentials).await {
+        Ok(()) => Json(CredentialsResponse { credentials }).into_response(),
         Err(e) => internal(&e),
     }
+}
+
+/// Reloads a credential after a write, optionally with its account profile.
+async fn written(
+    store: &SettingsStore,
+    provider_id: &str,
+    id: &str,
+    profile: bool,
+) -> Result<Option<Credential>, String> {
+    let Some(provider) = registry::get(&store.database, provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(mut credential) = get(store, &provider, id).await? else {
+        return Ok(None);
+    };
+    if profile {
+        include_profiles(store, &provider.kind, std::slice::from_mut(&mut credential)).await?;
+    }
+    Ok(Some(credential))
 }
 
 /// Creates a credential and stores any supplied secret.
@@ -324,7 +391,7 @@ async fn create(
         crate::provider::login::credential_lock(&format!("provider:{provider_id}")).await;
     let _provider_guard = provider_lock.lock().await;
     let id = uuid::Uuid::new_v4().to_string();
-    let secret_name = format!("credential.{id}.api_key");
+    let secret_name = SecretKind::ApiKey.name(&id);
     let encrypted = match input
         .api_key
         .as_deref()
@@ -371,7 +438,7 @@ async fn create(
         Ok(StatusCode::CREATED)
     });
     match result {
-        Ok(StatusCode::CREATED) => match get(&store, &provider_id, &id).await {
+        Ok(StatusCode::CREATED) => match written(&store, &provider_id, &id, false).await {
             Ok(Some(value)) => (StatusCode::CREATED, Json(value)).into_response(),
             Ok(None) => (StatusCode::NOT_FOUND, "Credential not found").into_response(),
             Err(e) => internal(&e),
@@ -396,7 +463,7 @@ async fn update(
     }
     let lock = crate::provider::login::credential_lock(&id).await;
     let _guard = lock.lock().await;
-    let secret_name = format!("credential.{id}.api_key");
+    let secret_name = SecretKind::ApiKey.name(&id);
     let encrypted = match input
         .api_key
         .as_deref()
@@ -432,13 +499,13 @@ async fn update(
         {
             return Ok(StatusCode::BAD_REQUEST);
         }
-        ProviderCredential::upsert_by_id(id.as_str())
-            .provider_id(provider_id.clone())
-            .name(input.name.clone())
-            .weight(input.weight)
-            .enabled(input.enabled)
-            .exec(&mut tx)
-            .await?;
+        toasty::update!(ProviderCredential::filter_by_id(id.as_str()) {
+            name: input.name.clone(),
+            weight: input.weight,
+            enabled: input.enabled
+        })
+        .exec(&mut tx)
+        .await?;
         if let Some(value) = &encrypted {
             Secret::upsert_by_name(secret_name.as_str())
                 .value(value.clone())
@@ -449,14 +516,8 @@ async fn update(
         Ok(StatusCode::OK)
     });
     match result {
-        Ok(StatusCode::OK) => match get(&store, &provider_id, &id).await {
-            Ok(Some(mut value)) => {
-                match include_profiles(&store, &provider_id, std::slice::from_mut(&mut value)).await
-                {
-                    Ok(()) => Json(value).into_response(),
-                    Err(e) => internal(&e),
-                }
-            }
+        Ok(StatusCode::OK) => match written(&store, &provider_id, &id, true).await {
+            Ok(Some(value)) => Json(value).into_response(),
             Ok(None) => (StatusCode::NOT_FOUND, "Credential not found").into_response(),
             Err(e) => internal(&e),
         },
@@ -490,15 +551,14 @@ async fn delete(
         {
             return Ok(false);
         }
-        for suffix in [
-            "api_key",
-            "credential",
-            "console_session",
-            "console_workspace",
-            "openrouter_management_key",
-        ] {
-            Secret::delete_by_name(&mut tx, format!("credential.{id}.{suffix}").as_str()).await?;
-        }
+        Secret::filter(
+            Secret::fields()
+                .name()
+                .in_list(SecretKind::ALL.map(|kind| kind.name(&id)).to_vec()),
+        )
+        .delete()
+        .exec(&mut tx)
+        .await?;
         ProviderCredential::delete_by_id(&mut tx, id.as_str()).await?;
         tx.commit().await?;
         Ok(true)
@@ -587,7 +647,12 @@ pub(crate) async fn migrate_legacy(store: &SettingsStore) -> Result<(), String> 
         let old_name = format!("provider.{}.{suffix}", provider.id);
         let value = store.secret_get(&old_name).await?;
         let value = value.or_else(|| descriptor.legacy.key.map(str::to_owned));
-        let new_name = format!("credential.{id}.{suffix}");
+        let new_name = if kind.oauth() {
+            SecretKind::OAuth
+        } else {
+            SecretKind::ApiKey
+        }
+        .name(&id);
         let encrypted = value
             .as_deref()
             .map(|value| store.encrypt(&new_name, value))
@@ -615,14 +680,14 @@ pub(crate) async fn migrate_legacy(store: &SettingsStore) -> Result<(), String> 
             for provider in &mut permissions { if let Some(id) = remap.get(provider) { *provider = id.clone(); } }
             permissions.sort(); permissions.dedup();
             let permissions = match serde_json::to_string(&permissions) { Ok(value) => value, Err(e) => return Ok(Err(e.to_string())) };
-            VirtualKey::upsert_by_id(key.id.as_str()).name(key.name).key_hash(key.key_hash).providers(permissions).models(key.models).created_at(key.created_at).expires_at(key.expires_at).revoked_at(key.revoked_at).exec(&mut tx).await?;
+            toasty::update!(VirtualKey::filter_by_id(key.id.as_str()) { providers: permissions }).exec(&mut tx).await?;
         }
         for (provider, target, id, old_name, new_name, encrypted) in &entries {
             toasty::create!(ProviderCredential { id: id.clone(), provider_id: target.clone(), name: provider.name.clone(), weight: 1, enabled: true }).exec(&mut tx).await?;
             if let Some(value) = encrypted { Secret::upsert_by_name(new_name.as_str()).value(value.clone()).exec(&mut tx).await?; }
             Secret::delete_by_name(&mut tx, old_name.as_str()).await?;
             if provider.id != *target {
-                ProviderRecord::upsert_by_id(provider.id.as_str()).name(String::new()).kind(provider.kind.clone()).base_url(String::new()).keyless(false).deleted(true).exec(&mut tx).await?;
+                toasty::update!(ProviderRecord::filter_by_id(provider.id.as_str()) { name: String::new(), base_url: String::new(), keyless: false, deleted: true }).exec(&mut tx).await?;
             }
         }
         Setting::upsert_by_name(MARKER).value("1".to_string()).exec(&mut tx).await?;

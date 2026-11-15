@@ -262,17 +262,16 @@ mod tests {
                 .await
                 .unwrap();
         }
-        let first = AuthManager::load(store.clone(), "agy", &ids[0])
-            .await
-            .unwrap()
-            .unwrap();
-        let second = AuthManager::load(store.clone(), "agy", &ids[1])
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(first.get_credentials().await.unwrap().access_token, "first");
+        let load = |id: String| {
+            let store = store.clone();
+            async move { AuthManager::credentials(&store, "agy", &id).await }
+        };
         assert_eq!(
-            second.get_credentials().await.unwrap().access_token,
+            load(ids[0].clone()).await.unwrap().unwrap().access_token,
+            "first"
+        );
+        assert_eq!(
+            load(ids[1].clone()).await.unwrap().unwrap().access_token,
             "second"
         );
         let replacement = Credentials {
@@ -286,11 +285,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            first.get_credentials().await.unwrap().access_token,
+            load(ids[0].clone()).await.unwrap().unwrap().access_token,
             "replacement"
         );
         assert_eq!(
-            second.get_credentials().await.unwrap().access_token,
+            load(ids[1].clone()).await.unwrap().unwrap().access_token,
             "second"
         );
         assert!(
@@ -299,12 +298,7 @@ mod tests {
                 .is_err()
         );
         assert!(
-            AuthManager::load(store.clone(), "codex", &ids[0])
-                .await
-                .is_err()
-        );
-        assert!(
-            crate::provider::codex::auth::CodexAuthManager::load(store.clone(), "codex", &ids[0])
+            AuthManager::credentials(&store, "codex", &ids[0])
                 .await
                 .is_err()
         );
@@ -331,7 +325,7 @@ mod tests {
             expires_at: None,
             email: None,
         };
-        assert!(first.get_credentials().await.is_err());
+        assert!(load(ids[0].clone()).await.is_err());
         assert!(
             AuthManager::save(&store, "agy", &ids[0], &late)
                 .await
@@ -347,7 +341,7 @@ mod tests {
             credentials.clone().oneshot(request).await.unwrap().status(),
             StatusCode::NO_CONTENT
         );
-        assert!(second.get_credentials().await.is_err());
+        assert!(load(ids[1].clone()).await.is_err());
         assert!(
             AuthManager::save(&store, "agy", &ids[1], &late)
                 .await
