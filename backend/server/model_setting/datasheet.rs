@@ -5,9 +5,7 @@ use futures_util::StreamExt;
 use serde::de::{DeserializeSeed, MapAccess, Visitor};
 use serde_json::{Value, json};
 
-use crate::database::transaction_with_retry;
 use crate::server::settings::SettingsStore;
-use crate::storage::Setting;
 
 /// Hardcoded Bifrost pricing datasheet endpoint.
 pub(crate) const BIFROST_PRICING_URL: &str = "https://getbifrost.ai/datasheet";
@@ -30,9 +28,9 @@ fn validate_url(input: &str) -> Result<reqwest::Url, &'static str> {
 }
 
 /// Settings key for the cached pricing sheet.
-const PRICING_KEY: &str = "model_pricing_datasheet";
+pub(crate) const PRICING_KEY: &str = "model_pricing_datasheet";
 /// Settings key for the cached model parameters sheet.
-const PARAMETERS_KEY: &str = "model_parameters_datasheet";
+pub(crate) const PARAMETERS_KEY: &str = "model_parameters_datasheet";
 // The Bifrost parameters datasheet is tens of megabytes. Bound both the wire
 // body and time spent downloading it without rejecting the published sheet.
 /// Maximum accepted size of a downloaded sheet.
@@ -44,7 +42,7 @@ const FETCH_TIMEOUT: Duration = Duration::from_secs(120);
 static SYNC_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// Cached datasheet entries indexed by their source keys.
-#[derive(Default)]
+#[derive(Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ModelData {
     /// Pricing records.
     pub(crate) pricing: Value,
@@ -121,24 +119,17 @@ pub(super) async fn sync_datasheets_from(
     save_datasheets(store, &pricing, &parameters).await
 }
 
-/// Atomically save both sheets to the database.
+/// Atomically save both sheets with the catalog's datasheet subset.
 async fn save_datasheets(
     store: &SettingsStore,
     pricing: &str,
     parameters: &str,
 ) -> Result<(), String> {
-    transaction_with_retry!(store.database, |mut tx| {
-        Setting::upsert_by_name(PRICING_KEY)
-            .value(pricing)
-            .exec(&mut tx)
-            .await?;
-        Setting::upsert_by_name(PARAMETERS_KEY)
-            .value(parameters)
-            .exec(&mut tx)
-            .await?;
-        tx.commit().await?;
-        Ok(())
-    })
+    crate::server::model_catalog::save_inputs(
+        store,
+        &[(PRICING_KEY, pricing), (PARAMETERS_KEY, parameters)],
+    )
+    .await
     .map_err(|_| "Unable to save datasheets".to_string())
 }
 
@@ -262,7 +253,7 @@ impl<'de> Visitor<'de> for RelevantEntries<'_> {
 }
 
 /// Filter a cached datasheet to discovered models.
-fn filter_datasheet(sheet: &str, models: &CatalogModels) -> Result<Value, String> {
+pub(crate) fn filter_datasheet(sheet: &str, models: &CatalogModels) -> Result<Value, String> {
     let mut deserializer = serde_json::Deserializer::from_str(sheet);
     let selected = RelevantEntries(models)
         .deserialize(&mut deserializer)
@@ -271,24 +262,18 @@ fn filter_datasheet(sheet: &str, models: &CatalogModels) -> Result<Value, String
     Ok(Value::Object(selected))
 }
 
-/// Load each cached sheet once, retaining only records relevant to this catalog.
-pub(crate) async fn catalog_data(
-    store: &SettingsStore,
+/// Filter both cached sheets, absent ones as empty, to records relevant to a catalog.
+pub(crate) fn catalog_data(
+    pricing: Option<&str>,
+    parameters: Option<&str>,
     models: &CatalogModels,
 ) -> Result<ModelData, String> {
-    async fn read(
-        store: &SettingsStore,
-        key: &str,
-        models: &CatalogModels,
-    ) -> Result<Value, String> {
-        store
-            .setting_get(key)
-            .await?
-            .map_or_else(|| Ok(json!({})), |value| filter_datasheet(&value, models))
-    }
+    let filter = |sheet: Option<&str>| {
+        sheet.map_or_else(|| Ok(json!({})), |sheet| filter_datasheet(sheet, models))
+    };
     Ok(ModelData {
-        pricing: read(store, PRICING_KEY, models).await?,
-        parameters: read(store, PARAMETERS_KEY, models).await?,
+        pricing: filter(pricing)?,
+        parameters: filter(parameters)?,
     })
 }
 

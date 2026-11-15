@@ -13,6 +13,9 @@ use serde_with::{DefaultOnError, VecSkipError, serde_as};
 use crate::database::transaction_with_retry;
 use crate::openai::Model;
 use crate::provider::{catalog::discover, registry};
+use crate::server::model_setting::{
+    CatalogModels, ModelData, PARAMETERS_KEY, PRICING_KEY, catalog_data,
+};
 use crate::server::{AppState, settings::SettingsStore};
 use crate::storage::Setting;
 
@@ -26,6 +29,12 @@ use refresh::__path_post_refresh;
 
 /// Settings key for the persisted discovery snapshot.
 const CACHE_KEY: &str = "model_catalog";
+/// Settings key for the datasheet entries relevant to the persisted snapshot.
+const SUBSET_KEY: &str = "model_catalog_datasheets";
+/// Serializes writers of the snapshot, the datasheets, and their subset, so a
+/// subset is never computed from a stale copy of the other input. Held only
+/// around filtering and the write, never across downloads or discovery.
+static SUBSET_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 /// Maximum time allowed for one provider discovery.
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -243,18 +252,133 @@ async fn load(store: &SettingsStore) -> Result<CachedCatalog, String> {
     Ok(CachedCatalog { providers })
 }
 
-/// Persist a catalog snapshot transactionally.
+/// Persist a catalog snapshot transactionally, with its datasheet subset.
 async fn save(store: &SettingsStore, catalog: &CachedCatalog) -> Result<(), String> {
     let value = serde_json::to_string(catalog).map_err(|e| e.to_string())?;
+    save_inputs(store, &[(CACHE_KEY, value.as_str())]).await
+}
+
+/// Save catalog inputs (the snapshot or the datasheets) and recompute the
+/// datasheet subset in the same transaction. A sheet that cannot be filtered
+/// does not block the save; the subset is removed so reads report it as today.
+pub(crate) async fn save_inputs(
+    store: &SettingsStore,
+    inputs: &[(&str, &str)],
+) -> Result<(), String> {
+    let _guard = SUBSET_LOCK.lock().await;
+    let subset = match subset_for(store, inputs, None).await? {
+        Ok(data) => Some(serde_json::to_string(&data).map_err(|e| e.to_string())?),
+        Err(error) => {
+            tracing::warn!("Unable to filter cached model datasheets: {error}");
+            None
+        }
+    };
     transaction_with_retry!(store.database, |mut tx| {
-        Setting::upsert_by_name(CACHE_KEY)
-            .value(value.as_str())
-            .exec(&mut tx)
-            .await?;
+        for (name, value) in inputs {
+            Setting::upsert_by_name(*name)
+                .value(*value)
+                .exec(&mut tx)
+                .await?;
+        }
+        match &subset {
+            Some(value) => {
+                Setting::upsert_by_name(SUBSET_KEY)
+                    .value(value.as_str())
+                    .exec(&mut tx)
+                    .await?;
+            }
+            None => Setting::delete_by_name(&mut tx, SUBSET_KEY).await?,
+        }
         tx.commit().await?;
         Ok(())
     })
     .map_err(|e| e.to_string())
+}
+
+/// Filter the datasheets to the models of the persisted snapshot and `extra`,
+/// using pending `inputs` in place of stored values. The outer error is a
+/// storage failure; the inner one an unusable snapshot or sheet.
+async fn subset_for(
+    store: &SettingsStore,
+    inputs: &[(&str, &str)],
+    extra: Option<&CachedCatalog>,
+) -> Result<Result<ModelData, String>, String> {
+    let mut stored = Vec::with_capacity(3);
+    for key in [CACHE_KEY, PRICING_KEY, PARAMETERS_KEY] {
+        if !inputs.iter().any(|(name, _)| *name == key) {
+            stored.push((key, store.setting_get(key).await?));
+        }
+    }
+    let value = |key: &str| {
+        inputs
+            .iter()
+            .find(|(name, _)| *name == key)
+            .map(|(_, value)| *value)
+            .or_else(|| {
+                stored
+                    .iter()
+                    .find(|(name, _)| *name == key)
+                    .and_then(|(_, value)| value.as_deref())
+            })
+    };
+    let persisted = match value(CACHE_KEY).map(serde_json::from_str::<CachedCatalog>) {
+        Some(Ok(catalog)) => catalog,
+        Some(Err(error)) => return Ok(Err(error.to_string())),
+        None => CachedCatalog::default(),
+    };
+    let models = CatalogModels::from_entries(
+        persisted
+            .providers
+            .iter()
+            .chain(extra.into_iter().flat_map(|catalog| &catalog.providers))
+            .flat_map(|provider| {
+                provider.models.iter().map(|model| {
+                    (
+                        provider.id.as_str(),
+                        provider.kind.as_str(),
+                        model.id.as_str(),
+                    )
+                })
+            }),
+    );
+    Ok(catalog_data(
+        value(PRICING_KEY),
+        value(PARAMETERS_KEY),
+        &models,
+    ))
+}
+
+/// The persisted datasheet subset, if present and readable.
+async fn stored_subset(store: &SettingsStore) -> Option<ModelData> {
+    let value = store.setting_get(SUBSET_KEY).await.ok().flatten()?;
+    serde_json::from_str(&value).ok()
+}
+
+/// Datasheet entries for a catalog view: the persisted subset, or, when it is
+/// missing (first start after upgrade, or no writer has run), one filtering
+/// pass whose result is both stored and served.
+async fn view_data(store: &SettingsStore, catalog: &CachedCatalog) -> Result<ModelData, String> {
+    if let Some(data) = stored_subset(store).await {
+        return Ok(data);
+    }
+    let _guard = SUBSET_LOCK.lock().await;
+    if let Some(data) = stored_subset(store).await {
+        return Ok(data);
+    }
+    let data = subset_for(store, &[], Some(catalog)).await??;
+    match serde_json::to_string(&data) {
+        Ok(value) => {
+            if let Err(error) = Setting::upsert_by_name(SUBSET_KEY)
+                .value(value)
+                .exec(&mut (*store.database.db).clone())
+                .await
+            {
+                tracing::warn!("Unable to store model datasheet subset: {error}");
+            }
+        }
+        Err(error) => tracing::warn!("Unable to store model datasheet subset: {error}"),
+    }
+    Ok(data)
 }
 
 /// Discover providers concurrently and retain last successful models on failure.
@@ -563,23 +687,12 @@ fn normalize_model(
 
 /// Enrich a raw snapshot from the latest cached sheets without altering persistence.
 async fn normalize_catalog(store: &SettingsStore, catalog: CachedCatalog) -> ModelCatalog {
-    let models = super::model_setting::CatalogModels::from_entries(
-        catalog.providers.iter().flat_map(|provider| {
-            provider.models.iter().map(|model| {
-                (
-                    provider.id.as_str(),
-                    provider.kind.as_str(),
-                    model.id.as_str(),
-                )
-            })
-        }),
-    );
-    let (data, datasheets_error) = match super::model_setting::catalog_data(store, &models).await {
+    let (data, datasheets_error) = match view_data(store, &catalog).await {
         Ok(data) => (data, None),
         Err(error) => {
             tracing::warn!("Unable to load cached model datasheets: {error}");
             (
-                super::model_setting::ModelData::default(),
+                ModelData::default(),
                 Some("Unable to load cached datasheets".to_owned()),
             )
         }

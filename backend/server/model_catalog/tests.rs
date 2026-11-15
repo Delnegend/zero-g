@@ -280,11 +280,16 @@ async fn normalized_response_uses_current_sheets_without_changing_raw_cache() {
         serde_json::from_str(&store.setting_get(CACHE_KEY).await.unwrap().unwrap()).unwrap();
     assert_eq!(saved["providers"][0]["models"][0]["id"], "m");
     assert!(saved["providers"][0]["models"][0].get("model").is_none());
-    Setting::upsert_by_name("model_pricing_datasheet")
-        .value(r#"{"custom/m":{"provider":"custom","input_cost_per_token":0.000003}}"#)
-        .exec(&mut (*store.database.db).clone())
-        .await
-        .unwrap();
+    // Datasheet refreshes recompute the stored subset, so a later view uses them.
+    save_inputs(
+        &store,
+        &[(
+            PRICING_KEY,
+            r#"{"custom/m":{"provider":"custom","input_cost_per_token":0.000003}}"#,
+        )],
+    )
+    .await
+    .unwrap();
     let cached: CachedCatalog = serde_json::from_value(saved).unwrap();
     let response = serde_json::to_value(normalize_catalog(&store, cached).await).unwrap();
     assert_eq!(
