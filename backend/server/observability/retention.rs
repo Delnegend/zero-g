@@ -1,6 +1,8 @@
+use std::collections::HashMap;
+
 use crate::database::{Database, transaction_with_retry};
 use crate::server::settings::keys::{BODY_RETENTION_DAYS, LOG_RETENTION_DAYS};
-use crate::storage::{LogFilterOption, RequestLog, RequestLogBody};
+use crate::storage::{FilterKind, LogFilterOption, RequestLog, RequestLogBody};
 
 use super::{logs::LogEntry, now};
 
@@ -54,31 +56,54 @@ pub(super) async fn update_filter_options(
     tx: &mut toasty::Transaction<'_>,
     log: &LogEntry,
 ) -> toasty::Result<()> {
-    let options = [
-        (!log.provider.is_empty()).then_some((0_i64, log.provider.as_str(), "")),
-        (!log.model.is_empty()).then_some((1, log.model.as_str(), "")),
-        (!log.path.is_empty()).then_some((2, log.path.as_str(), "")),
+    // The ID prefix is the stored discriminant, matching rows written before the enum.
+    let options: Vec<_> = [
+        (!log.provider.is_empty()).then_some((0, FilterKind::Provider, log.provider.as_str(), "")),
+        (!log.model.is_empty()).then_some((1, FilterKind::Model, log.model.as_str(), "")),
+        (!log.path.is_empty()).then_some((2, FilterKind::RequestPath, log.path.as_str(), "")),
         log.virtual_key_id
             .as_deref()
             .zip(log.virtual_key_name.as_deref())
-            .map(|(id, name)| (3, id, name)),
+            .map(|(id, name)| (3, FilterKind::VirtualKey, id, name)),
         log.credential_id
             .as_deref()
             .zip(log.credential_name.as_deref())
-            .map(|(id, name)| (4, id, name)),
-    ];
-    for (kind, value, name) in options.into_iter().flatten() {
-        let id = format!("{kind}:{}:{value}{name}", value.len());
-        let existing = LogFilterOption::filter_by_id(id.as_str())
-            .first()
+            .map(|(id, name)| (4, FilterKind::Credential, id, name)),
+    ]
+    .into_iter()
+    .flatten()
+    .map(|(code, kind, value, name)| {
+        let id = format!("{code}:{}:{value}{name}", value.len());
+        (id, kind, value, name)
+    })
+    .collect();
+    if options.is_empty() {
+        return Ok(());
+    }
+    let ids: Vec<String> = options.iter().map(|(id, ..)| id.clone()).collect();
+    let existing: HashMap<String, i64> =
+        LogFilterOption::filter(LogFilterOption::fields().id().in_list(ids))
+            .select((
+                LogFilterOption::fields().id(),
+                LogFilterOption::fields().last_seen(),
+            ))
             .exec(tx)
-            .await?;
-        let last_seen = existing.map_or(log.created_at, |row| row.last_seen.max(log.created_at));
+            .await?
+            .into_iter()
+            .collect();
+    for (id, kind, value, name) in options {
+        // Snapshots only move forward; an older or equal capture changes nothing.
+        if existing
+            .get(&id)
+            .is_some_and(|last_seen| *last_seen >= log.created_at)
+        {
+            continue;
+        }
         LogFilterOption::upsert_by_id(id.as_str())
             .kind(kind)
             .value(value)
             .name(name)
-            .last_seen(last_seen)
+            .last_seen(log.created_at)
             .exec(tx)
             .await?;
     }

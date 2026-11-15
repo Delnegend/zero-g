@@ -61,7 +61,7 @@ pub(crate) struct LogFilterOption {
     #[key]
     pub id: String,
     /// Dimension discriminator.
-    pub kind: i64,
+    pub kind: FilterKind,
     /// Dimension value or stable identity.
     pub value: String,
     /// Identity name, or empty for non-identity dimensions.
@@ -69,6 +69,26 @@ pub(crate) struct LogFilterOption {
     /// Most recent request having this exact option.
     #[index]
     pub last_seen: i64,
+}
+
+/// Filter dimension, stored as the integer the 0004 migration defined.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, toasty::Embed)]
+pub(crate) enum FilterKind {
+    /// Provider identifier.
+    #[column(variant = 0)]
+    Provider,
+    /// Model identifier.
+    #[column(variant = 1)]
+    Model,
+    /// Request path; named to avoid the `Path` associated type Toasty generates.
+    #[column(variant = 2)]
+    RequestPath,
+    /// Virtual key identity.
+    #[column(variant = 3)]
+    VirtualKey,
+    /// Provider credential identity.
+    #[column(variant = 4)]
+    Credential,
 }
 
 /// Named application setting.

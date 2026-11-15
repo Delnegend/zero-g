@@ -26,7 +26,7 @@ type FilterOptions = {
 };
 type Props = {
   filters: ObservabilityFilterValues;
-  options?: FilterOptions;
+  options?: FilterOptions | null;
   onChange: (filters: ObservabilityFilterValues) => void;
 };
 

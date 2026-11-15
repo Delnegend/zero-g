@@ -15,7 +15,8 @@ use crate::storage::{RequestLog, RequestLogBody};
 /// Largest accepted page size.
 const MAX_LIMIT: usize = 200;
 
-/// Log list ordering; ties always fall back to newest ID first.
+/// Log list ordering; ties fall back to ID in the direction of the creation-time
+/// sort for oldest first (so the index serves it), and newest ID first otherwise.
 #[derive(Clone, Copy, Default, Deserialize)]
 pub(super) enum LogSort {
     /// Newest first.
@@ -52,10 +53,10 @@ pub(super) enum LogSort {
 }
 
 impl LogSort {
-    /// Primary ordering expression.
-    fn order(self) -> OrderByExpr {
+    /// Ordering expressions, including the ID tie-break.
+    fn order(self) -> (OrderByExpr, OrderByExpr) {
         let fields = RequestLog::fields();
-        match self {
+        let primary = match self {
             Self::Recent => fields.created_at().desc(),
             Self::Oldest => fields.created_at().asc(),
             Self::ModelAsc => fields.model().asc(),
@@ -66,7 +67,12 @@ impl LogSort {
             Self::LatencyDesc => fields.latency_ms().desc(),
             Self::PathAsc => fields.path().asc(),
             Self::PathDesc => fields.path().desc(),
-        }
+        };
+        let tie = match self {
+            Self::Oldest => fields.id().asc(),
+            _ => fields.id().desc(),
+        };
+        (primary, tie)
     }
 }
 
@@ -168,6 +174,7 @@ impl LogsQuery {
                 statuses,
                 virtual_key_ids,
                 credential_ids,
+                include_options: None,
             },
             Page {
                 number: page.unwrap_or(defaults.number),
@@ -229,30 +236,10 @@ pub(super) async fn query(
                 .await?;
             // SQLite offsets are signed; an unrepresentable offset is beyond every result.
             let rows = if i64::try_from(offset).is_ok() {
-                let fields = RequestLog::fields();
                 RequestLog::filter(condition.clone())
-                    .order_by((page.sort.order(), fields.id().desc()))
+                    .order_by(page.sort.order())
                     .limit(page.limit)
                     .offset(offset)
-                    .select((
-                        (
-                            fields.id(),
-                            fields.created_at(),
-                            fields.provider(),
-                            fields.model(),
-                            fields.path(),
-                            fields.status(),
-                            fields.latency_ms(),
-                        ),
-                        (
-                            fields.input_tokens(),
-                            fields.output_tokens(),
-                            fields.virtual_key_id(),
-                            fields.virtual_key_name(),
-                            fields.credential_id(),
-                            fields.credential_name(),
-                        ),
-                    ))
                     .exec(&mut tx)
                     .await?
             } else {
@@ -262,36 +249,7 @@ pub(super) async fn query(
             Ok((retention_days, filter_options, total, rows))
         })
         .map_err(|e| e.to_string())?;
-    let logs = rows
-        .into_iter()
-        .map(
-            |(
-                (id, created_at, provider, model, path, status, latency_ms),
-                (
-                    input_tokens,
-                    output_tokens,
-                    virtual_key_id,
-                    virtual_key_name,
-                    credential_id,
-                    credential_name,
-                ),
-            )| LogSummary {
-                id,
-                created_at,
-                provider,
-                model,
-                path,
-                status,
-                latency_ms,
-                input_tokens,
-                output_tokens,
-                virtual_key_id,
-                virtual_key_name,
-                credential_id,
-                credential_name,
-            },
-        )
-        .collect();
+    let logs = rows.into_iter().map(LogSummary::from).collect();
     Ok(LogsResponse {
         logs,
         total: usize::try_from(total).map_err(|_| "invalid log count")?,
@@ -335,8 +293,30 @@ pub(super) async fn detail(database: &Database, id: i64) -> Result<Option<LogEnt
         .map_err(|e| format!("Stored body is corrupt: {e}"))
 }
 
+/// Captured bodies compressed once, outside the write transaction and its retries.
+pub(super) struct CompressedBodies {
+    /// zstd-compressed request body.
+    request: Vec<u8>,
+    /// zstd-compressed response body.
+    response: Vec<u8>,
+}
+
+impl CompressedBodies {
+    /// Compress a log's bodies; an absent body is stored as empty.
+    pub(super) fn new(log: &LogEntry) -> std::io::Result<Self> {
+        Ok(Self {
+            request: compress(log.request_body.as_deref().unwrap_or_default())?,
+            response: compress(log.response_body.as_deref().unwrap_or_default())?,
+        })
+    }
+}
+
 /// Store a captured log, its compressed bodies, and its filter snapshots atomically.
-pub(super) async fn insert(tx: &mut toasty::Transaction<'_>, log: &LogEntry) -> toasty::Result<()> {
+pub(super) async fn insert(
+    tx: &mut toasty::Transaction<'_>,
+    log: &LogEntry,
+    bodies: &CompressedBodies,
+) -> toasty::Result<()> {
     let record = toasty::create!(RequestLog {
         created_at: log.created_at,
         provider: log.provider.clone(),
@@ -353,15 +333,11 @@ pub(super) async fn insert(tx: &mut toasty::Transaction<'_>, log: &LogEntry) -> 
     })
     .exec(tx)
     .await?;
-    let body = |text: &Option<String>| {
-        compress(text.as_deref().unwrap_or_default())
-            .map_err(|e| toasty::Error::from_args(format_args!("Could not compress body: {e}")))
-    };
     toasty::create!(RequestLogBody {
         log_id: record.id,
         created_at: log.created_at,
-        request_body: body(&log.request_body)?,
-        response_body: body(&log.response_body)?,
+        request_body: bodies.request.clone(),
+        response_body: bodies.response.clone(),
     })
     .exec(tx)
     .await?;
@@ -457,6 +433,26 @@ pub(super) struct LogSummary {
     /// Provider credential name snapshot, if known.
     #[schema(required = true)]
     credential_name: Option<String>,
+}
+
+impl From<RequestLog> for LogSummary {
+    fn from(r: RequestLog) -> Self {
+        Self {
+            id: r.id,
+            created_at: r.created_at,
+            provider: r.provider,
+            model: r.model,
+            path: r.path,
+            status: r.status,
+            latency_ms: r.latency_ms,
+            input_tokens: r.input_tokens,
+            output_tokens: r.output_tokens,
+            virtual_key_id: r.virtual_key_id,
+            virtual_key_name: r.virtual_key_name,
+            credential_id: r.credential_id,
+            credential_name: r.credential_name,
+        }
+    }
 }
 
 /// One stored request log including its captured bodies.

@@ -10,12 +10,14 @@ use tracing::error;
 
 use crate::provider::common::request_identity::RequestIdentity;
 
-use super::logs::insert;
+use super::logs::{CompressedBodies, insert};
 use super::{LogEntry, now};
 use crate::database::{Database, transaction_with_retry};
 
-/// Maximum response bytes retained for a single log entry.
-const RESPONSE_CAPTURE_LIMIT: usize = 256 * 1024;
+/// Maximum response bytes retained for a single log entry; stored zstd-compressed.
+const RESPONSE_CAPTURE_LIMIT: usize = 100 * 1024 * 1024;
+/// Longest single SSE line buffered while scanning a stream for token usage.
+const USAGE_LINE_LIMIT: usize = 256 * 1024;
 
 /// Capture POST request and response bodies for asynchronous logging.
 #[allow(clippy::too_many_lines)]
@@ -104,7 +106,12 @@ pub(in crate::server) async fn capture(
                 provider,
                 model,
                 path,
-                status: if completed { status } else { 499 },
+                // An error reply is final even if the client hangs up before its last byte.
+                status: if completed || status >= 400 {
+                    status
+                } else {
+                    499
+                },
                 latency_ms: i64::try_from(start.elapsed().as_millis()).unwrap_or(i64::MAX),
                 input_tokens,
                 output_tokens,
@@ -116,8 +123,15 @@ pub(in crate::server) async fn capture(
                 response_body: Some(response_body),
             };
             tokio::spawn(async move {
+                let bodies = match CompressedBodies::new(&log) {
+                    Ok(bodies) => bodies,
+                    Err(err) => {
+                        error!("Could not compress request log bodies: {err}");
+                        return;
+                    }
+                };
                 let result = transaction_with_retry!(database, |mut tx| {
-                    insert(&mut tx, &log).await?;
+                    insert(&mut tx, &log, &bodies).await?;
                     tx.commit().await?;
                     Ok(())
                 });
@@ -210,7 +224,7 @@ impl StreamUsage {
             let content = part.strip_suffix(b"\n").unwrap_or(part);
             let newline = content.len() != part.len();
             if !self.oversized {
-                if content.len() > RESPONSE_CAPTURE_LIMIT.saturating_sub(self.line.len()) {
+                if content.len() > USAGE_LINE_LIMIT.saturating_sub(self.line.len()) {
                     self.line.clear();
                     self.oversized = true;
                 } else {
@@ -660,7 +674,8 @@ mod tests {
         assert_eq!(large.input_tokens, Some(9));
         assert_eq!(large.output_tokens, Some(4));
         let anonymous = logs.iter().find(|log| log.path == "/anonymous").unwrap();
-        assert_eq!(anonymous.status, 499);
+        // The 401 is logged as 401 even though the client dropped the unfinished body.
+        assert_eq!(anonymous.status, 401);
         assert_eq!(anonymous.request_body.as_deref(), Some(""));
         assert_eq!(anonymous.response_body.as_deref(), Some(""));
         assert_eq!(anonymous.provider, "");

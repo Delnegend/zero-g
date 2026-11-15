@@ -90,11 +90,12 @@ export function observabilityQueryOptions(
           since: currentSince,
           until: currentUntil,
         }),
-        getDashboard(signal, {
-          ...filters,
-          since: previousSince,
-          until: previousUntil,
-        }).catch((error: unknown) => {
+        // The comparison period only feeds the charts, so skip its filter options.
+        getDashboard(
+          signal,
+          { ...filters, since: previousSince, until: previousUntil },
+          false,
+        ).catch((error: unknown) => {
           if (signal.aborted) throw error;
           return null;
         }),
@@ -169,11 +170,18 @@ function queryParams(range: QueryFilters = {}) {
   };
 }
 
-function getDashboard(signal: AbortSignal, filters: QueryFilters) {
-  return requestDashboard(queryParams(filters), {
-    signal,
-    statusOnlyError: true,
-  });
+function getDashboard(
+  signal: AbortSignal,
+  filters: QueryFilters,
+  includeOptions = true,
+) {
+  return requestDashboard(
+    {
+      ...queryParams(filters),
+      include_options: includeOptions ? undefined : false,
+    },
+    { signal, statusOnlyError: true },
+  );
 }
 
 function getLogs(

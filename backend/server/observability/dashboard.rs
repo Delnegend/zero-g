@@ -23,7 +23,8 @@ use crate::storage::RequestLog;
         ("paths" = Option<String>, Query, description = "JSON array of exact request paths; empty means all"),
         ("statuses" = Option<String>, Query, description = "JSON array of success (200–399) and/or error (400 and above); empty means all"),
         ("virtual_key_ids" = Option<String>, Query, description = "JSON array of exact virtual key IDs; empty means all"),
-        ("credential_ids" = Option<String>, Query, description = "JSON array of exact provider credential IDs; empty means all")),
+        ("credential_ids" = Option<String>, Query, description = "JSON array of exact provider credential IDs; empty means all"),
+        ("include_options" = Option<bool>, Query, description = "Whether to return filter options, default true; comparison periods can skip them")),
     responses((status = 200, body = DashboardResponse),
         (status = 400, description = "Invalid query"),
         (status = 500, description = "Log query failed")))]
@@ -49,7 +50,11 @@ pub(super) async fn query(
     let interval = interval(range.since, range.upper)?;
     let (retention_days, filter_options, rows) = transaction_with_retry!(database, |mut tx| {
         let retention_days = read_retention(&mut tx).await?;
-        let filter_options = options(&mut tx, range).await?;
+        let filter_options = if filter.include_options.unwrap_or(true) {
+            Some(options(&mut tx, range).await?)
+        } else {
+            None
+        };
         let fields = RequestLog::fields();
         let rows = RequestLog::filter(filter.condition(range))
             .select((
@@ -67,6 +72,22 @@ pub(super) async fn query(
         Ok((retention_days, filter_options, rows))
     })
     .map_err(|e| e.to_string())?;
+    let rows: Vec<MetricsRow> = rows
+        .into_iter()
+        .map(
+            |(status, latency_ms, input_tokens, output_tokens, created_at, provider, model)| {
+                MetricsRow {
+                    status,
+                    latency_ms,
+                    input_tokens,
+                    output_tokens,
+                    created_at,
+                    provider,
+                    model,
+                }
+            },
+        )
+        .collect();
     let (summary, buckets, breakdown) = aggregate_rows(&rows, interval)?;
     Ok(DashboardResponse {
         summary,
@@ -78,8 +99,23 @@ pub(super) async fn query(
     })
 }
 
-/// Selected columns used for aggregation, excluding captured bodies.
-type MetricsRow = (i64, i64, Option<i64>, Option<i64>, i64, String, String);
+/// Columns used for aggregation, excluding captured bodies.
+struct MetricsRow {
+    /// HTTP status.
+    status: i64,
+    /// Request duration in milliseconds.
+    latency_ms: i64,
+    /// Reported input tokens.
+    input_tokens: Option<i64>,
+    /// Reported output tokens.
+    output_tokens: Option<i64>,
+    /// Completion time in Unix seconds.
+    created_at: i64,
+    /// Provider serving the request.
+    provider: String,
+    /// Requested model.
+    model: String,
+}
 
 /// Increment a named count without allocating for names already present.
 fn increment_count(counts: &mut BTreeMap<String, usize>, name: &str) {
@@ -91,21 +127,28 @@ fn increment_count(counts: &mut BTreeMap<String, usize>, name: &str) {
 }
 
 /// Summarize all matching rows into time buckets and dimension counts.
+#[allow(clippy::too_many_lines)]
 fn aggregate_rows(
     rows: &[MetricsRow],
     interval: Interval,
 ) -> Result<(ObservabilitySummary, Vec<ObservabilityBucket>, Breakdown), String> {
     let count = rows.len();
-    let successes = rows.iter().filter(|r| (200..400).contains(&r.0)).count();
-    let errors = rows.iter().filter(|r| r.0 >= 400).count();
-    let input_tokens = rows.iter().filter_map(|r| r.2).reduce(i64::saturating_add);
-    let output_tokens = rows.iter().filter_map(|r| r.3).reduce(i64::saturating_add);
+    let successes = rows
+        .iter()
+        .filter(|r| (200..400).contains(&r.status))
+        .count();
+    let errors = rows.iter().filter(|r| r.status >= 400).count();
+    let tokens = |pick: fn(&MetricsRow) -> Option<i64>| {
+        rows.iter().filter_map(pick).reduce(i64::saturating_add)
+    };
+    let input_tokens = tokens(|r| r.input_tokens);
+    let output_tokens = tokens(|r| r.output_tokens);
     // A floating-point average necessarily approximates large integer values.
     #[allow(clippy::cast_precision_loss, clippy::as_conversions)]
     let avg_latency_ms = if count == 0 {
         0.0
     } else {
-        rows.iter().map(|r| r.1 as f64).sum::<f64>() / count as f64
+        rows.iter().map(|r| r.latency_ms as f64).sum::<f64>() / count as f64
     };
     let summary = ObservabilitySummary {
         requests: count,
@@ -119,7 +162,7 @@ fn aggregate_rows(
     let mut providers = BTreeMap::<String, usize>::new();
     let mut models = BTreeMap::<String, usize>::new();
     for row in rows {
-        let start = bucket_start(row.4, interval)?;
+        let start = bucket_start(row.created_at, interval)?;
         let bucket = counts.entry(start).or_insert_with(|| ObservabilityBucket {
             start,
             requests: 0,
@@ -134,41 +177,41 @@ fn aggregate_rows(
         bucket.requests = bucket.requests.saturating_add(1);
         bucket.successes = bucket
             .successes
-            .saturating_add(usize::from((200..400).contains(&row.0)));
-        bucket.errors = bucket.errors.saturating_add(usize::from(row.0 >= 400));
-        increment_count(&mut bucket.by_model, &row.6);
-        if let Some(provider) = bucket.by_provider.get_mut(&row.5) {
+            .saturating_add(usize::from((200..400).contains(&row.status)));
+        bucket.errors = bucket.errors.saturating_add(usize::from(row.status >= 400));
+        increment_count(&mut bucket.by_model, &row.model);
+        if let Some(provider) = bucket.by_provider.get_mut(&row.provider) {
             provider.requests = provider.requests.saturating_add(1);
-            if let Some(tokens) = row.2 {
+            if let Some(tokens) = row.input_tokens {
                 provider.input_tokens =
                     Some(provider.input_tokens.unwrap_or(0).saturating_add(tokens));
             }
-            if let Some(tokens) = row.3 {
+            if let Some(tokens) = row.output_tokens {
                 provider.output_tokens =
                     Some(provider.output_tokens.unwrap_or(0).saturating_add(tokens));
             }
         } else {
             bucket.by_provider.insert(
-                row.5.clone(),
+                row.provider.clone(),
                 ProviderBucket {
                     requests: 1,
-                    input_tokens: row.2,
-                    output_tokens: row.3,
+                    input_tokens: row.input_tokens,
+                    output_tokens: row.output_tokens,
                 },
             );
         }
-        if let Some(tokens) = row.2 {
+        if let Some(tokens) = row.input_tokens {
             bucket.input_tokens = Some(bucket.input_tokens.unwrap_or(0).saturating_add(tokens));
         }
-        if let Some(tokens) = row.3 {
+        if let Some(tokens) = row.output_tokens {
             bucket.output_tokens = Some(bucket.output_tokens.unwrap_or(0).saturating_add(tokens));
         }
         #[allow(clippy::cast_precision_loss, clippy::as_conversions)]
         {
-            bucket.avg_latency_ms += row.1 as f64;
+            bucket.avg_latency_ms += row.latency_ms as f64;
         }
-        increment_count(&mut providers, &row.5);
-        increment_count(&mut models, &row.6);
+        increment_count(&mut providers, &row.provider);
+        increment_count(&mut models, &row.model);
     }
     let buckets = counts
         .into_values()
@@ -336,8 +379,9 @@ pub(super) struct DashboardResponse {
     interval: Interval,
     /// Time-bucketed metrics.
     buckets: Vec<ObservabilityBucket>,
-    /// Available filter dimensions.
-    filter_options: FilterOptions,
+    /// Available filter dimensions, or null when the request skipped them.
+    #[schema(required = true)]
+    filter_options: Option<FilterOptions>,
     /// Request counts by provider and model.
     breakdown: Breakdown,
     /// Earliest retained timestamp in Unix seconds.
@@ -767,12 +811,27 @@ mod tests {
     /// Provider totals are independent per bucket and retain token availability.
     #[test]
     fn provider_bucket_totals_keep_known_values() {
-        let rows = vec![
-            (200, 1, None, Some(0), 1, "same".into(), "same".into()),
-            (200, 1, Some(3), None, 2, "same".into(), "other".into()),
-            (500, 1, None, None, 3, String::new(), "same".into()),
-            (200, 1, None, Some(7), 3600, "same".into(), "same".into()),
-        ];
+        let rows: Vec<MetricsRow> = [
+            (200, 1, None, Some(0), 1, "same", "same"),
+            (200, 1, Some(3), None, 2, "same", "other"),
+            (500, 1, None, None, 3, "", "same"),
+            (200, 1, None, Some(7), 3600, "same", "same"),
+        ]
+        .into_iter()
+        .map(
+            |(status, latency_ms, input_tokens, output_tokens, created_at, provider, model)| {
+                MetricsRow {
+                    status,
+                    latency_ms,
+                    input_tokens,
+                    output_tokens,
+                    created_at,
+                    provider: provider.into(),
+                    model: model.into(),
+                }
+            },
+        )
+        .collect();
         let (_, buckets, _) = aggregate_rows(&rows, Interval::Hour).unwrap();
         let buckets = serde_json::to_value(buckets).unwrap();
         assert_eq!(

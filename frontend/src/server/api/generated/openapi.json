@@ -140,6 +140,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_options",
+            "in": "query",
+            "description": "Whether to return filter options, default true; comparison periods can skip them",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -3325,8 +3334,15 @@
             "description": "Time-bucketed metrics."
           },
           "filter_options": {
-            "$ref": "#/components/schemas/FilterOptions",
-            "description": "Available filter dimensions."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/FilterOptions",
+                "description": "Available filter dimensions, or null when the request skipped them."
+              }
+            ]
           },
           "interval": {
             "$ref": "#/components/schemas/Interval",

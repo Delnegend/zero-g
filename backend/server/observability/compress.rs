@@ -12,6 +12,7 @@ const BATCH: i64 = 50;
 
 /// Compress bodies left in the legacy `request_log_bodies` table, then drop it.
 ///
+/// Bodies already past body retention are deleted first instead of compressed.
 /// Each batch moves rows and deletes them from the legacy table in one
 /// transaction, so an interrupted run resumes where it stopped.
 pub(crate) async fn compress_legacy_bodies(database: &Database) -> Result<(), String> {
@@ -26,6 +27,14 @@ pub(crate) async fn compress_legacy_bodies(database: &Database) -> Result<(), St
     if !matches!(first_i64(&exists), Some(n) if n > 0) {
         return Ok(());
     }
+    let (_, body_cutoff) = super::retention::cutoffs(&mut db)
+        .await
+        .map_err(|e| e.to_string())?;
+    toasty::sql::statement("DELETE FROM request_log_bodies WHERE created_at < ?1")
+        .bind(body_cutoff)
+        .exec(&mut db)
+        .await
+        .map_err(|e| e.to_string())?;
     let mut moved = 0_usize;
     loop {
         let count = transaction_with_retry!(database, |mut tx| {

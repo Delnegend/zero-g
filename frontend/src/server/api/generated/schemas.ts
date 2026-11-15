@@ -1067,33 +1067,38 @@ export const DashboardResponse = zod
           .describe("Request count for a UTC time bucket."),
       )
       .describe("Time-bucketed metrics."),
-    filter_options: zod
-      .object({
-        credentials: zod
-          .array(
-            zod
-              .object({
-                id: zod.string().describe("Stable identifier."),
-                name: zod.string().describe("Name observed in a request."),
-              })
-              .describe("A stable identity and its name snapshot."),
-          )
-          .describe("Provider credentials observed within the time range."),
-        models: zod.array(zod.string()).describe("Available models."),
-        paths: zod.array(zod.string()).describe("Available paths."),
-        providers: zod.array(zod.string()).describe("Available providers."),
-        virtual_keys: zod
-          .array(
-            zod
-              .object({
-                id: zod.string().describe("Stable identifier."),
-                name: zod.string().describe("Name observed in a request."),
-              })
-              .describe("A stable identity and its name snapshot."),
-          )
-          .describe("Virtual keys observed within the time range."),
-      })
-      .describe("Available filter dimensions."),
+    filter_options: zod.union([
+      zod.null(),
+      zod
+        .object({
+          credentials: zod
+            .array(
+              zod
+                .object({
+                  id: zod.string().describe("Stable identifier."),
+                  name: zod.string().describe("Name observed in a request."),
+                })
+                .describe("A stable identity and its name snapshot."),
+            )
+            .describe("Provider credentials observed within the time range."),
+          models: zod.array(zod.string()).describe("Available models."),
+          paths: zod.array(zod.string()).describe("Available paths."),
+          providers: zod.array(zod.string()).describe("Available providers."),
+          virtual_keys: zod
+            .array(
+              zod
+                .object({
+                  id: zod.string().describe("Stable identifier."),
+                  name: zod.string().describe("Name observed in a request."),
+                })
+                .describe("A stable identity and its name snapshot."),
+            )
+            .describe("Virtual keys observed within the time range."),
+        })
+        .describe(
+          "Available filter dimensions, or null when the request skipped them.",
+        ),
+    ]),
     interval: zod
       .enum(["hour", "day", "month", "year"])
       .describe("UTC bucket interval."),
@@ -2119,6 +2124,7 @@ export const GetDashboardParams = zod.object({
   statuses: zod.string().optional(),
   virtual_key_ids: zod.string().optional(),
   credential_ids: zod.string().optional(),
+  include_options: zod.boolean().optional(),
 });
 
 export type GetDashboardParams = zod.input<typeof GetDashboardParams>;

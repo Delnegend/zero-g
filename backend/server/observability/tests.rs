@@ -20,18 +20,29 @@ async fn logs_json(database: &Database) -> Value {
     .unwrap()
 }
 
-/// A bounded range that forces filter options to be read from the logs themselves.
-fn scanned() -> Filter {
-    Filter {
-        since: Some(0),
-        ..Filter::default()
-    }
+/// Filter options read by scanning the logs in a range, as JSON.
+async fn scanned_json(database: &Database, since: Option<i64>, upper: Option<i64>) -> Value {
+    let options = transaction_with_retry!(database, |mut tx| {
+        super::filter::scanned_options(&mut tx, super::filter::Range { since, upper }).await
+    })
+    .unwrap();
+    serde_json::to_value(options).unwrap()
+}
+
+/// Filter options read from the retained snapshots, as JSON.
+async fn snapshot_json(database: &Database, since: Option<i64>) -> Value {
+    let options = transaction_with_retry!(database, |mut tx| {
+        super::filter::snapshot_options(&mut tx, since).await
+    })
+    .unwrap();
+    serde_json::to_value(options).unwrap()
 }
 
 /// Seed a log and its retained filter snapshots without invoking request capture.
 pub(super) async fn fixture(database: &Database, log: LogEntry) -> Result<(), String> {
+    let bodies = logs::CompressedBodies::new(&log).map_err(|err| err.to_string())?;
     transaction_with_retry!(database, |mut tx| {
-        logs::insert(&mut tx, &log).await?;
+        logs::insert(&mut tx, &log, &bodies).await?;
         tx.commit().await?;
         Ok(())
     })
@@ -231,7 +242,7 @@ async fn migrates_existing_log_filter_options() {
     // Retained snapshots, read for the unbounded range, match options scanned from the rows.
     assert_eq!(
         logs["filter_options"],
-        dashboard_json(&database, &scanned()).await["filter_options"]
+        scanned_json(&database, None, None).await
     );
     assert_eq!(
         logs["filter_options"]["virtual_keys"],
@@ -329,7 +340,78 @@ async fn retained_filter_options_follow_renames_and_pruning() {
     );
     assert_eq!(
         after["filter_options"],
-        dashboard_json(&database, &scanned()).await["filter_options"]
+        scanned_json(&database, None, None).await
+    );
+    drop(database);
+    std::fs::remove_file(path).unwrap();
+}
+
+/// Whenever no log is newer than the range end, the snapshots give exactly the
+/// options a scan of the range gives; the dashboard falls back to the scan otherwise.
+#[tokio::test]
+async fn snapshot_options_match_scan_for_ranges_ending_after_the_newest_log() {
+    let path =
+        std::env::temp_dir().join(format!("zero-g-options-test-{}.db", uuid::Uuid::new_v4()));
+    let database = Database::open(path.to_str().unwrap()).await.unwrap();
+    let entry = |at: i64, provider: &str, key: Option<(&str, &str)>| LogEntry {
+        id: 0,
+        created_at: at,
+        provider: provider.into(),
+        model: format!("model-{at}"),
+        path: "/v1".into(),
+        status: 200,
+        latency_ms: 1,
+        input_tokens: None,
+        output_tokens: None,
+        request_body: None,
+        response_body: None,
+        virtual_key_id: key.map(|(id, _)| id.into()),
+        virtual_key_name: key.map(|(_, name)| name.into()),
+        credential_id: None,
+        credential_name: None,
+    };
+    let base = now().saturating_sub(10_000);
+    for log in [
+        entry(base, "old", Some(("key", "Z name"))),
+        entry(base + 100, "", Some(("key", "A name"))),
+        entry(base + 200, "new", Some(("key", "Z name"))),
+        entry(base + 200, "new", None),
+        entry(base + 300, "newest", Some(("other", "Other"))),
+    ] {
+        fixture(&database, log).await.unwrap();
+    }
+    let newest = base + 300;
+    for since in [
+        None,
+        Some(base - 1),
+        Some(base),
+        Some(base + 1),
+        Some(base + 100),
+        Some(base + 200),
+        Some(base + 300),
+        Some(base + 301),
+    ] {
+        for upper in [newest, newest + 1000] {
+            assert_eq!(
+                snapshot_json(&database, since).await,
+                scanned_json(&database, since, Some(upper)).await,
+                "since {since:?}, upper {upper}"
+            );
+        }
+    }
+    // A range that ends before the newest log differs, so the probe must route it to the scan.
+    let range = Filter {
+        since: Some(base),
+        until: Some(base + 150),
+        ..Filter::default()
+    };
+    assert_ne!(
+        snapshot_json(&database, Some(base)).await,
+        scanned_json(&database, Some(base), Some(base + 150)).await
+    );
+    assert_eq!(
+        dashboard_json(&database, &range).await["filter_options"],
+        scanned_json(&database, Some(base), Some(base + 150)).await
     );
     drop(database);
     std::fs::remove_file(path).unwrap();

@@ -6,7 +6,7 @@ use serde::{Deserialize, de::DeserializeOwned};
 use toasty::stmt::Expr;
 
 use super::now;
-use crate::storage::{LogFilterOption, RequestLog};
+use crate::storage::{FilterKind, LogFilterOption, RequestLog};
 
 /// Response class selected by the `statuses` filter.
 #[derive(Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -44,6 +44,8 @@ pub(in crate::server) struct Filter {
     /// Exact provider credential IDs encoded as a JSON array.
     #[serde(default, deserialize_with = "json_array")]
     pub(super) credential_ids: Vec<String>,
+    /// Whether to compute filter options; only the dashboard reads it.
+    pub(super) include_options: Option<bool>,
 }
 
 /// Decode a JSON array from one URL query value.
@@ -206,56 +208,84 @@ impl OptionSet {
 
 /// Filter choices for a time range, independent of dimension filters.
 ///
-/// An unbounded range reads the retention-maintained snapshots instead of scanning every log.
+/// Each snapshot row's `last_seen` is the newest retained log carrying it, and
+/// prune drops logs and snapshots at the same cutoff. So when no log is newer
+/// than the range end, an option occurs in the range exactly when
+/// `last_seen >= since`, and the snapshots replace a scan of the logs.
 pub(super) async fn options(
     tx: &mut toasty::Transaction<'_>,
     range: Range,
 ) -> toasty::Result<FilterOptions> {
+    let exact = match range.upper {
+        Some(upper) => RequestLog::filter(RequestLog::fields().created_at().gt(upper))
+            .first()
+            .exec(&mut *tx)
+            .await?
+            .is_none(),
+        None => true,
+    };
+    if exact {
+        snapshot_options(tx, range.since).await
+    } else {
+        scanned_options(tx, range).await
+    }
+}
+
+/// Options whose newest retained log is at or after `since`.
+pub(super) async fn snapshot_options(
+    tx: &mut toasty::Transaction<'_>,
+    since: Option<i64>,
+) -> toasty::Result<FilterOptions> {
+    let fields = LogFilterOption::fields();
+    let query = since.map_or_else(LogFilterOption::all, |since| {
+        LogFilterOption::filter(fields.last_seen().ge(since))
+    });
+    let rows = query
+        .select((fields.kind(), fields.value(), fields.name()))
+        .exec(tx)
+        .await?;
     let mut set = OptionSet::default();
-    if range.since.is_none() && range.upper.is_none() {
-        let rows = LogFilterOption::all()
-            .select((
-                LogFilterOption::fields().kind(),
-                LogFilterOption::fields().value(),
-                LogFilterOption::fields().name(),
-            ))
-            .exec(tx)
-            .await?;
-        for (kind, value, name) in rows {
-            match kind {
-                0 => OptionSet::value(&mut set.providers, value),
-                1 => OptionSet::value(&mut set.models, value),
-                2 => OptionSet::value(&mut set.paths, value),
-                3 => OptionSet::identity(&mut set.virtual_keys, Some(value), Some(name)),
-                4 => OptionSet::identity(&mut set.credentials, Some(value), Some(name)),
-                _ => {
-                    return Err(toasty::Error::from_args(format_args!(
-                        "invalid retained filter option"
-                    )));
-                }
+    for (kind, value, name) in rows {
+        match kind {
+            FilterKind::Provider => OptionSet::value(&mut set.providers, value),
+            FilterKind::Model => OptionSet::value(&mut set.models, value),
+            FilterKind::RequestPath => OptionSet::value(&mut set.paths, value),
+            FilterKind::VirtualKey => {
+                OptionSet::identity(&mut set.virtual_keys, Some(value), Some(name));
+            }
+            FilterKind::Credential => {
+                OptionSet::identity(&mut set.credentials, Some(value), Some(name));
             }
         }
-    } else {
-        let fields = RequestLog::fields();
-        let rows = RequestLog::filter(range.condition())
-            .select((
-                fields.provider(),
-                fields.model(),
-                fields.path(),
-                fields.virtual_key_id(),
-                fields.virtual_key_name(),
-                fields.credential_id(),
-                fields.credential_name(),
-            ))
-            .exec(tx)
-            .await?;
-        for (provider, model, path, key_id, key_name, credential_id, credential_name) in rows {
-            OptionSet::value(&mut set.providers, provider);
-            OptionSet::value(&mut set.models, model);
-            OptionSet::value(&mut set.paths, path);
-            OptionSet::identity(&mut set.virtual_keys, key_id, key_name);
-            OptionSet::identity(&mut set.credentials, credential_id, credential_name);
-        }
+    }
+    Ok(set.finish())
+}
+
+/// Options read from every log in the range.
+pub(super) async fn scanned_options(
+    tx: &mut toasty::Transaction<'_>,
+    range: Range,
+) -> toasty::Result<FilterOptions> {
+    let fields = RequestLog::fields();
+    let rows = RequestLog::filter(range.condition())
+        .select((
+            fields.provider(),
+            fields.model(),
+            fields.path(),
+            fields.virtual_key_id(),
+            fields.virtual_key_name(),
+            fields.credential_id(),
+            fields.credential_name(),
+        ))
+        .exec(tx)
+        .await?;
+    let mut set = OptionSet::default();
+    for (provider, model, path, key_id, key_name, credential_id, credential_name) in rows {
+        OptionSet::value(&mut set.providers, provider);
+        OptionSet::value(&mut set.models, model);
+        OptionSet::value(&mut set.paths, path);
+        OptionSet::identity(&mut set.virtual_keys, key_id, key_name);
+        OptionSet::identity(&mut set.credentials, credential_id, credential_name);
     }
     Ok(set.finish())
 }
