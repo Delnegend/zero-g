@@ -23,7 +23,7 @@ lint:
     cd frontend && bun run oxlint --deny-warnings src scripts
     frontend/node_modules/.bin/oxlint --deny-warnings -c frontend/.oxlintrc.json scripts
     cargo fmt
-    bun fmt --no-script frontend scripts
+    bun fmt --no-script frontend scripts README.md docs
 
 # Regenerate the consolidated OpenAPI and dashboard client contracts
 api-generate:
@@ -65,7 +65,7 @@ check-dependencies:
 # Single gate CI verification
 check:
     just check-dependencies
-    bun fmt --check --no-script frontend scripts
+    bun fmt --check --no-script frontend scripts README.md docs
     just lint
     just frontend-build
     just api-check

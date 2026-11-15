@@ -21,13 +21,13 @@ flowchart LR
 
 ## Endpoint Compatibility Matrix
 
-| Endpoint | Supported Providers | Notes |
-|---|---|---|
-| `/v1/chat/completions` | All providers | OpenAI chat format; translated providers convert streaming chunks, while passthrough providers forward upstream responses. |
-| `/v1/responses` | All providers except ChatJimmy | Responses API format; passthrough providers depend on upstream support. |
-| `/v1/models` | All providers | Aggregated discovery returning `<provider-id>/<model-id>`. |
-| `/v1/decisions` | `openrouter` only | Native OpenRouter multimodal Decisions API. |
-| `/v1/messages`, `/v1/messages/count_tokens` | `claude` only | Native Anthropic Messages pass-through for Claude Code and other Anthropic clients; plain model names. |
+| Endpoint                                    | Supported Providers            | Notes                                                                                                                      |
+| ------------------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `/v1/chat/completions`                      | All providers                  | OpenAI chat format; translated providers convert streaming chunks, while passthrough providers forward upstream responses. |
+| `/v1/responses`                             | All providers except ChatJimmy | Responses API format; passthrough providers depend on upstream support.                                                    |
+| `/v1/models`                                | All providers                  | Aggregated discovery returning `<provider-id>/<model-id>`.                                                                 |
+| `/v1/decisions`                             | `openrouter` only              | Native OpenRouter multimodal Decisions API.                                                                                |
+| `/v1/messages`, `/v1/messages/count_tokens` | `claude` only                  | Native Anthropic Messages pass-through for Claude Code and other Anthropic clients; plain model names.                     |
 
 Translated providers require clients to resend the full conversation rather than
 using `previous_response_id`. Codex requests encrypted reasoning for replay;
@@ -133,10 +133,10 @@ upstream fields, so missing or unverified fields are not filled in.
 
 ## Error Handling & Wire Invariants
 
-| Behavior | Provider Scope | Upstream Handling |
-|---|---|---|
-| **Usage Chunks** | Codex, Cursor, Antigravity | Emits final usage chunk when `stream_options.include_usage: true` is requested. |
-| **Stream Termination** | Codex, Antigravity | Emits `data: [DONE]` on clean close. Interrupted streams yield an error event instead of a silent finish. |
-| **Unsupported Limits** | Codex | Accepts but does not forward `max_tokens` and `max_completion_tokens`; an effective output cap is unknown. |
+| Behavior                | Provider Scope                     | Upstream Handling                                                                                                                                            |
+| ----------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Usage Chunks**        | Codex, Cursor, Antigravity         | Emits final usage chunk when `stream_options.include_usage: true` is requested.                                                                              |
+| **Stream Termination**  | Codex, Antigravity                 | Emits `data: [DONE]` on clean close. Interrupted streams yield an error event instead of a silent finish.                                                    |
+| **Unsupported Limits**  | Codex                              | Accepts but does not forward `max_tokens` and `max_completion_tokens`; an effective output cap is unknown.                                                   |
 | **Strict Wire Options** | Antigravity, Codex, Claude, Cursor | Reject unsupported options (e.g. unknown structured formats, stop sequences, unsupported choice counts) with clear errors instead of dropping them silently. |
-| **Claude Billing** | Claude subscription | Reports Anthropic's known third-party extra-usage restriction when returned; other upstream error bodies remain private. |
+| **Claude Billing**      | Claude subscription                | Reports Anthropic's known third-party extra-usage restriction when returned; other upstream error bodies remain private.                                     |

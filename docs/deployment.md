@@ -59,11 +59,11 @@ volumes:
 
 ### 3. Startup & Health Verification
 
-| Step | Command | Expected Output |
-|---|---|---|
-| **Start Service** | `docker compose up -d` | Container starts in background |
-| **Check Health** | `curl -f http://127.0.0.1:8080/health` | Successful exit; the response body is empty |
-| **Inspect Logs** | `docker compose logs -f zero-g` | Listening address and inference route |
+| Step              | Command                                | Expected Output                             |
+| ----------------- | -------------------------------------- | ------------------------------------------- |
+| **Start Service** | `docker compose up -d`                 | Container starts in background              |
+| **Check Health**  | `curl -f http://127.0.0.1:8080/health` | Successful exit; the response body is empty |
+| **Inspect Logs**  | `docker compose logs -f zero-g`        | Listening address and inference route       |
 
 ---
 
@@ -84,23 +84,23 @@ flowchart TD
 
 ### Upgrade Checklist
 
-| Task | Action | Command |
-|---|---|---|
-| **1. Stop container** | Prevent write operations | `docker compose stop zero-g` |
+| Task                   | Action                                                                                    | Command                                                                                                             |
+| ---------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **1. Stop container**  | Prevent write operations                                                                  | `docker compose stop zero-g`                                                                                        |
 | **2. Backup database** | Archive the stopped container's database and any journal sidecars to a protected location | `docker run --rm -v zero-g-data:/data:ro -v "$(pwd)":/backup alpine tar -C /data -czf /backup/zero-g-data.tar.gz .` |
-| **3. Backup key** | Securely back up `.env` separately from the database; do not print the key | Store an encrypted copy in your secret manager. |
-| **4. Pull & Restart** | Run new version | `docker compose pull && docker compose up -d` |
-| **5. Verify status** | Confirm the server responds | `curl -f http://127.0.0.1:8080/health` |
+| **3. Backup key**      | Securely back up `.env` separately from the database; do not print the key                | Store an encrypted copy in your secret manager.                                                                     |
+| **4. Pull & Restart**  | Run new version                                                                           | `docker compose pull && docker compose up -d`                                                                       |
+| **5. Verify status**   | Confirm the server responds                                                               | `curl -f http://127.0.0.1:8080/health`                                                                              |
 
 ---
 
 ## Backup & Recovery
 
-| Item | What to Backup | Why it's Critical |
-|---|---|---|
-| **Database File** | `/app/data/zero-g.db` (+ any `-wal` / `-shm` sidecars) | Contains credentials, provider definitions, virtual keys, and request telemetry. |
-| **Encryption Key** | `ZERO_G_ENCRYPTION_KEY` | Without this key, existing stored credentials and secrets **cannot be decrypted**. |
-| **Dashboard Password / OIDC Config** | `.env` file | Needed for dashboard administrative access. |
+| Item                                 | What to Backup                                         | Why it's Critical                                                                  |
+| ------------------------------------ | ------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| **Database File**                    | `/app/data/zero-g.db` (+ any `-wal` / `-shm` sidecars) | Contains credentials, provider definitions, virtual keys, and request telemetry.   |
+| **Encryption Key**                   | `ZERO_G_ENCRYPTION_KEY`                                | Without this key, existing stored credentials and secrets **cannot be decrypted**. |
+| **Dashboard Password / OIDC Config** | `.env` file                                            | Needed for dashboard administrative access.                                        |
 
 ### Reclaiming disk space
 

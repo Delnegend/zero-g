@@ -2,11 +2,11 @@
 
 ## Toolchain & Prerequisites
 
-| Requirement | Version | Purpose |
-|---|---|---|
-| **Rust** | 1.95+ stable | Backend engine, migrations, Axum server (`rustc`, `cargo`, `clippy`). |
-| **Bun** | 1.4.4 | Frontend package manager and task execution. |
-| **just** | Latest | Task runner for builds, tests, checks, and code generation. |
+| Requirement | Version      | Purpose                                                               |
+| ----------- | ------------ | --------------------------------------------------------------------- |
+| **Rust**    | 1.95+ stable | Backend engine, migrations, Axum server (`rustc`, `cargo`, `clippy`). |
+| **Bun**     | 1.4.4        | Frontend package manager and task execution.                          |
+| **just**    | Latest       | Task runner for builds, tests, checks, and code generation.           |
 
 Copy `.env.example` to `.env` and set `ZERO_G_ENCRYPTION_KEY` and the dashboard
 authentication settings before starting the backend.
@@ -26,15 +26,15 @@ flowchart LR
 
 ### Common Commands
 
-| Command | Action | Notes |
-|---|---|---|
-| `just dev` | Start backend and frontend | Builds the frontend first, then runs the backend with `cargo run` and Vite with frontend HMR. Vite proxies `/api` to the backend at `http://127.0.0.1:5173`. |
-| `just check` | Single CI gate check | Formats, lints, frontend tests, Rust test suite, OpenAPI checks. |
-| `just test` | Run all test suites | Unit and integration tests for Rust and frontend. |
-| `just lint` | Lint and format code | Runs Oxlint (any warning fails), `cargo fmt` and `bun fmt`. |
-| `just build` | Compile release binary | Builds frontend assets and embeds them into `target/release/zero-g`. |
-| `just seed` | Populate mock data | Adds example providers, keys and logs to an initialized development database; stop the server first. |
-| `just api-generate` | Sync frontend API clients | Regenerates Orval clients from OpenAPI spec. |
+| Command             | Action                     | Notes                                                                                                                                                        |
+| ------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `just dev`          | Start backend and frontend | Builds the frontend first, then runs the backend with `cargo run` and Vite with frontend HMR. Vite proxies `/api` to the backend at `http://127.0.0.1:5173`. |
+| `just check`        | Single CI gate check       | Formats, lints, frontend tests, Rust test suite, OpenAPI checks.                                                                                             |
+| `just test`         | Run all test suites        | Unit and integration tests for Rust and frontend.                                                                                                            |
+| `just lint`         | Lint and format code       | Runs Oxlint (any warning fails), `cargo fmt` and `bun fmt`.                                                                                                  |
+| `just build`        | Compile release binary     | Builds frontend assets and embeds them into `target/release/zero-g`.                                                                                         |
+| `just seed`         | Populate mock data         | Adds example providers, keys and logs to an initialized development database; stop the server first.                                                         |
+| `just api-generate` | Sync frontend API clients  | Regenerates Orval clients from OpenAPI spec.                                                                                                                 |
 
 ---
 
@@ -103,15 +103,11 @@ plain-text `request_log_bodies` table in resumable batches, then drops it.
 Query tests seed historical records directly, while capture tests exercise
 request and response recording.
 
-
 The dashboard reads aggregate statistics from `GET /api/dashboard`. The log
 list uses `GET /api/logs`, and opening a request fetches its captured bodies
 from `GET /api/logs/{id}`. These endpoints require dashboard authentication.
 Their handlers and endpoint tests live in `backend/server/observability/dashboard.rs`
 and `backend/server/observability/logs.rs`, respectively.
-
-
-
 
 ---
 
@@ -121,7 +117,6 @@ Public dashboard and inference operations are documented in the OpenAPI
 contract. Provider-specific inference routes are internal dispatch targets, not
 additional public endpoints. Dashboard assets and the client-side fallback are
 served separately; the root dashboard entry is documented as `GET /`.
-
 
 ```mermaid
 sequenceDiagram
@@ -148,10 +143,10 @@ sequenceDiagram
 
 ## Code Quality Standards
 
-| Area | Rule / Standard | Enforcement |
-|---|---|---|
-| **Rust Lints** | [Namtao strict Clippy](https://www.namtao.com/rust/#strict-lints) | Pedantic, nursery, missing docs on private items check (`just check`). |
-| **Frontend Compiler** | Oxc React Compiler | Automatic memoization of eligible React components. |
-| **Tailwind classes** | Matches the Tailwind CSS editor diagnostics | Oxlint flags conflicting, unknown, deprecated and non-canonical classes, variant order, and hardcoded lengths that match a theme token; any finding fails `just check`. Token suggestions can change sizing if the theme or root font size changes. |
-| **Audits & Deps** | OSV Scanner | `osv-scanner.toml` contains policy and temporary waivers. |
-| **Migrations** | Zero uncommitted schema changes | Startup applies only committed Toasty migrations. |
+| Area                  | Rule / Standard                                                   | Enforcement                                                                                                                                                                                                                                         |
+| --------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Rust Lints**        | [Namtao strict Clippy](https://www.namtao.com/rust/#strict-lints) | Pedantic, nursery, missing docs on private items check (`just check`).                                                                                                                                                                              |
+| **Frontend Compiler** | Oxc React Compiler                                                | Automatic memoization of eligible React components.                                                                                                                                                                                                 |
+| **Tailwind classes**  | Matches the Tailwind CSS editor diagnostics                       | Oxlint flags conflicting, unknown, deprecated and non-canonical classes, variant order, and hardcoded lengths that match a theme token; any finding fails `just check`. Token suggestions can change sizing if the theme or root font size changes. |
+| **Audits & Deps**     | OSV Scanner                                                       | `osv-scanner.toml` contains policy and temporary waivers.                                                                                                                                                                                           |
+| **Migrations**        | Zero uncommitted schema changes                                   | Startup applies only committed Toasty migrations.                                                                                                                                                                                                   |
