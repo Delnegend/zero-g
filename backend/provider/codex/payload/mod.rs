@@ -176,9 +176,16 @@ pub(super) fn build_codex_payload_from_responses(req: &ResponseCreateRequest) ->
                         ResponseTaggedItem::Reasoning {
                             id,
                             summary,
+                            content,
                             encrypted_content,
                         } => {
-                            let mut item = json!({"type":"reasoning","id":id,"summary":summary});
+                            let mut item = json!({"type":"reasoning","summary":summary});
+                            if let Some(id) = id {
+                                item["id"] = json!(id);
+                            }
+                            if let Some(content) = content {
+                                item["content"] = json!(content);
+                            }
                             if let Some(content) = encrypted_content {
                                 item["encrypted_content"] = json!(content);
                             }

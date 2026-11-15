@@ -143,6 +143,23 @@ fn responses_repairs_orphans_and_keeps_paired_results_and_ids_stable() {
 }
 
 #[test]
+fn responses_replays_reasoning_without_an_id() {
+    let req: ResponseCreateRequest = serde_json::from_value(json!({
+        "model": "gpt-6.1-terra",
+        "input": [
+            {"type":"reasoning", "summary":[{"type":"summary_text","text":"thought"}], "content":[], "encrypted_content":"opaque"},
+            {"type":"function_call", "call_id":"call_1", "name":"bash", "arguments":"{}"},
+            {"type":"function_call_output", "call_id":"call_1", "output":"done"}
+        ]
+    })).unwrap();
+    let payload = build_codex_payload_from_responses(&req);
+    assert_eq!(
+        payload["input"][0],
+        json!({"type":"reasoning", "summary":[{"type":"summary_text","text":"thought"}], "content":[], "encrypted_content":"opaque"})
+    );
+}
+
+#[test]
 fn responses_replays_encrypted_reasoning_and_tool_calls() {
     let req: ResponseCreateRequest = serde_json::from_value(json!({
         "model": "gpt-5.5",

@@ -34,7 +34,7 @@ flowchart LR
 **Reasoning replay on translated providers:**
 
 - Resend the full conversation; `previous_response_id` is not supported.
-- Codex replays encrypted reasoning; Antigravity and Claude use signed parts. Keep them for the same provider and model.
+- Codex replays encrypted reasoning, including items without an ID; Antigravity and Claude use signed parts. Keep them for the same provider and model.
 - Non-Codex translated routes reject generic reasoning input.
 - Keep Chat Completions available for ChatJimmy and upstreams without Responses support.
 

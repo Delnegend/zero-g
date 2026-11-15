@@ -109,11 +109,15 @@ pub(crate) enum ResponseTaggedItem {
     /// Opaque reasoning item returned by a Responses provider.
     #[serde(rename = "reasoning")]
     Reasoning {
-        /// Reasoning item identifier.
-        id: String,
+        /// Reasoning item identifier, when supplied.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
         /// Reasoning summary content.
         #[serde(default)]
         summary: Vec<Value>,
+        /// Provider-supplied reasoning content.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        content: Option<Vec<Value>>,
         /// Encrypted reasoning state, when supplied.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         encrypted_content: Option<String>,
