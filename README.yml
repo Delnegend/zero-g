@@ -40,7 +40,7 @@ highlights:
 documentation:
   architecture: "Request envelopes, streaming translation, and system invariants."
   development: "Prerequisites, `just check` gate, and test suite."
-  deployment: "Container setup, environment configuration, updates, and backups."
+  deployment: "Container setup, [configuration](docs/configuration.md), [gateways](docs/gateways.md), updates, and backups."
 
 license:
   type:
