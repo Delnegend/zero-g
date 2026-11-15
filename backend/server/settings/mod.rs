@@ -46,17 +46,17 @@ const SENTINEL: &str = "__zero_g_encryption_key_check";
 /// Expected plaintext of the encryption-key sentinel.
 const CHECK: &str = "zero-g encryption key check v1";
 
-/// Validated AES-256-GCM key for encrypting stored secrets.
+/// Validated AES-256-GCM key for encrypting stored secrets, expanded once.
 #[derive(Clone)]
-struct EncryptionKey([u8; 32]);
+struct EncryptionKey(aead::LessSafeKey);
 
 impl EncryptionKey {
     /// Decodes the configured base64 key and requires exactly 32 bytes.
     fn parse(value: &str) -> Result<Self, String> {
         let invalid = || "ZERO_G_ENCRYPTION_KEY must be base64-encoded 32 bytes".to_string();
         let bytes = STANDARD.decode(value.trim()).map_err(|_| invalid())?;
-        let key = bytes.try_into().map_err(|_| invalid())?;
-        Ok(Self(key))
+        let key = aead::UnboundKey::new(&aead::AES_256_GCM, &bytes).map_err(|_| invalid())?;
+        Ok(Self(aead::LessSafeKey::new(key)))
     }
 }
 
@@ -281,11 +281,9 @@ impl SettingsStore {
         }
         let nonce: [u8; 12] = nonce.try_into().map_err(|_| "Invalid nonce")?;
         let mut ciphertext = ciphertext.to_vec();
-        let key = aead::LessSafeKey::new(
-            aead::UnboundKey::new(&aead::AES_256_GCM, &self.encryption_key.0)
-                .map_err(|_| "Invalid encryption key")?,
-        );
-        let plaintext = key
+        let plaintext = self
+            .encryption_key
+            .0
             .open_in_place(
                 aead::Nonce::assume_unique_for_key(nonce),
                 aead::Aad::from(name.as_bytes()),
@@ -301,17 +299,15 @@ impl SettingsStore {
         SystemRandom::new()
             .fill(&mut nonce)
             .map_err(|_| "Secure randomness unavailable")?;
-        let key = aead::LessSafeKey::new(
-            aead::UnboundKey::new(&aead::AES_256_GCM, &self.encryption_key.0)
-                .map_err(|_| "Invalid encryption key")?,
-        );
         let mut encrypted = value.as_bytes().to_vec();
-        key.seal_in_place_append_tag(
-            aead::Nonce::assume_unique_for_key(nonce),
-            aead::Aad::from(name.as_bytes()),
-            &mut encrypted,
-        )
-        .map_err(|_| "Unable to encrypt secret")?;
+        self.encryption_key
+            .0
+            .seal_in_place_append_tag(
+                aead::Nonce::assume_unique_for_key(nonce),
+                aead::Aad::from(name.as_bytes()),
+                &mut encrypted,
+            )
+            .map_err(|_| "Unable to encrypt secret")?;
         let mut stored = nonce.to_vec();
         stored.extend_from_slice(&encrypted);
         Ok(stored)
