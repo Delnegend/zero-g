@@ -105,7 +105,7 @@ or, as Anthropic clients send it, `x-api-key: <virtual_key>`.
 | Limit | Value | Action on Breach |
 |---|---|---|
 | **Unified inference request size** | 20,000,000 bytes (~20 MB) | HTTP 413 Payload Too Large |
-| **Response Log Truncation** | 256 KiB | Logged body truncated; client stream unimpacted |
+| **Response Log Truncation** | 100 MiB | Logged body truncated; client stream unimpacted |
 | **Max Pending OIDC Logins** | 1,024 concurrent | HTTP 503 Service Unavailable |
 | **Default Log Retention** | 90 days (range: 1–36,500) | Log rows, charts and token totals pruned at startup and hourly; setting changes apply at the next cleanup |
 | **Default Body Retention** | 7 days (range: 1–36,500) | Stored prompts and responses pruned at startup and hourly; the log row stays and its detail view reports the bodies as expired. Never longer than log retention. |

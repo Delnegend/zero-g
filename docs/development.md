@@ -76,7 +76,7 @@ provider totals can be partial when an upstream reports only one token count.
 Time-series charts span the selected date range, including periods without requests.
 The request log response viewer reconstructs supported streamed and JSON
 responses, with a raw view for the original captured bytes. Captured responses
-are limited to 256 KiB, so the readable view may be incomplete.
+are limited to 100 MiB, so the readable view may be incomplete.
 
 The logs page searches and sorts all matching requests on the server, then loads
 one page of metadata at a time. Captured bodies are fetched only when a request
@@ -89,7 +89,8 @@ Dashboard totals and charts cover the entire selected range, not just a page.
 Both endpoints share one filter (`backend/server/observability/filter.rs`):
 time range, dimensions, statuses, and the filter choices offered for a range.
 `dashboard.rs` owns aggregation and `logs.rs` owns paging, search, and details.
-All queries are built with Toasty, without hand-written SQL.
+Queries are built with Toasty. The only hand-written SQL is the one-time legacy
+body conversion in `compress.rs`, whose table has no model.
 
 Request capture writes each completed or interrupted inference log, its
 captured bodies, and its filter snapshots in one transaction. Bodies live in

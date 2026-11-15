@@ -229,7 +229,7 @@ export function ResponseBody({
         )}
       </div>
       <p className="mt-2 text-xs text-muted-foreground">
-        Captured responses are limited to 256 KiB and may be incomplete.
+        Captured responses are limited to 100 MiB and may be incomplete.
       </p>
     </div>
   );
