@@ -32,7 +32,6 @@ flowchart LR
 | `just test`         | Run all test suites        | Unit and integration tests for Rust and frontend.                                                                                                       |
 | `just lint`         | Lint and format code       | Runs Oxlint (any warning fails), `cargo fmt` and `bun fmt`.                                                                                             |
 | `just build`        | Compile release binary     | Builds frontend assets and embeds them into `target/release/zero-g`.                                                                                    |
-| `just seed`         | Populate mock data         | Adds example providers, keys and logs to an initialized development database; stop the server first.                                                    |
 | `just api-generate` | Sync frontend API clients  | Regenerates Orval clients from OpenAPI spec.                                                                                                            |
 
 ---

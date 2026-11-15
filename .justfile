@@ -11,16 +11,12 @@ dev-backend:
 dev-frontend:
     cd frontend && bun run --bun vite
 
-# Add example providers, keys and logs to the initialized development database (server stopped)
-seed:
-    bun run frontend/scripts/seed.ts
-
 frontend-build:
     cd frontend && bun run tsc -b && bun run --bun vite build
 
 lint:
     # Warnings fail the gate, matching the Tailwind CSS editor diagnostics.
-    cd frontend && bun run oxlint --deny-warnings src scripts
+    cd frontend && bun run oxlint --deny-warnings src
     frontend/node_modules/.bin/oxlint --deny-warnings -c frontend/.oxlintrc.json scripts
     cargo fmt
     bun fmt --no-script frontend scripts README.md docs
