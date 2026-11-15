@@ -1,3 +1,7 @@
+use super::keys::{
+    BODY_RETENTION_DAYS, DISCOVERY_INTERVAL_MINUTES, IntSetting, LOG_RETENTION_DAYS,
+    PRICING_INTERVAL_HOURS,
+};
 use super::{SettingsResponse, SettingsStore, UpdateSettings, get_settings, internal_error};
 use crate::database::transaction_with_retry;
 use axum::extract::State;
@@ -20,55 +24,39 @@ pub(crate) async fn put_settings(
     State(store): State<SettingsStore>,
     Json(input): Json<UpdateSettings>,
 ) -> Response {
-    let invalid_days = |days: Option<u32>| days.is_some_and(|days| !(1..=36500).contains(&days));
-    if invalid_days(input.log_retention_days) {
-        return (StatusCode::BAD_REQUEST, "Invalid log retention").into_response();
+    let updates: [(&IntSetting, Option<u64>, &str); 4] = [
+        (
+            &LOG_RETENTION_DAYS,
+            input.log_retention_days.map(u64::from),
+            "Invalid log retention",
+        ),
+        (
+            &BODY_RETENTION_DAYS,
+            input.body_retention_days.map(u64::from),
+            "Invalid body retention",
+        ),
+        (
+            &PRICING_INTERVAL_HOURS,
+            input.pricing_interval_hours,
+            "Interval is too large",
+        ),
+        (
+            &DISCOVERY_INTERVAL_MINUTES,
+            input.discovery_interval_minutes,
+            "Interval is too large",
+        ),
+    ];
+    for (setting, value, message) in &updates {
+        if value.is_some_and(|value| !setting.range.contains(&value)) {
+            return (StatusCode::BAD_REQUEST, *message).into_response();
+        }
     }
-    if invalid_days(input.body_retention_days) {
-        return (StatusCode::BAD_REQUEST, "Invalid body retention").into_response();
-    }
-    if input
-        .pricing_interval_hours
-        .is_some_and(|h| h.checked_mul(3600).is_none())
-        || input
-            .discovery_interval_minutes
-            .is_some_and(|m| m.checked_mul(60).is_none())
-    {
-        return (StatusCode::BAD_REQUEST, "Interval is too large").into_response();
-    }
-    if input.log_retention_days.is_some()
-        || input.body_retention_days.is_some()
-        || input.pricing_interval_hours.is_some()
-        || input.discovery_interval_minutes.is_some()
-    {
-        let retention = input.log_retention_days;
-        let body_retention = input.body_retention_days;
-        let pricing = input.pricing_interval_hours;
-        let discovery = input.discovery_interval_minutes;
+    if updates.iter().any(|(_, value, _)| value.is_some()) {
         let result = transaction_with_retry!(store.database, |mut tx| {
-            if let Some(days) = retention {
-                crate::storage::Setting::upsert_by_name("log_retention_days")
-                    .value(days.to_string())
-                    .exec(&mut tx)
-                    .await?;
-            }
-            if let Some(days) = body_retention {
-                crate::storage::Setting::upsert_by_name("body_retention_days")
-                    .value(days.to_string())
-                    .exec(&mut tx)
-                    .await?;
-            }
-            if let Some(hours) = pricing {
-                crate::storage::Setting::upsert_by_name("pricing_interval_hours")
-                    .value(hours.to_string())
-                    .exec(&mut tx)
-                    .await?;
-            }
-            if let Some(minutes) = discovery {
-                crate::storage::Setting::upsert_by_name("discovery_interval_minutes")
-                    .value(minutes.to_string())
-                    .exec(&mut tx)
-                    .await?;
+            for (setting, value, _) in &updates {
+                if let Some(value) = value {
+                    setting.write(&mut tx, *value).await?;
+                }
             }
             tx.commit().await?;
             Ok(())

@@ -15,6 +15,8 @@ use crate::database::{Database, transaction_with_retry};
 mod create_key;
 /// Read dashboard settings.
 mod get_settings;
+/// Typed integer settings.
+pub(crate) mod keys;
 /// List virtual keys.
 mod list_keys;
 /// Update dashboard settings.

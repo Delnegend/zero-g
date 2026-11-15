@@ -1,37 +1,17 @@
 use crate::database::{Database, transaction_with_retry};
-use crate::storage::{LogFilterOption, RequestLog, RequestLogBody, Setting};
+use crate::server::settings::keys::{BODY_RETENTION_DAYS, LOG_RETENTION_DAYS};
+use crate::storage::{LogFilterOption, RequestLog, RequestLogBody};
 
 use super::{logs::LogEntry, now};
 
-/// Default days to keep request log metadata, charts, and totals.
-pub(crate) const LOG_RETENTION_DEFAULT: i64 = 90;
-/// Default days to keep captured request and response bodies.
-pub(crate) const BODY_RETENTION_DEFAULT: i64 = 7;
-
-/// Read a retention policy in days from the same transaction as its consumer.
-async fn read_days(
-    tx: &mut toasty::Transaction<'_>,
-    name: &str,
-    default: i64,
-) -> toasty::Result<i64> {
-    let setting = Setting::filter_by_name(name).first().exec(tx).await?;
-    let days = match setting {
-        Some(setting) => setting.value.parse::<i64>().map_err(|_| {
-            toasty::Error::from_args(format_args!("{name} must be a positive integer"))
-        })?,
-        None => default,
-    };
-    if !(1..=36500).contains(&days) {
-        return Err(toasty::Error::from_args(format_args!(
-            "{name} must be between 1 and 36500"
-        )));
-    }
-    Ok(days)
+/// Read the log metadata retention policy in days.
+pub(super) async fn read_retention(exec: &mut dyn toasty::Executor) -> toasty::Result<i64> {
+    days(LOG_RETENTION_DAYS.read(exec).await?)
 }
 
-/// Read the log metadata retention policy.
-pub(super) async fn read_retention(tx: &mut toasty::Transaction<'_>) -> toasty::Result<i64> {
-    read_days(tx, "log_retention_days", LOG_RETENTION_DEFAULT).await
+/// Convert a validated day count (at most 36500) to the timestamp domain.
+fn days(value: u64) -> toasty::Result<i64> {
+    i64::try_from(value).map_err(|e| toasty::Error::from_args(format_args!("{e}")))
 }
 
 /// Earliest Unix second retained under a retention policy of `days`.
@@ -39,14 +19,18 @@ pub(super) fn cutoff(days: i64) -> i64 {
     now().saturating_sub(days.saturating_mul(86400))
 }
 
+/// Earliest retained log and body timestamps. Bodies are kept for the shorter
+/// of the two policies, so a log can outlive its bodies.
+pub(super) async fn cutoffs(exec: &mut dyn toasty::Executor) -> toasty::Result<(i64, i64)> {
+    let log_cutoff = cutoff(read_retention(exec).await?);
+    let body_cutoff = cutoff(days(BODY_RETENTION_DAYS.read(exec).await?)?).max(log_cutoff);
+    Ok((log_cutoff, body_cutoff))
+}
+
 /// Delete expired logs, bodies, and filter snapshots using the current persisted policies.
-///
-/// Bodies are kept for the shorter of the two policies, so a log can outlive its bodies.
 pub(crate) async fn prune_expired(database: &Database) -> Result<(), String> {
     transaction_with_retry!(database, |mut tx| {
-        let log_cutoff = cutoff(read_retention(&mut tx).await?);
-        let body_days = read_days(&mut tx, "body_retention_days", BODY_RETENTION_DEFAULT).await?;
-        let body_cutoff = cutoff(body_days).max(log_cutoff);
+        let (log_cutoff, body_cutoff) = cutoffs(&mut tx).await?;
         RequestLog::filter(RequestLog::fields().created_at().lt(log_cutoff))
             .delete()
             .exec(&mut tx)

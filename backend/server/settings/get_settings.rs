@@ -1,5 +1,8 @@
+use super::keys::{
+    ALL, BODY_RETENTION_DAYS, DISCOVERY_INTERVAL_MINUTES, LOG_RETENTION_DAYS,
+    PRICING_INTERVAL_HOURS,
+};
 use super::{SettingsResponse, SettingsStore, internal_error};
-use crate::database::transaction_with_retry;
 use crate::storage::Setting;
 use axum::extract::State;
 use axum::response::{IntoResponse, Json, Response};
@@ -15,51 +18,36 @@ use axum::response::{IntoResponse, Json, Response};
     )
 )]
 pub(crate) async fn get_settings(State(store): State<SettingsStore>) -> Response {
-    /// Loads the global settings.
-    async fn load(store: &SettingsStore) -> Result<SettingsResponse, String> {
-        transaction_with_retry!(store.database, |mut tx| {
-            let days = |row: Option<Setting>, default: i64| {
-                row.and_then(|row| row.value.parse::<u32>().ok())
-                    .unwrap_or_else(|| u32::try_from(default).unwrap_or(u32::MAX))
-            };
-            let retention = days(
-                Setting::filter_by_name("log_retention_days")
-                    .first()
-                    .exec(&mut tx)
-                    .await?,
-                crate::server::observability::LOG_RETENTION_DEFAULT,
-            );
-            let body_retention = days(
-                Setting::filter_by_name("body_retention_days")
-                    .first()
-                    .exec(&mut tx)
-                    .await?,
-                crate::server::observability::BODY_RETENTION_DEFAULT,
-            );
-            let pricing_interval = Setting::filter_by_name("pricing_interval_hours")
-                .first()
-                .exec(&mut tx)
-                .await?
-                .and_then(|row| row.value.parse::<u64>().ok())
-                .unwrap_or(24);
-            let discovery_interval = Setting::filter_by_name("discovery_interval_minutes")
-                .first()
-                .exec(&mut tx)
-                .await?
-                .and_then(|row| row.value.parse::<u64>().ok())
-                .unwrap_or(60);
-            tx.commit().await?;
-            Ok(SettingsResponse {
-                log_retention_days: retention,
-                body_retention_days: body_retention,
-                pricing_interval_hours: pricing_interval,
-                discovery_interval_minutes: discovery_interval,
+    /// Loads every integer setting in one query.
+    async fn load(store: &SettingsStore) -> toasty::Result<SettingsResponse> {
+        let rows = Setting::filter(
+            Setting::fields()
+                .name()
+                .in_list(ALL.map(|setting| setting.name.to_owned()).to_vec()),
+        )
+        .exec(&mut (*store.database.db).clone())
+        .await?;
+        let value = |setting: &super::keys::IntSetting| {
+            setting.parse(
+                rows.iter()
+                    .find(|row| row.name == setting.name)
+                    .map(|row| row.value.as_str()),
+            )
+        };
+        let days = |setting| {
+            value(setting).and_then(|days| {
+                u32::try_from(days).map_err(|e| toasty::Error::from_args(format_args!("{e}")))
             })
+        };
+        Ok(SettingsResponse {
+            log_retention_days: days(&LOG_RETENTION_DAYS)?,
+            body_retention_days: days(&BODY_RETENTION_DAYS)?,
+            pricing_interval_hours: value(&PRICING_INTERVAL_HOURS)?,
+            discovery_interval_minutes: value(&DISCOVERY_INTERVAL_MINUTES)?,
         })
-        .map_err(|e| e.to_string())
     }
     match load(&store).await {
         Ok(value) => Json(value).into_response(),
-        Err(err) => internal_error(&err),
+        Err(err) => internal_error(&err.to_string()),
     }
 }

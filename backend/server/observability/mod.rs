@@ -23,7 +23,7 @@ use dashboard::{
 use filter::{FilterOptions, IdentityOption};
 use logs::{__path_log_detail, __path_logs, LogEntry, LogSummary, LogsResponse};
 pub(super) use logs::{log_detail, logs};
-pub(crate) use retention::{BODY_RETENTION_DEFAULT, LOG_RETENTION_DEFAULT, prune_expired};
+pub(crate) use retention::prune_expired;
 
 /// Request observability dashboard operation.
 #[derive(utoipa::OpenApi)]
