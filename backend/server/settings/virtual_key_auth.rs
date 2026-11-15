@@ -22,6 +22,11 @@ pub(crate) fn virtual_key(headers: &HeaderMap) -> Option<&str> {
 }
 
 /// Authenticates a virtual key and attaches provider and permission context.
+///
+/// Unified inference dispatch has already authenticated the token and loaded the
+/// provider; request extensions are only ever set by server code, so that context
+/// is reused when present. The token, provider kind, and provider permission are
+/// still checked here.
 pub(crate) async fn virtual_key_auth(
     State((store, kind)): State<(SettingsStore, &'static str)>,
     Path(id): Path<String>,
@@ -31,7 +36,16 @@ pub(crate) async fn virtual_key_auth(
     if req.method() == Method::OPTIONS {
         return next.run(req).await;
     }
-    let provider = match crate::provider::registry::get(&store.database, &id).await {
+    let provider = match req
+        .extensions()
+        .get::<crate::provider::registry::Provider>()
+        .filter(|provider| provider.id == id)
+        .cloned()
+    {
+        Some(provider) => Ok(Some(provider)),
+        None => crate::provider::registry::get(&store.database, &id).await,
+    };
+    let provider = match provider {
         Ok(Some(provider)) if provider.kind == kind => provider,
         Ok(_) => {
             return (
@@ -57,7 +71,11 @@ pub(crate) async fn virtual_key_auth(
         )
             .into_response();
     };
-    match store.permissions(token, req.extensions().get()).await {
+    let permissions = match req.extensions().get::<super::Permissions>().cloned() {
+        Some(permissions) => Ok(Some(permissions)),
+        None => store.permissions(token, req.extensions().get()).await,
+    };
+    match permissions {
         Ok(Some(permissions))
             if permissions.providers.is_empty()
                 || permissions.providers.iter().any(|p| p == &id) =>

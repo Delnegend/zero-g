@@ -378,6 +378,116 @@ async fn key_configuration_update_lifecycle() {
     assert_eq!(updated["keys"][0]["models"], json!(["m1"]));
 }
 
+/// Context from unified dispatch is reused only when it matches; it never replaces
+/// the token, provider kind, or provider permission checks.
+#[tokio::test]
+async fn virtual_key_auth_reuses_only_matching_server_context() {
+    let store = SettingsStore::new(Database::open(":memory:").await.unwrap(), &key(1))
+        .await
+        .unwrap();
+    for (id, kind) in [("codex", "codex"), ("agy", "agy")] {
+        toasty::create!(ProviderRecord {
+            id: id.to_string(),
+            name: id.to_string(),
+            kind: kind.to_string(),
+            base_url: String::new(),
+            keyless: false,
+            deleted: false
+        })
+        .exec(&mut (*store.database.db).clone())
+        .await
+        .unwrap();
+    }
+    #[allow(clippy::literal_string_with_formatting_args)]
+    let app = Router::new().route("/{id}/models/m", get(model)).layer(
+        axum::middleware::from_fn_with_state((store.clone(), "codex"), virtual_key_auth),
+    );
+    let provider = |id: &str, kind: &str| crate::provider::registry::Provider {
+        id: id.into(),
+        name: id.into(),
+        kind: kind.into(),
+        base_url: String::new(),
+        keyless: false,
+    };
+    let everything = Permissions {
+        providers: vec![],
+        models: vec![],
+    };
+    let send =
+        |uri: &str, token: Option<&str>, context: Option<crate::provider::registry::Provider>| {
+            let mut request = Request::builder().uri(uri);
+            if let Some(token) = token {
+                request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
+            }
+            let mut request = request.body(Body::empty()).unwrap();
+            request.extensions_mut().insert(everything.clone());
+            if let Some(provider) = context {
+                request.extensions_mut().insert(provider);
+            }
+            app.clone().oneshot(request)
+        };
+    // Reused context still requires a token.
+    assert_eq!(
+        send("/codex/models/m", None, Some(provider("codex", "codex")))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    // Matching context is reused.
+    assert_eq!(
+        send(
+            "/codex/models/m",
+            Some("t"),
+            Some(provider("codex", "codex"))
+        )
+        .await
+        .unwrap()
+        .status(),
+        StatusCode::OK
+    );
+    // A provider of the wrong kind is rejected whether reused or loaded.
+    assert_eq!(
+        send("/codex/models/m", Some("t"), Some(provider("codex", "agy")))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        send("/agy/models/m", Some("t"), Some(provider("codex", "codex")))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    // Restricted permissions are still enforced for the routed provider.
+    let mut request = Request::builder()
+        .uri("/codex/models/m")
+        .header(header::AUTHORIZATION, "Bearer t")
+        .body(Body::empty())
+        .unwrap();
+    request.extensions_mut().insert(Permissions {
+        providers: vec!["agy".into()],
+        models: vec![],
+    });
+    request.extensions_mut().insert(provider("codex", "codex"));
+    assert_eq!(
+        app.clone().oneshot(request).await.unwrap().status(),
+        StatusCode::FORBIDDEN
+    );
+    // Without dispatch context the token itself is authenticated.
+    let request = Request::builder()
+        .uri("/codex/models/m")
+        .header(header::AUTHORIZATION, "Bearer t")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        app.oneshot(request).await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
+}
+
 /// Test handler checks model access using attached permissions.
 async fn model(Extension(permissions): Extension<Permissions>, uri: axum::http::Uri) -> StatusCode {
     if permissions.allows_model(uri.path().rsplit('/').next().unwrap_or_default()) {

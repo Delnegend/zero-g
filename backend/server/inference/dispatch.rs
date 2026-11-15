@@ -124,6 +124,8 @@ pub(super) async fn dispatch(
     };
     parts.uri = uri;
     parts.headers.remove(header::CONTENT_LENGTH);
+    // The provider router reuses this provider and the authenticated permissions.
+    parts.extensions.insert(provider);
     let Ok(body) = serde_json::to_vec(&value) else {
         return error(
             StatusCode::INTERNAL_SERVER_ERROR,
