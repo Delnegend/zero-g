@@ -22,7 +22,6 @@ pub(crate) fn openapi() -> utoipa::openapi::OpenApi {
     document.merge(crate::provider::codex::dashboard_login::Api::openapi());
     document.merge(crate::provider::claude::dashboard_login::Api::openapi());
     document.merge(crate::provider::cursor::dashboard_login::Api::openapi());
-    document.merge(crate::provider::grok::dashboard_login::Api::openapi());
     document
 }
 

@@ -9,7 +9,6 @@ import {
   startGoogleSignIn,
   startClaudeSignIn,
   startCursorSignIn,
-  startGrokSignIn,
   type Provider,
   type ProviderCredential,
 } from "@/server/api/providers";
@@ -108,26 +107,6 @@ export function ProviderSignIn({
           throw new Error("Invalid Cursor authorization URL.");
         setFlow({
           kind: "cursor",
-          credential,
-          data: { ...result, url: url.href },
-        });
-      } else if (provider.kind === "grok" || provider.kind === "grok-build") {
-        const result = await startGrokSignIn(
-          provider.id,
-          credential.id,
-          provider.kind === "grok-build",
-        );
-        const url = new URL(result.url);
-        if (
-          url.protocol !== "https:" ||
-          !(url.hostname === "x.ai" || url.hostname.endsWith(".x.ai")) ||
-          url.username ||
-          url.password ||
-          url.port
-        )
-          throw new Error("Invalid Grok authorization URL.");
-        setFlow({
-          kind: "device",
           credential,
           data: { ...result, url: url.href },
         });

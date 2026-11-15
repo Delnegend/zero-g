@@ -24,11 +24,7 @@ export function useSignInPolling({
         ? "agy"
         : flow.kind === "cursor"
           ? "cursor"
-          : providerKind === "codex"
-            ? "codex"
-            : providerKind === "grok-build"
-              ? "grok-build"
-              : "grok";
+          : "codex";
     const delay =
       flow.kind === "google" ? 2000 : Math.max(1, flow.data.interval) * 1000;
     let timer: number;

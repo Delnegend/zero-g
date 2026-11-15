@@ -22,7 +22,6 @@ flowchart TD
         Dispatch --> Codex[Codex]
         Dispatch --> Claude[Claude Code]
         Dispatch --> Cursor[Cursor]
-        Dispatch --> Grok[Grok / Grok Build]
         Dispatch --> ChatJimmy[ChatJimmy]
         Dispatch --> CommandCodeGo[Command Code Go]
     end

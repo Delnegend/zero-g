@@ -858,8 +858,6 @@ test("Codex device code copies with temporary confirmation", async () => {
 for (const [kind, label, host] of [
   ["claude", "Claude Code", "claude.ai"],
   ["cursor", "Cursor", "cursor.com"],
-  ["grok", "Grok", "auth.x.ai"],
-  ["grok-build", "Grok Build", "auth.x.ai"],
 ] as const) {
   test(`${label} sign-in uses its credential-scoped flow`, async () => {
     const requests: Array<{ path: string; body: unknown }> = [];
@@ -924,16 +922,6 @@ for (const [kind, label, host] of [
     const link = await screen.findByRole("link", { name: /authorization/ });
     assert.equal(new URL(link.getAttribute("href")!).hostname, host);
     assert.equal(screen.queryByText(/quota/i), null);
-    if (kind === "grok" || kind === "grok-build") {
-      const code = screen.getByRole("button", {
-        name: "Copy device code ABCD",
-      });
-      await user.hover(code);
-      assert.ok(await screen.findByText("Copy", { exact: true }));
-      await user.click(code);
-      assert.equal(await navigator.clipboard.readText(), "ABCD");
-      assert.ok(await screen.findByText("Copied!", { exact: true }));
-    }
     if (kind === "claude") {
       await user.type(
         screen.getByLabelText("Authorization code or callback URL"),
@@ -948,7 +936,6 @@ for (const [kind, label, host] of [
         body: { id: "flow-1", code: "secret-code" },
       });
     } else {
-      if (kind !== "cursor") assert.ok(screen.getByText("ABCD"));
       await screen.findByText("Sign-in complete.", {}, { timeout: 3000 });
       assert.deepEqual(requests[1], {
         path: `${prefix}/poll`,

@@ -80,20 +80,10 @@ export function startCursorSignIn(providerId: string, credentialId: string) {
   return api.startCursorLogin(providerId, credentialId);
 }
 
-export function startGrokSignIn(
-  providerId: string,
-  credentialId: string,
-  build: boolean,
-) {
-  return build
-    ? api.startGrokBuildLogin(providerId, credentialId)
-    : api.startGrokLogin(providerId, credentialId);
-}
-
 export async function pollSignIn(
   providerId: string,
   credentialId: string | undefined,
-  kind: "agy" | "codex" | "claude" | "cursor" | "grok" | "grok-build",
+  kind: "agy" | "codex" | "claude" | "cursor",
   id: string,
   signal: AbortSignal,
 ) {
@@ -112,15 +102,6 @@ export async function pollSignIn(
       return api.pollClaudeLogin(providerId, credentialId, { id }, { signal });
     case "cursor":
       return api.pollCursorLogin(providerId, credentialId, { id }, { signal });
-    case "grok":
-      return api.pollGrokLogin(providerId, credentialId, { id }, { signal });
-    case "grok-build":
-      return api.pollGrokBuildLogin(
-        providerId,
-        credentialId,
-        { id },
-        { signal },
-      );
   }
 }
 

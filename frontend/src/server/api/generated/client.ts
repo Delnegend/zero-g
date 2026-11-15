@@ -20,8 +20,6 @@ import {
   CursorStartResponse,
   DashboardResponse,
   DashboardUser,
-  GrokPollResponse,
-  GrokStartResponse,
   KeyList,
   LogEntry,
   LogsResponse,
@@ -44,7 +42,6 @@ import type {
   CredentialInput,
   CursorPollInput,
   GetDashboardParams,
-  GrokPollInput,
   ListLogsParams,
   ManagementKey,
   OidcCallbackParams,
@@ -1045,139 +1042,6 @@ export const startCursorLogin = async (
       schema: CursorStartResponse,
     },
   );
-};
-
-export const getPollGrokBuildLoginUrl = (id: string, credentialId: string) => {
-  return `/api/providers/${encodeURIComponent(String(id))}/credentials/${encodeURIComponent(String(credentialId))}/grok-build/poll`;
-};
-
-/**
- * @summary Polls a Grok Build device login.
- */
-export const pollGrokBuildLogin = async (
-  id: string,
-  credentialId: string,
-  grokPollInput: GrokPollInput,
-  options?: Parameters<typeof request>[1],
-): Promise<GrokPollResponse> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(
-          h as Iterable<Iterable<string>>,
-          (entry) => Array.from(entry) as [string, string],
-        ),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<
-      string | readonly string[] | undefined
-    >(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-  return request<GrokPollResponse>(getPollGrokBuildLoginUrl(id, credentialId), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
-    },
-    body: JSON.stringify(grokPollInput),
-    schema: GrokPollResponse,
-  });
-};
-
-export const getStartGrokBuildLoginUrl = (id: string, credentialId: string) => {
-  return `/api/providers/${encodeURIComponent(String(id))}/credentials/${encodeURIComponent(String(credentialId))}/grok-build/start`;
-};
-
-/**
- * @summary Starts a Grok Build device login.
- */
-export const startGrokBuildLogin = async (
-  id: string,
-  credentialId: string,
-  options?: Parameters<typeof request>[1],
-): Promise<GrokStartResponse> => {
-  return request<GrokStartResponse>(
-    getStartGrokBuildLoginUrl(id, credentialId),
-    {
-      ...options,
-      method: "POST",
-      schema: GrokStartResponse,
-    },
-  );
-};
-
-export const getPollGrokLoginUrl = (id: string, credentialId: string) => {
-  return `/api/providers/${encodeURIComponent(String(id))}/credentials/${encodeURIComponent(String(credentialId))}/grok/poll`;
-};
-
-/**
- * @summary Polls an xAI API device login.
- */
-export const pollGrokLogin = async (
-  id: string,
-  credentialId: string,
-  grokPollInput: GrokPollInput,
-  options?: Parameters<typeof request>[1],
-): Promise<GrokPollResponse> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(
-          h as Iterable<Iterable<string>>,
-          (entry) => Array.from(entry) as [string, string],
-        ),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<
-      string | readonly string[] | undefined
-    >(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-  return request<GrokPollResponse>(getPollGrokLoginUrl(id, credentialId), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
-    },
-    body: JSON.stringify(grokPollInput),
-    schema: GrokPollResponse,
-  });
-};
-
-export const getStartGrokLoginUrl = (id: string, credentialId: string) => {
-  return `/api/providers/${encodeURIComponent(String(id))}/credentials/${encodeURIComponent(String(credentialId))}/grok/start`;
-};
-
-/**
- * @summary Starts an xAI API device login.
- */
-export const startGrokLogin = async (
-  id: string,
-  credentialId: string,
-  options?: Parameters<typeof request>[1],
-): Promise<GrokStartResponse> => {
-  return request<GrokStartResponse>(getStartGrokLoginUrl(id, credentialId), {
-    ...options,
-    method: "POST",
-    schema: GrokStartResponse,
-  });
 };
 
 export const getSaveOpenrouterManagementKeyUrl = (

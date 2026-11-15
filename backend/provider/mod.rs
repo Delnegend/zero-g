@@ -18,8 +18,6 @@ pub(crate) mod credentials;
 pub(crate) mod cursor;
 /// Go provider integration.
 pub(crate) mod go;
-/// Grok OAuth and Grok Build integrations.
-pub(crate) mod grok;
 /// Provider login coordination.
 pub(crate) mod login;
 /// OpenAI-compatible provider integration.
@@ -95,10 +93,6 @@ providers! {
     Claude => claude::Backend,
     /// Cursor backend.
     Cursor => cursor::Backend,
-    /// xAI OAuth backend.
-    Grok => grok::Backend,
-    /// Grok Build backend.
-    GrokBuild => grok::BuildBackend,
     /// Zen backend.
     Zen => zen::Backend,
     /// Go backend.
@@ -152,8 +146,6 @@ impl ProviderKind {
             Self::Codex => codex::Backend::discover(state, provider).await,
             Self::Claude => claude::Backend::discover(state, provider).await,
             Self::Cursor => cursor::Backend::discover(state, provider).await,
-            Self::Grok => grok::Backend::discover(state, provider).await,
-            Self::GrokBuild => grok::BuildBackend::discover(state, provider).await,
             Self::Zen => zen::Backend::discover(state, provider).await,
             Self::Go => go::Backend::discover(state, provider).await,
             Self::Openai => openai::Backend::discover(state, provider).await,
@@ -178,10 +170,6 @@ impl ProviderKind {
             Self::Codex => codex::Backend::discover_permitted(state, provider, permissions).await,
             Self::Claude => claude::Backend::discover_permitted(state, provider, permissions).await,
             Self::Cursor => cursor::Backend::discover_permitted(state, provider, permissions).await,
-            Self::Grok => grok::Backend::discover_permitted(state, provider, permissions).await,
-            Self::GrokBuild => {
-                grok::BuildBackend::discover_permitted(state, provider, permissions).await
-            }
             Self::Zen => zen::Backend::discover_permitted(state, provider, permissions).await,
             Self::Go => go::Backend::discover_permitted(state, provider, permissions).await,
             Self::Openai => openai::Backend::discover_permitted(state, provider, permissions).await,
@@ -211,8 +199,6 @@ impl ProviderKind {
             Self::Openrouter => Some(QuotaCapability::Openrouter),
             Self::Openai
             | Self::Cursor
-            | Self::Grok
-            | Self::GrokBuild
             | Self::ChatJimmy
             | Self::CommandCode
             | Self::CommandCodeGo => None,
@@ -226,8 +212,6 @@ impl ProviderKind {
             Self::Codex => codex::Backend::router(settings),
             Self::Claude => claude::Backend::router(settings),
             Self::Cursor => cursor::Backend::router(settings),
-            Self::Grok => grok::Backend::router(settings),
-            Self::GrokBuild => grok::BuildBackend::router(settings),
             Self::Zen => zen::Backend::router(settings),
             Self::Go => go::Backend::router(settings),
             Self::Openai => openai::Backend::router(settings),
@@ -299,14 +283,12 @@ pub(crate) fn dashboard_router(state: &AppState) -> Router {
             ProviderKind::Codex => router.merge(codex::Backend::dashboard_router(state.clone())),
             ProviderKind::Claude => router.merge(claude::Backend::dashboard_router(state.clone())),
             ProviderKind::Cursor => router.merge(cursor::Backend::dashboard_router(state.clone())),
-            ProviderKind::Grok => router.merge(grok::Backend::dashboard_router(state.clone())),
             ProviderKind::Zen => router.merge(zen::Backend::dashboard_router(state.clone())),
             ProviderKind::Openrouter => {
                 router.merge(openrouter::Backend::dashboard_router(state.clone()))
             }
             ProviderKind::Go
             | ProviderKind::Openai
-            | ProviderKind::GrokBuild
             | ProviderKind::ChatJimmy
             | ProviderKind::CommandCode
             | ProviderKind::CommandCodeGo => router,
@@ -329,8 +311,6 @@ mod tests {
                 "codex",
                 "claude",
                 "cursor",
-                "grok",
-                "grok-build",
                 "zen",
                 "go",
                 "openai",

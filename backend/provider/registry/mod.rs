@@ -111,9 +111,6 @@ fn validate(id: &str, name: &str, kind: &str, base_url: &str) -> Result<(), &'st
     if kind.as_str() == "zen" && !base_url.is_empty() {
         return Err("Zen uses a fixed upstream URL");
     }
-    if matches!(kind.as_str(), "grok" | "grok-build") && !base_url.is_empty() {
-        return Err("Grok uses a fixed upstream URL");
-    }
     if kind.as_str() == "openrouter" && !base_url.is_empty() {
         return Err("OpenRouter uses a fixed upstream URL");
     }

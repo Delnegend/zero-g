@@ -31,7 +31,7 @@ export function DeviceSignIn({
           target="_blank"
           rel="noopener noreferrer"
         >
-          {providerKind === "codex" ? "OpenAI" : "Grok"} device authorization
+          OpenAI device authorization
         </a>{" "}
         and enter this code:
       </p>

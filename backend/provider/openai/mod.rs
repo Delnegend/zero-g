@@ -272,9 +272,9 @@ mod tests {
                 "Invalid provider model list",
             ),
             (
-                "Failed to read Grok model list",
-                "Grok model list is too large",
-                "Invalid Grok model list",
+                "Failed to read Cursor model list",
+                "Cursor model list is too large",
+                "Invalid Cursor model list",
             ),
         ] {
             let prefix = Bytes::from_static(b"{\"data\":[]}");
