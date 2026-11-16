@@ -370,8 +370,8 @@ where
         async move {
             let creds = load_creds(&credential)
                 .await
-                .map_err(|error| {
-                    if let PoolError::Upstream(upstream) = &error
+                .inspect_err(|error| {
+                    if let PoolError::Upstream(upstream) = error
                         && upstream.status == Some(StatusCode::TOO_MANY_REQUESTS)
                     {
                         cooldown::start(
@@ -379,7 +379,6 @@ where
                             cooldown::wait_for(&reqwest::header::HeaderMap::new()),
                         );
                     }
-                    error
                 })?
                 .ok_or_else(|| PoolError::Internal(empty_message.to_owned()))?;
             let result = operation(creds).await.map_err(|error| {

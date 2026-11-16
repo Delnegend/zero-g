@@ -9,8 +9,11 @@ use crate::provider::antigravity::auth::Credentials;
 use crate::provider::antigravity::{AntigravityEvent, map_finish_reason, spawn_event_stream};
 use crate::provider::common::errors::UpstreamError;
 
+/// `OpenAI` chat completion stream serialization.
 pub(super) mod chat;
+/// `OpenAI` responses API stream serialization.
 pub(super) mod responses;
+/// Server-sent event response framing.
 pub(super) mod sse;
 
 impl AntigravityClient {

@@ -7,7 +7,7 @@ use crate::openai::ChatCompletionRequest;
 use crate::provider::antigravity::{AntigravityClient, AntigravityModelInfo, AuthManager};
 use crate::provider::common::cooldown;
 use crate::provider::common::errors::UpstreamError;
-use crate::provider::common::pool::{self, eligible, rank_accounts, run_candidates};
+use crate::provider::common::pool::{eligible, rank_accounts, run_candidates};
 pub(super) use crate::provider::common::pool::PoolError;
 use crate::provider::common::request_identity::RequestIdentity;
 use crate::provider::credentials::Credential;
@@ -28,7 +28,7 @@ where
     F: FnMut(C) -> Fut,
     Fut: Future<Output = Result<T, PoolError>>,
 {
-    pool::try_candidates(candidates, NOT_CONFIGURED, attempt).await
+    crate::provider::common::pool::try_candidates(candidates, NOT_CONFIGURED, attempt).await
 }
 
 /// Executes an operation in the supplied weighted credential order.
