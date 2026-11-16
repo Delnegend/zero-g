@@ -372,6 +372,78 @@ fn defaults_are_discovered_and_ambiguous_suffixes_stay_separate() {
     assert_eq!(entry.default_reasoning_effort, None);
     assert_eq!(entry.display_name.as_deref(), Some("Model (High)"));
 }
+#[test]
+fn family_alias_resolves_independently_of_account_catalog_order() {
+    for reverse in [false, true] {
+        let mut catalogs = vec![models(&["claude-sonnet-4-6"]), models(&["claude-sonnet-5-5-low", "claude-sonnet-5-5-medium", "claude-sonnet-5-5-high"])];
+        if reverse { catalogs.reverse(); }
+        let combined = catalogs.into_iter().flatten().collect();
+        assert_eq!(resolve_model(combined, "claude-sonnet-5-5", None, &permissions(&[])).unwrap(), "claude-sonnet-5-5-medium");
+    }
+}
+
+#[tokio::test]
+async fn routes_choose_account_advertising_resolved_model() {
+    use crate::storage::{ProviderCredential, ProviderRecord, Secret};
+    use axum::{body::Body, http::Request};
+    use serde_json::json;
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let fake = Router::new().fallback(post(move |uri: axum::http::Uri, headers: axum::http::HeaderMap, Json(body): Json<Value>| {
+        let tx = tx.clone();
+        async move {
+            let token = headers.get(axum::http::header::AUTHORIZATION).unwrap().to_str().unwrap();
+            if uri.path().ends_with("fetchAvailableModels") {
+                let models = if token == "Bearer kien" {
+                    json!({"claude-sonnet-5-5-low": {}, "claude-sonnet-5-5-medium": {}, "claude-sonnet-5-5-high": {}})
+                } else {
+                    json!({"claude-sonnet-4-6": {}})
+                };
+                Json(json!({"models": models})).into_response()
+            } else {
+                tx.send((token.to_owned(), body["model"].as_str().unwrap().to_owned())).unwrap();
+                ([(axum::http::header::CONTENT_TYPE, "text/event-stream")], "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}}\n\n").into_response()
+            }
+        }
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, fake).await.unwrap() });
+    let database = crate::database::Database::open(":memory:").await.unwrap();
+    let store = SettingsStore::new(database.clone(), "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").await.unwrap();
+    toasty::create!(ProviderRecord { id: "agy".to_string(), name: "agy".to_string(), kind: "agy".to_string(), base_url: String::new(), keyless: false, deleted: false }).exec(&mut (*store.database.db).clone()).await.unwrap();
+    for account in ["mvn", "kien"] {
+        toasty::create!(ProviderCredential { id: account.to_string(), provider_id: "agy".to_string(), name: account.to_string(), weight: 1, enabled: true }).exec(&mut (*store.database.db).clone()).await.unwrap();
+        let name = format!("credential.{account}.credential");
+        let secret = json!({"access_token":account,"project_id":account}).to_string();
+        Secret::upsert_by_name(&name).value(store.encrypt(&name, &secret).unwrap()).exec(&mut (*store.database.db).clone()).await.unwrap();
+    }
+    let mut client = AntigravityClient::new();
+    client.test_endpoint = Some(format!("http://{address}"));
+    let mut providers = crate::provider::Providers::new();
+    providers.client = Arc::new(client);
+    let state = AppState { providers, settings: store, database, dashboard_auth: crate::server::dashboard_auth_config::test_auth().await };
+    let app = Router::new().route("/v1/chat/completions", post(chat_handler)).route("/v1/responses", post(responses_handler))
+        .layer(Extension(Permissions { providers: vec![], models: vec![] }))
+        .layer(Extension(Provider { id: "agy".into(), name: "agy".into(), kind: "agy".into(), base_url: String::new(), keyless: false }))
+        .layer(Extension(RequestSession { id: "session".into() })).with_state(state);
+    for path in ["/v1/chat/completions", "/v1/responses"] {
+        for streaming in [false, true] {
+            let body = if path.ends_with("responses") {
+                json!({"model":"claude-sonnet-5-5", "input":"hello", "stream":streaming})
+            } else {
+                json!({"model":"claude-sonnet-5-5", "messages":[{"role":"user","content":"hello"}], "stream":streaming})
+            };
+            let request = Request::builder().method("POST").uri(path).header("content-type", "application/json").body(Body::from(body.to_string())).unwrap();
+            let response = app.clone().oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(rx.recv().await.unwrap(), ("Bearer kien".to_owned(), "claude-sonnet-5-5-medium".to_owned()));
+        }
+    }
+    server.abort();
+}
 
 #[tokio::test]
 #[allow(clippy::too_many_lines)]

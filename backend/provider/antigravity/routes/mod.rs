@@ -28,7 +28,7 @@ pub(crate) use model_routing::to_model_entry;
 pub(crate) use pool::fetch_models;
 #[cfg(test)]
 use pool::try_candidates;
-use pool::{pool_error_response, pool_models, pooled_stream, with_pool};
+use pool::{pool_error_response, pool_models, pooled_stream, with_model_pool};
 
 /// Builds the virtual-key-protected Antigravity API routes.
 pub(crate) fn router(settings: &SettingsStore) -> Router<AppState> {
@@ -167,10 +167,11 @@ async fn chat_handler(
         )
         .await
     } else {
-        match with_pool(
+        match with_model_pool(
             &state,
             &provider,
             identity.as_ref().map(|Extension(identity)| identity),
+            &req.model,
             |creds| {
                 let req = &req;
                 let client = &state.providers.client;
@@ -268,10 +269,11 @@ async fn responses_handler(
         )
         .await
     } else {
-        match with_pool(
+        match with_model_pool(
             &state,
             &provider,
             identity.as_ref().map(|Extension(identity)| identity),
+            &chat_req.model,
             |creds| {
                 let chat_req = &chat_req;
                 let client = &state.providers.client;

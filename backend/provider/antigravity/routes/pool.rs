@@ -68,6 +68,15 @@ where
     F: Fn(crate::provider::antigravity::Credentials) -> Fut + Send + Sync,
     Fut: Future<Output = Result<T, UpstreamError>> + Send,
 {
+    let credentials = eligible_credentials(state, provider).await?;
+    with_candidates(state, provider, identity, credentials, operation).await
+}
+
+/// Loads the weighted credential order, excluding accounts in cooldown.
+async fn eligible_credentials(
+    state: &AppState,
+    provider: &Provider,
+) -> Result<Vec<crate::provider::credentials::Credential>, PoolError> {
     let mut credentials = crate::provider::credentials::list(&state.settings, provider)
         .await
         .map_err(PoolError::Internal)?;
@@ -83,6 +92,21 @@ where
     {
         return Err(PoolError::Cooling(wait));
     }
+    Ok(credentials)
+}
+
+/// Executes an operation in the supplied weighted credential order.
+async fn with_candidates<T, F, Fut>(
+    state: &AppState,
+    provider: &Provider,
+    identity: Option<&RequestIdentity>,
+    credentials: Vec<crate::provider::credentials::Credential>,
+    operation: F,
+) -> Result<T, PoolError>
+where
+    F: Fn(crate::provider::antigravity::Credentials) -> Fut + Send + Sync,
+    Fut: Future<Output = Result<T, UpstreamError>> + Send,
+{
     try_candidates(credentials, |credential| {
         let operation = &operation;
         async move {
@@ -123,6 +147,111 @@ where
     .await
 }
 
+/// Discovers each eligible account independently, retaining its weighted order.
+async fn account_models(
+    state: &AppState,
+    provider: &Provider,
+    credentials: &[crate::provider::credentials::Credential],
+) -> Vec<Result<Vec<(String, AntigravityModelInfo)>, PoolError>> {
+    let mut catalogs = Vec::with_capacity(credentials.len());
+    for credential in credentials {
+        catalogs.push(with_candidates(state, provider, None, vec![credential.clone()], |creds| async move {
+            state.providers.client.fetch_models(&creds).await
+        }).await);
+    }
+    catalogs
+}
+
+/// Runs generation on advertising accounts, or the original pool if none advertise.
+pub(super) async fn with_model_pool<T, F, Fut>(
+    state: &AppState,
+    provider: &Provider,
+    identity: Option<&RequestIdentity>,
+    model: &str,
+    operation: F,
+) -> Result<T, PoolError>
+where
+    F: Fn(crate::provider::antigravity::Credentials) -> Fut + Send + Sync,
+    Fut: Future<Output = Result<T, UpstreamError>> + Send,
+{
+    let credentials = eligible_credentials(state, provider).await?;
+    let catalogs = account_models(state, provider, &credentials).await;
+    let mut earliest = None;
+    let eligible: Vec<_> = credentials.into_iter().zip(catalogs).filter(|(credential, _)| {
+        cooldown::remaining(&credential.id).is_none_or(|wait| {
+            earliest = Some(earliest.map_or(wait, |old: std::time::Duration| old.min(wait)));
+            false
+        })
+    }).collect();
+    if eligible.is_empty() && let Some(wait) = earliest {
+        return Err(PoolError::Cooling(wait));
+    }
+    let candidates = select_advertising(eligible, model);
+    with_candidates(state, provider, identity, candidates, operation).await
+}
+
+/// Filters a weighted pool only when at least one account advertises the model.
+fn select_advertising<C>(
+    candidates: Vec<(C, Result<Vec<(String, AntigravityModelInfo)>, PoolError>)>,
+    model: &str,
+) -> Vec<C> {
+    let has_match = candidates.iter().any(|(_, catalog)| catalog.as_ref().is_ok_and(|models| models.iter().any(|(id, _)| id == model)));
+    candidates.into_iter().filter_map(|(candidate, catalog)| {
+        (!has_match || catalog.as_ref().is_ok_and(|models| models.iter().any(|(id, _)| id == model))).then_some(candidate)
+    }).collect()
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::{PoolError, select_advertising};
+    use crate::provider::antigravity::AntigravityModelInfo;
+
+    fn catalog(ids: &[&str]) -> Result<Vec<(String, AntigravityModelInfo)>, PoolError> {
+        Ok(ids.iter().map(|id| ((*id).to_owned(), serde_json::from_value(serde_json::json!({})).unwrap())).collect())
+    }
+
+    #[test]
+    fn selects_advertisers_in_weighted_order_and_preserves_unknown_models() {
+        for reverse in [false, true] {
+            let mut accounts = vec![("mvn", catalog(&["claude-sonnet-4-6"])), ("kien", catalog(&["claude-sonnet-5-5-medium"]))];
+            if reverse { accounts.reverse(); }
+            assert_eq!(select_advertising(accounts, "claude-sonnet-5-5-medium"), vec!["kien"]);
+            let mut accounts = vec![("mvn", catalog(&["claude-sonnet-4-6"])), ("kien", catalog(&["claude-sonnet-5-5-medium"]))];
+            if reverse { accounts.reverse(); }
+            let expected = if reverse { vec!["kien", "mvn"] } else { vec!["mvn", "kien"] };
+            assert_eq!(select_advertising(accounts, "undiscovered"), expected);
+        }
+    }
+}
+
+/// Collects discovery across accounts so aliases do not depend on pool order.
+pub(super) async fn all_pool_models(
+    state: &AppState,
+    provider: &Provider,
+) -> Result<Vec<(String, AntigravityModelInfo)>, PoolError> {
+    let credentials = eligible_credentials(state, provider).await?;
+    let catalogs = account_models(state, provider, &credentials).await;
+    let mut models = Vec::new();
+    let mut first_error = None;
+    let mut succeeded = false;
+    for catalog in catalogs {
+        match catalog {
+            Ok(catalog) => {
+                succeeded = true;
+                for (id, info) in catalog {
+                    if !models.iter().any(|(existing, _)| existing == &id) {
+                        models.push((id, info));
+                    }
+                }
+            }
+            Err(error) => { if first_error.is_none() { first_error = Some(error); } }
+        }
+    }
+    if succeeded { Ok(models) } else {
+        Err(first_error.unwrap_or_else(|| PoolError::Internal("Google Antigravity is not configured. Authenticate on the dashboard Providers page.".into())))
+    }
+}
+
 /// Starts an upstream chat stream using the credential pool.
 pub(super) async fn pooled_stream(
     state: &AppState,
@@ -131,7 +260,7 @@ pub(super) async fn pooled_stream(
     session_id: &str,
     identity: Option<&RequestIdentity>,
 ) -> Result<reqwest::Response, PoolError> {
-    with_pool(state, provider, identity, |creds| async move {
+    with_model_pool(state, provider, identity, &req.model, |creds| async move {
         let models = state.providers.client.fetch_models(&creds).await?;
         let info = models
             .iter()

@@ -1,6 +1,6 @@
 //! Model metadata conversion and permission-aware model resolution.
 
-use super::pool::{PoolError, pool_error_response, pool_models};
+use super::pool::{PoolError, all_pool_models, pool_error_response};
 use crate::openai::Model;
 use crate::provider::antigravity::{
     AntigravityModelInfo,
@@ -157,7 +157,7 @@ pub(super) async fn resolve_request_model(
     {
         return Ok(model.to_owned());
     }
-    let models = pool_models(state, provider, None)
+    let models = all_pool_models(state, provider)
         .await
         .map_err(RequestModelError::Pool)?;
     resolve_model(models, model, effort, permissions).map_err(RequestModelError::Resolve)

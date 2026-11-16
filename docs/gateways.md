@@ -100,6 +100,8 @@ curl http://127.0.0.1:8080/v1/decisions \
 | ChatJimmy                           | No tools; requests with tool definitions, calls or results are rejected, not stripped                                                                                                                     |
 | Custom OpenAI and other passthrough | Upstream fields kept as is; missing ones are not filled in                                                                                                                                                |
 
+Antigravity selects accounts advertising the resolved model when available. Accounts can have different model access; a model listed by one account is not necessarily available on another.
+
 ---
 
 ## Error Handling & Wire Invariants
