@@ -4,9 +4,7 @@ mod upstream;
 pub(crate) use downstream::model_response;
 pub(crate) use upstream::retry_api_keys;
 
-use axum::http::StatusCode;
-#[cfg(test)]
-use axum::http::header;
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Json, Response};
 use serde_json::Value;
 
