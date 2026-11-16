@@ -173,6 +173,12 @@ test("created token survives a failed list refresh and retry does not create ano
     ),
   );
   assert.ok(within(tokenDialog).getByText("secret-once"));
+  const copyKey = within(tokenDialog).getByRole("button", { name: "Copy key" });
+  await user.hover(copyKey);
+  assert.ok(await screen.findByText("Click to copy", { exact: true }));
+  await user.click(copyKey);
+  assert.equal(await navigator.clipboard.readText(), "secret-once");
+  assert.ok(await screen.findByText("Copied!", { exact: true }));
   await user.click(
     within(tokenDialog).getByRole("button", { name: "Dismiss" }),
   );

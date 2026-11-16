@@ -1,3 +1,10 @@
+import { CopyText } from "@/components/CopyText";
+import {
+  expiration,
+  ExpirationStatus,
+  KeyForm,
+  localDateTime,
+} from "@/components/KeyForm";
 import { RowsSkeleton } from "@/components/Loading";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -26,12 +33,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Ban, Pencil } from "lucide-react";
 import { useState } from "react";
-import {
-  expiration,
-  ExpirationStatus,
-  KeyForm,
-  localDateTime,
-} from "@/components/KeyForm";
 
 export const Route = createFileRoute("/keys")({
   head: () => ({ meta: [{ title: "Virtual keys · Zero-G" }] }),
@@ -284,8 +285,13 @@ export function KeysPage() {
             </Alert>
           )}
           {newKey ? (
-            <div role="status">
-              <code className="block break-all select-all">{newKey}</code>
+            <div role="status" className="min-w-0">
+              <CopyText
+                text={newKey}
+                label="Copy key"
+                fade
+                onError={() => setError("Could not copy the key.")}
+              />
               <Button
                 className="mt-3"
                 variant="outline"

@@ -841,7 +841,7 @@ test("Codex device code copies with temporary confirmation", async () => {
     name: "Copy device code ABCD-1234",
   });
   await user.hover(button);
-  assert.ok(await screen.findByText("Copy", { exact: true }));
+  assert.ok(await screen.findByText("Click to copy", { exact: true }));
   await user.click(button);
   assert.equal(await navigator.clipboard.readText(), "ABCD-1234");
   assert.ok(screen.getByText("Copied", { exact: true }));

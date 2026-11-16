@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { CopyDeviceCode } from "./CopyDeviceCode";
+import { CopyText } from "@/components/CopyText";
 import type { SignInFlow } from "./signInFlow";
 import { useSignInPolling } from "./useSignInPolling";
 
@@ -35,8 +35,10 @@ export function DeviceSignIn({
         </a>{" "}
         and enter this code:
       </p>
-      <CopyDeviceCode
-        code={flow.data.user_code}
+      <CopyText
+        text={flow.data.user_code}
+        label={`Copy device code ${flow.data.user_code}`}
+        textClassName="text-lg font-semibold"
         onError={() => onError("Could not copy the device code.")}
       />
       <p role="status" className="text-muted-foreground">
