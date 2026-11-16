@@ -17,9 +17,7 @@ function dashboardAuth(): Plugin {
         if (
           pathname === "/api" ||
           pathname.startsWith("/api/") ||
-          ["/agy/", "/codex/", "/zen/", "/openai/", "/go/"].some((prefix) =>
-            pathname.startsWith(prefix),
-          ) ||
+          pathname.startsWith("/v1/") ||
           pathname.startsWith("/auth/")
         ) {
           next();
@@ -36,7 +34,7 @@ function dashboardAuth(): Plugin {
           }),
         };
         const check = http.request(
-          `http://127.0.0.1:8080${["/", "/llm-logs", "/settings", "/keys", "/models/catalog", "/models/providers"].includes(pathname) ? pathname + url.search : "/"}`,
+          "http://127.0.0.1:8080/api/auth/user",
           {
             method: "GET",
             headers,
@@ -103,11 +101,7 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: {
-      "/agy": { target: "http://127.0.0.1:8080", changeOrigin: false },
-      "/codex": { target: "http://127.0.0.1:8080", changeOrigin: false },
-      "/zen": { target: "http://127.0.0.1:8080", changeOrigin: false },
-      "/go": { target: "http://127.0.0.1:8080", changeOrigin: false },
-      "/openai": { target: "http://127.0.0.1:8080", changeOrigin: false },
+      "/v1": { target: "http://127.0.0.1:8080", changeOrigin: false },
       "/redoc": { target: "http://127.0.0.1:8080", changeOrigin: false },
       "/api": { target: "http://127.0.0.1:8080", changeOrigin: false },
       "/auth": {
@@ -117,9 +111,7 @@ export default defineConfig({
     },
   },
   resolve: {
-    alias: {
-      "@": path.resolve(import.meta.dirname, "./src"),
-    },
+    tsconfigPaths: true,
   },
   build: {
     chunkSizeWarningLimit: 2000,
