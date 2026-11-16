@@ -8,7 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::{
     openai::{ChatCompletionRequest, ModelListResponse},
@@ -246,6 +246,7 @@ async fn inference(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use super::super::{downstream::{consume, response_object, stream_response}, upstream as client};
     use axum::body::to_bytes;
 

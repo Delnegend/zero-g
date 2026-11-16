@@ -1,8 +1,11 @@
+use std::borrow::Cow;
+
 use axum::http::StatusCode;
 use serde_json::Value;
 use sha2::Digest;
+use crate::provider::common::cooldown;
+use crate::provider::common::pool::{PoolError, eligible_by, rank_accounts};
 use crate::provider::credentials::Credential;
-
 /// Encode bytes as lowercase hexadecimal without intermediate allocations.
 pub(super) fn hex(bytes: &[u8]) -> String {
     let mut encoded = String::with_capacity(bytes.len().saturating_mul(2));
@@ -118,13 +121,19 @@ pub(super) enum Refusal {
     Failed(StatusCode, String),
 }
 
-/// Try connected credentials in weighted order until one is not refused.
+/// Claude's per-credential, per-model cooldown key.
+fn cooldown_key(credential: &Credential, model: &str) -> String {
+    format!("claude:{}:{}:{}", credential.id.len(), credential.id, model)
+}
+
+/// Try connected credentials in ranked order until one is not refused.
 ///
 /// A 401, 403, 429, or 503 moves on to the next credential. Rate limits are
 /// scoped to the requested model; other refusals take precedence over a 429.
-pub(super) async fn first_accepted<F, Fut>(
+pub(super) async fn first_accepted_at<F, Fut>(
     store: &crate::server::settings::SettingsStore,
     provider: &crate::provider::registry::Provider,
+    catalog_base: &str,
     model: &str,
     mut send: F,
 ) -> Result<(reqwest::Response, Credential), Refusal>
@@ -132,20 +141,27 @@ where
     F: FnMut(super::auth::Credentials, &Credential) -> Fut,
     Fut: Future<Output = Result<reqwest::Response, String>>,
 {
-    use crate::provider::common::cooldown;
-    let credentials = crate::provider::credentials::list(store, provider)
-        .await
-        .map_err(|e| Refusal::Failed(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    let mut last = None;
-    let mut limited = None;
-    let mut failure = None;
-    let mut soonest: Option<std::time::Duration> = None;
-    for credential in credentials {
-        let cooldown_id = format!("claude:{}:{}:{}", credential.id.len(), credential.id, model);
-        if let Some(wait) = cooldown::remaining(&cooldown_id) {
-            soonest = Some(soonest.map_or(wait, |s| s.min(wait)));
-            continue;
+    let credentials = match eligible_by(store, provider, |credential| {
+        Cow::Owned(cooldown_key(credential, model))
+    })
+    .await
+    {
+        Ok(credentials) => credentials,
+        Err(PoolError::Cooling(wait)) => return Err(Refusal::CoolingDown(wait)),
+        Err(PoolError::Internal(message)) => {
+            return Err(Refusal::Failed(StatusCode::INTERNAL_SERVER_ERROR, message));
         }
+        Err(err) => {
+            return Err(Refusal::Failed(
+                StatusCode::SERVICE_UNAVAILABLE,
+                err.to_string(),
+            ));
+        }
+    };
+    let http = http().map_err(|e| Refusal::Failed(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let mut failure = None;
+    let mut candidates = Vec::with_capacity(credentials.len());
+    for credential in credentials {
         let creds = match super::auth::load(store, &provider.id, &credential.id).await {
             Ok(creds) => creds,
             Err(e) => {
@@ -153,6 +169,16 @@ where
                 continue;
             }
         };
+        let catalog =
+            super::models::account_catalog(&http, catalog_base, &credential.id, &creds.access_token)
+                .await;
+        candidates.push(((credential, creds), catalog));
+    }
+    let ranked = rank_accounts(candidates, model);
+    let mut last = None;
+    let mut limited = None;
+    for (credential, creds) in ranked {
+        let cooldown_id = cooldown_key(&credential, model);
         let response = match send(creds, &credential).await {
             Ok(response) => response,
             Err(e) => {
@@ -160,13 +186,18 @@ where
                 continue;
             }
         };
-        let status = response.status().as_u16();
-        if status == 429 {
+        let status = response.status();
+        if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
+            super::models::invalidate_catalog_on_auth_error(&credential.id, Some(status)).await;
+            last = Some((response, credential));
+            continue;
+        }
+        if status == StatusCode::TOO_MANY_REQUESTS {
             cooldown::start(&cooldown_id, cooldown::wait_for(response.headers()));
             limited = Some((response, credential));
             continue;
         }
-        if matches!(status, 401 | 403 | 503) {
+        if status == StatusCode::SERVICE_UNAVAILABLE {
             last = Some((response, credential));
             continue;
         }
@@ -179,14 +210,13 @@ where
     if let Some(failure) = failure {
         return Err(failure);
     }
-    match (limited, soonest) {
-        (Some(refused), _) => Ok(refused),
-        (None, Some(wait)) => Err(Refusal::CoolingDown(wait)),
-        (None, None) => Err(Refusal::Failed(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "No connected Claude credentials".to_owned(),
-        )),
+    if let Some(refused) = limited {
+        return Ok(refused);
     }
+    Err(Refusal::Failed(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "No connected Claude credentials".to_owned(),
+    ))
 }
 
 /// Send a translated request using the first available credential.
@@ -197,9 +227,22 @@ pub(super) async fn inference(
     session: &str,
     payload: &Value,
 ) -> Result<(reqwest::Response, Credential), Refusal> {
+    inference_at(store, provider, API_ROOT, model, session, payload).await
+}
+
+/// Send a translated request against a configurable Anthropic root.
+pub(super) async fn inference_at(
+    store: &crate::server::settings::SettingsStore,
+    provider: &crate::provider::registry::Provider,
+    base: &str,
+    model: &str,
+    session: &str,
+    payload: &Value,
+) -> Result<(reqwest::Response, Credential), Refusal> {
     let http = http().map_err(|e| Refusal::Failed(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    let url = format!("{API_ROOT}/v1/messages?beta=true");
-    first_accepted(store, provider, model, |creds, credential| {
+    let base = base.trim_end_matches('/');
+    let url = format!("{base}/v1/messages?beta=true");
+    first_accepted_at(store, provider, base, model, |creds, credential| {
         let mut payload = payload.clone();
         if let Some(object) = payload.as_object_mut() {
             let user_id = user_id(&credential.id, session, creds.account_id.as_deref());
@@ -207,7 +250,8 @@ pub(super) async fn inference(
         }
         let (http, url) = (&http, &url);
         async move { send(http, url, &creds.access_token, &payload).await }
-    }).await
+    })
+    .await
 }
 
 
@@ -358,5 +402,151 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    /// Route to the account advertising a model, aggregate discovery across accounts, and keep unlisted models reachable.
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn routes_by_account_catalog_aggregates_discovery_and_allows_unlisted() {
+        use crate::database::Database;
+        use crate::provider::registry::Provider;
+        use crate::server::{AppState, settings::SettingsStore};
+        use crate::storage::{ProviderCredential, ProviderRecord, Secret};
+        use axum::{Json, http::HeaderMap, routing::post};
+        use serde_json::json;
+        use std::sync::{Arc, Mutex};
+
+        let database = Database::open(":memory:").await.unwrap();
+        let settings = SettingsStore::new(
+            database.clone(),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )
+        .await
+        .unwrap();
+        let mut db = (*database.db).clone();
+        toasty::create!(ProviderRecord {
+            id: "claude".to_string(),
+            name: "Claude Code".to_string(),
+            kind: "claude".to_string(),
+            base_url: String::new(),
+            keyless: false,
+            deleted: false
+        })
+        .exec(&mut db)
+        .await
+        .unwrap();
+        for (id, weight) in [("a", 1_000_000_000), ("b", 1)] {
+            toasty::create!(ProviderCredential {
+                id: id.to_string(),
+                provider_id: "claude".to_string(),
+                name: format!("account {id}"),
+                weight,
+                enabled: true
+            })
+            .exec(&mut db)
+            .await
+            .unwrap();
+            let name = format!("credential.{id}.credential");
+            let credential = json!({
+                "access_token": format!("token-{id}"),
+                "refresh_token": "refresh",
+                "expires_at": i64::MAX,
+                "account_id": "acct"
+            });
+            Secret::upsert_by_name(name.as_str())
+                .value(settings.encrypt(&name, &credential.to_string()).unwrap())
+                .exec(&mut db)
+                .await
+                .unwrap();
+        }
+        let state = AppState {
+            providers: crate::provider::Providers::new(),
+            settings,
+            database,
+            dashboard_auth: crate::server::dashboard_auth_config::test_auth().await,
+        };
+        let provider = Provider {
+            id: "claude".into(),
+            name: "Claude Code".into(),
+            kind: "claude".into(),
+            base_url: String::new(),
+            keyless: false,
+        };
+
+        let seen: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+        let seen_messages = seen.clone();
+        let app = Router::new()
+            .route(
+                "/v1/models",
+                get(|headers: HeaderMap| async move {
+                    let auth = headers
+                        .get(axum::http::header::AUTHORIZATION)
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or_default();
+                    if auth == "Bearer token-a" {
+                        Json(json!({"data":[{"id":"model-x"},{"id":"shared"}],"has_more":false}))
+                    } else {
+                        Json(json!({"data":[{"id":"model-y"},{"id":"shared"}],"has_more":false}))
+                    }
+                }),
+            )
+            .route(
+                "/v1/messages",
+                post(move |headers: HeaderMap, body: axum::body::Bytes| {
+                    let seen_messages = seen_messages.clone();
+                    async move {
+                        let auth = headers
+                            .get(axum::http::header::AUTHORIZATION)
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or_default()
+                            .to_owned();
+                        let value: Value = serde_json::from_slice(&body).unwrap();
+                        let model = value["model"].as_str().unwrap_or_default().to_owned();
+                        seen_messages.lock().unwrap().push((auth, model));
+                        Json(json!({"id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"model":"test","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}))
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let root = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let discovered = super::super::models::discover_at(&state, &provider, &root, None)
+            .await
+            .unwrap();
+        let ids: Vec<_> = discovered.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids.len(), 3);
+        assert!(ids.contains(&"model-x"));
+        assert!(ids.contains(&"model-y"));
+        assert!(ids.contains(&"shared"));
+
+        let req_y: crate::openai::ChatCompletionRequest = serde_json::from_value(json!({
+            "model": "model-y",
+            "messages": [{"role": "user", "content": "hi"}]
+        }))
+        .unwrap();
+        let payload_y = super::super::payload::build(&req_y).unwrap();
+        let (resp_y, cred_y) =
+            inference_at(&state.settings, &provider, &root, "model-y", "sess", &payload_y)
+                .await
+                .unwrap_or_else(|_| panic!("expected model-y to succeed"));
+        assert!(resp_y.status().is_success());
+        assert_eq!(cred_y.id, "b");
+
+        let req_z: crate::openai::ChatCompletionRequest = serde_json::from_value(json!({
+            "model": "model-z",
+            "messages": [{"role": "user", "content": "hi"}]
+        }))
+        .unwrap();
+        let payload_z = super::super::payload::build(&req_z).unwrap();
+        let (resp_z, _) =
+            inference_at(&state.settings, &provider, &root, "model-z", "sess", &payload_z)
+                .await
+                .unwrap_or_else(|_| panic!("expected unlisted model-z to reach pool"));
+        assert!(resp_z.status().is_success());
+
+        let recorded = seen.lock().unwrap();
+        assert_eq!(recorded[0], ("Bearer token-b".to_owned(), "model-y".to_owned()));
+        assert_eq!(recorded[1].1, "model-z");
     }
 }

@@ -219,6 +219,11 @@ pub(crate) async fn messages(
     .await
 }
 
+/// Extract the origin prefix before `/v1/` for catalog discovery.
+fn origin(url: &str) -> &str {
+    url.split_once("/v1/").map_or(client::API_ROOT, |(prefix, _)| prefix)
+}
+
 /// Authorize, prepare, and send the request to `url`, streaming the reply back unchanged.
 #[allow(clippy::too_many_lines)]
 async fn forward(
@@ -283,8 +288,12 @@ async fn forward(
         Ok(http) => http,
         Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, &message),
     };
-    let attempt =
-        client::first_accepted(&state.settings, &provider, &model, |creds, credential| {
+    let attempt = client::first_accepted_at(
+        &state.settings,
+        &provider,
+        origin(url),
+        &model,
+        |creds, credential| {
             let body = match &outgoing {
                 Outgoing::Exact(body) => Ok(body.clone()),
                 Outgoing::Normalized {

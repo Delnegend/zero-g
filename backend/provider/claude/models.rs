@@ -1,8 +1,27 @@
+use std::collections::HashSet;
+use std::sync::LazyLock;
+
+use axum::http::StatusCode;
+
 use crate::{
     openai::Model,
-    provider::{claude::auth, registry::Provider},
+    provider::{
+        claude::auth,
+        common::pool::{CatalogCache, eligible},
+        registry::Provider,
+    },
     server::AppState,
 };
+
+/// Per-credential cached Anthropic model catalogs.
+static CATALOG_CACHE: LazyLock<CatalogCache<Vec<Model>>> = LazyLock::new(CatalogCache::default);
+
+/// Invalidate a credential's cached model catalog after an auth rejection.
+pub(super) async fn invalidate_catalog_on_auth_error(credential_id: &str, status: Option<StatusCode>) {
+    CATALOG_CACHE
+        .invalidate_on_auth_error(credential_id, status)
+        .await;
+}
 
 /// Extract only metadata explicitly supplied by the Anthropic model list.
 pub(crate) fn catalog_info(model: &Model) -> crate::provider::common::catalog::CatalogInfo {
@@ -89,6 +108,23 @@ pub(crate) fn catalog_reference(
         ..Default::default()
     }
 }
+/// Fetch a credential's Anthropic model catalog from cache or upstream.
+pub(super) async fn account_catalog(
+    client: &reqwest::Client,
+    base: &str,
+    credential_id: &str,
+    token: &str,
+) -> Result<Vec<Model>, String> {
+    let scope = CatalogCache::<Vec<Model>>::scope_hash(&[base.trim_end_matches('/'), token]);
+    if let Some(cached) = CATALOG_CACHE.get(credential_id, scope).await {
+        return Ok(cached);
+    }
+    let models = fetch(client, base, token).await?;
+    CATALOG_CACHE
+        .insert(credential_id.to_owned(), scope, models.clone())
+        .await;
+    Ok(models)
+}
 
 /// Read the account-authenticated Anthropic catalog, following pagination.
 async fn fetch(client: &reqwest::Client, base: &str, token: &str) -> Result<Vec<Model>, String> {
@@ -152,31 +188,52 @@ async fn fetch(client: &reqwest::Client, base: &str, token: &str) -> Result<Vec<
     Ok(models)
 }
 
-/// Discover models using a connected credential from the weighted pool.
+/// Discover models across all eligible connected credentials, deduplicated by ID.
 pub(super) async fn discover(
     state: &AppState,
     provider: &Provider,
     identity: Option<&crate::provider::common::request_identity::RequestIdentity>,
 ) -> Result<Vec<Model>, String> {
-    let credentials = crate::provider::credentials::list(&state.settings, provider).await?;
+    discover_at(state, provider, super::upstream::API_ROOT, identity).await
+}
+
+/// Discover models against a configurable Anthropic root, aggregating across eligible accounts.
+pub(super) async fn discover_at(
+    state: &AppState,
+    provider: &Provider,
+    base: &str,
+    identity: Option<&crate::provider::common::request_identity::RequestIdentity>,
+) -> Result<Vec<Model>, String> {
+    let credentials = eligible(&state.settings, provider)
+        .await
+        .map_err(|e| e.to_string())?;
     let http = super::upstream::http()?;
+    let mut seen = HashSet::new();
+    let mut models = Vec::new();
     let mut last = "No connected Claude credentials".to_string();
+    let mut succeeded = false;
     for credential in credentials {
         match auth::load(&state.settings, &provider.id, &credential.id).await {
-            Ok(creds) => match fetch(&http, "https://api.anthropic.com", &creds.access_token).await
-            {
-                Ok(models) => {
-                    if let Some(identity) = identity {
-                        identity.set_credential(&credential.id, &credential.name);
+            Ok(creds) => {
+                match account_catalog(&http, base, &credential.id, &creds.access_token).await {
+                    Ok(account_models) => {
+                        if !succeeded && let Some(identity) = identity {
+                            identity.set_credential(&credential.id, &credential.name);
+                        }
+                        succeeded = true;
+                        for model in account_models {
+                            if seen.insert(model.id.clone()) {
+                                models.push(model);
+                            }
+                        }
                     }
-                    return Ok(models);
+                    Err(e) => last = e,
                 }
-                Err(e) => last = e,
-            },
+            }
             Err(e) => last = e,
         }
     }
-    Err(last)
+    if succeeded { Ok(models) } else { Err(last) }
 }
 
 /// Authenticated catalog tests.
