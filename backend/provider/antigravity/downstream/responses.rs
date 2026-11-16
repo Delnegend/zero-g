@@ -4,6 +4,61 @@ use serde_json::json;
 use crate::provider::antigravity::AntigravityEvent;
 use crate::responses::{ResponseContentPart, ResponseObject, ResponseOutputItem, ResponseUsage};
 
+/// Converts a collected chat completion into a Responses API object.
+pub(in crate::provider::antigravity) fn response_object(
+    resp: crate::openai::ChatCompletionResponse,
+    original_model: String,
+) -> ResponseObject {
+    let mut output_items = Vec::new();
+    let mut output_text = String::new();
+    for choice in &resp.choices {
+        if choice.message.content.is_some() || choice.message.provider_parts.is_some() {
+            let content = choice.message.content.as_deref().unwrap_or_default();
+            output_text.push_str(content);
+            output_items.push(ResponseOutputItem::Message {
+                id: format!("msg_{}", uuid::Uuid::new_v4().simple()),
+                status: "completed".to_string(),
+                role: choice.message.role.clone(),
+                content: vec![ResponseContentPart::OutputText {
+                    text: content.to_owned(),
+                }],
+                provider_parts: choice.message.provider_parts.clone(),
+            });
+        }
+        if let Some(tool_calls) = &choice.message.tool_calls {
+            for tc in tool_calls {
+                output_items.push(ResponseOutputItem::FunctionCall {
+                    id: format!("fc_{}", uuid::Uuid::new_v4().simple()),
+                    status: "completed".to_string(),
+                    name: tc.function.name.clone(),
+                    call_id: tc.id.clone(),
+                    arguments: tc.function.arguments.clone(),
+                    thought_signature: tc.thought_signature.clone(),
+                });
+            }
+        }
+    }
+    let usage = resp.usage.map(ResponseUsage::from);
+    ResponseObject {
+        id: format!("resp_{}", uuid::Uuid::new_v4().simple()),
+        object: "response".to_string(),
+        created_at: resp.created,
+        model: original_model,
+        status: if resp.choices.iter().any(|choice| {
+            choice.finish_reason.as_deref() != Some("stop")
+                && choice.finish_reason.as_deref() != Some("tool_calls")
+        }) {
+            "incomplete"
+        } else {
+            "completed"
+        }
+        .to_string(),
+        output: output_items,
+        output_text,
+        usage,
+    }
+}
+
 /// Serializes provider events into Responses API stream events.
 #[allow(clippy::struct_excessive_bools)]
 pub(crate) struct ResponsesStreamSerializer {
@@ -33,7 +88,7 @@ pub(crate) struct ResponsesStreamSerializer {
     pub(crate) incomplete: bool,
 }
 
-impl crate::provider::antigravity::sse::SseSerializer for ResponsesStreamSerializer {
+impl super::sse::SseSerializer for ResponsesStreamSerializer {
     fn initial(&mut self) -> Vec<Event> {
         let created_event = json!({
             "type": "response.created",
@@ -198,7 +253,7 @@ impl ResponsesStreamSerializer {
         events: &mut Vec<Event>,
     ) {
         let index = self.open_message(events);
-        let part = super::provider_part(&self.original_model, text, reasoning, signature);
+        let part = super::super::provider_part(&self.original_model, text, reasoning, signature);
         events.push(
             Event::default()
                 .event("response.provider_part.delta")
@@ -289,7 +344,7 @@ impl ResponsesStreamSerializer {
         self.next_output_index = self.next_output_index.saturating_add(1);
         let fc_item_id = format!("fc_{}", uuid::Uuid::new_v4().simple());
         let thought_signature = thought_signature
-            .map(|signature| super::scoped_signature(&self.original_model, &signature));
+            .map(|signature| super::super::scoped_signature(&self.original_model, &signature));
 
         let added_event = json!({
             "type": "response.output_item.added",
@@ -370,7 +425,7 @@ impl ResponsesStreamSerializer {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::provider::antigravity::sse::SseSerializer;
+    use crate::provider::antigravity::downstream::sse::SseSerializer;
     use axum::response::{IntoResponse, sse::Sse};
     use serde_json::Value;
     use std::convert::Infallible;

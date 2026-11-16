@@ -1,9 +1,7 @@
 /// OAuth credentials and token refresh.
 pub(crate) mod auth;
-/// `OpenAI` chat completion response conversion.
-pub(crate) mod chat;
-/// Upstream HTTP client operations.
-mod client;
+/// Client-facing response collection and streaming.
+mod downstream;
 /// Dashboard OAuth login endpoints.
 pub(crate) mod dashboard_login;
 /// Interactive OAuth login flow.
@@ -14,14 +12,12 @@ pub(crate) mod models;
 mod payload;
 /// Account quota discovery and normalization.
 pub(crate) mod quota;
-/// `OpenAI` responses API conversion.
-pub(crate) mod responses;
 /// Provider API routes.
 pub(crate) mod routes;
-/// Server-sent event response handling.
-pub(crate) mod sse;
 /// Upstream streaming event decoding.
 mod stream;
+/// Upstream generation request transport.
+mod upstream;
 
 pub(crate) use auth::AuthManager;
 use auth::Credentials;

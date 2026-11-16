@@ -32,7 +32,7 @@ pub(crate) struct ChatStreamSerializer {
     pub(crate) saw_usage: bool,
 }
 
-impl crate::provider::antigravity::sse::SseSerializer for ChatStreamSerializer {
+impl super::sse::SseSerializer for ChatStreamSerializer {
     fn handle(&mut self, event: AntigravityEvent) -> Vec<Event> {
         match event {
             AntigravityEvent::Text(text) => self.text_event(text, false, None),
@@ -74,7 +74,7 @@ impl crate::provider::antigravity::sse::SseSerializer for ChatStreamSerializer {
                                     arguments: Some(arguments),
                                 }),
                                 thought_signature: thought_signature.map(|signature| {
-                                    super::scoped_signature(&self.req_model, &signature)
+                                    super::super::scoped_signature(&self.req_model, &signature)
                                 }),
                             }]),
                             provider_parts: None,
@@ -139,7 +139,7 @@ impl crate::provider::antigravity::sse::SseSerializer for ChatStreamSerializer {
 impl ChatStreamSerializer {
     /// Emits a text or reasoning delta, including the role if needed.
     fn text_event(&mut self, text: String, reasoning: bool, signature: Option<&str>) -> Vec<Event> {
-        let provider_parts = Some(vec![super::provider_part(
+        let provider_parts = Some(vec![super::super::provider_part(
             &self.req_model,
             &text,
             reasoning,

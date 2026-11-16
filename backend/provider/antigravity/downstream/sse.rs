@@ -91,7 +91,10 @@ where
 }
 
 /// Spawns the SSE pump and returns a keep-alive response.
-pub(super) fn spawn_sse<S>(serializer: S, upstream: reqwest::Response) -> Response
+pub(in crate::provider::antigravity) fn spawn_sse<S>(
+    serializer: S,
+    upstream: reqwest::Response,
+) -> Response
 where
     S: SseSerializer + Send + 'static,
 {
@@ -107,7 +110,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::antigravity::chat::ChatStreamSerializer;
+    use crate::provider::antigravity::downstream::chat::ChatStreamSerializer;
 
     /// Runs the public SSE response against an isolated local upstream.
     async fn chat_from_upstream(body: &'static str) -> String {

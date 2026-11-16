@@ -9,15 +9,13 @@ use axum::routing::{get, post};
 use serde_json::Value;
 
 use crate::openai::{ChatCompletionRequest, ModelListResponse, StreamOptions};
-use crate::provider::antigravity::chat::ChatStreamSerializer;
+use crate::provider::antigravity::downstream::chat::ChatStreamSerializer;
+use crate::provider::antigravity::downstream::responses::ResponsesStreamSerializer;
 use crate::provider::antigravity::models::normalize_models;
-use crate::provider::antigravity::responses::ResponsesStreamSerializer;
 use crate::provider::common::request_identity::RequestIdentity;
 use crate::provider::common::session::RequestSession;
 use crate::provider::registry::Provider;
-use crate::responses::{
-    ResponseContentPart, ResponseCreateRequest, ResponseObject, ResponseOutputItem, ResponseUsage,
-};
+use crate::responses::{ResponseCreateRequest, ResponseUsage};
 use crate::server::AppState;
 use crate::server::settings::{self, Permissions, SettingsStore};
 mod model_routing;
@@ -222,11 +220,10 @@ async fn handle_chat_streaming(
         saw_usage: false,
     };
 
-    crate::provider::antigravity::sse::spawn_sse(serializer, upstream_resp)
+    crate::provider::antigravity::downstream::sse::spawn_sse(serializer, upstream_resp)
 }
 
 /// Handles streaming and non-streaming Responses API requests.
-// Keep the response assembly and both streaming paths together.
 #[allow(clippy::too_many_lines)]
 async fn responses_handler(
     State(state): State<AppState>,
@@ -289,59 +286,11 @@ async fn responses_handler(
         .await
         {
             Ok(resp) => {
-                let mut output_items = Vec::new();
-                let mut output_text = String::new();
-
-                for choice in &resp.choices {
-                    if choice.message.content.is_some() || choice.message.provider_parts.is_some() {
-                        let content = choice.message.content.as_deref().unwrap_or_default();
-                        output_text.push_str(content);
-                        output_items.push(ResponseOutputItem::Message {
-                            id: format!("msg_{}", uuid::Uuid::new_v4().simple()),
-                            status: "completed".to_string(),
-                            role: choice.message.role.clone(),
-                            content: vec![ResponseContentPart::OutputText {
-                                text: content.to_owned(),
-                            }],
-                            provider_parts: choice.message.provider_parts.clone(),
-                        });
-                    }
-                    if let Some(tool_calls) = &choice.message.tool_calls {
-                        for tc in tool_calls {
-                            output_items.push(ResponseOutputItem::FunctionCall {
-                                id: format!("fc_{}", uuid::Uuid::new_v4().simple()),
-                                status: "completed".to_string(),
-                                name: tc.function.name.clone(),
-                                call_id: tc.id.clone(),
-                                arguments: tc.function.arguments.clone(),
-                                thought_signature: tc.thought_signature.clone(),
-                            });
-                        }
-                    }
-                }
-
-                let usage = resp.usage.map(ResponseUsage::from);
-
-                let response_obj = ResponseObject {
-                    id: format!("resp_{}", uuid::Uuid::new_v4().simple()),
-                    object: "response".to_string(),
-                    created_at: resp.created,
-                    model: original_model,
-                    status: if resp.choices.iter().any(|choice| {
-                        choice.finish_reason.as_deref() != Some("stop")
-                            && choice.finish_reason.as_deref() != Some("tool_calls")
-                    }) {
-                        "incomplete"
-                    } else {
-                        "completed"
-                    }
-                    .to_string(),
-                    output: output_items,
-                    output_text,
-                    usage,
-                };
-
-                Json(response_obj).into_response()
+                Json(crate::provider::antigravity::downstream::responses::response_object(
+                    resp,
+                    original_model,
+                ))
+                .into_response()
             }
             Err(error) => pool_error_response(error),
         }
@@ -384,7 +333,7 @@ async fn handle_responses_streaming(
         incomplete: false,
     };
 
-    crate::provider::antigravity::sse::spawn_sse(serializer, upstream_resp)
+    crate::provider::antigravity::downstream::sse::spawn_sse(serializer, upstream_resp)
 }
 
 #[cfg(test)]
