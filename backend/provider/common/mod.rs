@@ -4,6 +4,8 @@ pub(crate) mod catalog;
 pub(crate) mod cooldown;
 /// Shared upstream error classification.
 pub(crate) mod errors;
+/// Shared credential-pool selection and per-account catalog caching.
+pub(crate) mod pool;
 /// Helpers for OpenAI-compatible proxy responses and permissions.
 pub(crate) mod proxy;
 /// Request-scoped, non-secret identity snapshots for observability.
