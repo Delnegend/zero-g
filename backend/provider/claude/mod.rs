@@ -1,8 +1,8 @@
 //! Claude Code subscription provider.
 /// OAuth credential persistence and refresh.
 mod auth;
-/// Anthropic HTTP and SSE transport.
-mod client;
+/// Response decoding and client streaming.
+mod downstream;
 /// Dashboard login API.
 pub(crate) mod dashboard_login;
 /// Account model discovery.
@@ -18,6 +18,8 @@ mod quota;
 mod routes;
 /// Anthropic stream decoding.
 mod stream;
+/// Anthropic HTTP transport and credential selection.
+mod upstream;
 
 /// Claude Code provider backend.
 pub(crate) struct Backend;

@@ -5,21 +5,15 @@ use axum::http::StatusCode;
 use axum::{
     Extension, Json, Router,
     extract::State,
-    response::{
-        IntoResponse, Response,
-        sse::{Event, Sse},
-    },
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use serde_json::{Value, json};
-use std::convert::Infallible;
-use tokio::sync::mpsc;
-use tokio_stream::wrappers::ReceiverStream;
 
 use crate::{
     openai::{ChatCompletionRequest, ModelListResponse},
     provider::{
-        claude::{client, models, payload, stream::Decoder},
+        claude::{downstream, models, payload, stream::Decoder, upstream},
         registry::Provider,
     },
     responses::ResponseCreateRequest,
@@ -193,31 +187,11 @@ async fn inference(
         Ok(v) => v,
         Err(e) => return failure(StatusCode::BAD_REQUEST, &e),
     };
-    let http = match client::http() {
-        Ok(client) => client,
-        Err(e) => return failure(StatusCode::INTERNAL_SERVER_ERROR, &e),
-    };
-    let url = format!("{}/v1/messages?beta=true", client::API_ROOT);
-    let attempt = client::first_accepted(
-        &state.settings,
-        &provider,
-        &req.model,
-        |creds, credential| {
-            let mut payload = payload.clone();
-            if let Some(object) = payload.as_object_mut() {
-                let user_id =
-                    client::user_id(&credential.id, &session.id, creds.account_id.as_deref());
-                object.insert("metadata".into(), json!({ "user_id": user_id }));
-            }
-            let (http, url) = (&http, &url);
-            async move { client::send(http, url, &creds.access_token, &payload).await }
-        },
-    )
-    .await;
+    let attempt = upstream::inference(&state.settings, &provider, &req.model, &session.id, &payload).await;
     let (response, credential) = match attempt {
         Ok(accepted) => accepted,
-        Err(client::Refusal::CoolingDown(wait)) => return cooling_down(wait),
-        Err(client::Refusal::Failed(status, message)) => return failure(status, &message),
+        Err(upstream::Refusal::CoolingDown(wait)) => return cooling_down(wait),
+        Err(upstream::Refusal::Failed(status, message)) => return failure(status, &message),
     };
     if !response.status().is_success() {
         let status = response.status();
@@ -243,7 +217,7 @@ async fn inference(
         if let Some(identity) = &request_identity {
             identity.set_credential(&credential.id, &credential.name);
         }
-        return stream_response(
+        return downstream::stream_response(
             response,
             decoder,
             responses,
@@ -251,281 +225,28 @@ async fn inference(
                 .is_some_and(|v| v.include_usage.unwrap_or(false)),
         );
     }
-    match client::consume(response, decoder, None).await {
+    match downstream::consume(response, decoder, None).await {
         Ok(done) => {
             if let Some(identity) = &request_identity {
                 identity.set_credential(&credential.id, &credential.name);
             }
             if responses {
-                Json(response_object(&done)).into_response()
+                Json(downstream::response_object(&done)).into_response()
             } else {
-                Json(json!({"id":done.id,"object":"chat.completion","created":done.created,"model":done.model,"choices":[{"index":0,"message":done.message(),"finish_reason":done.stop_reason}],"usage":done.usage()})).into_response()
+                Json(downstream::chat_object(&done)).into_response()
             }
         }
         Err(e) => failure(StatusCode::BAD_GATEWAY, &e),
     }
 }
 
-/// Convert a decoded completion to a Responses object.
-fn response_object(done: &Decoder) -> Value {
-    let mut output = Vec::new();
-    let mut parts = Vec::new();
-    let mut text = String::new();
-    let mut full_text = String::new();
-    for block in done.blocks.values() {
-        if block.get("type").and_then(Value::as_str) == Some("tool_use") {
-            push_message(&mut output, &mut parts, &mut text, &done.id);
-            let id = block.get("id").and_then(Value::as_str).unwrap_or_default();
-            let name = block
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let args = block
-                .get("input")
-                .cloned()
-                .unwrap_or_else(|| json!({}))
-                .to_string();
-            output.push(json!({"id":id,"type":"function_call","status":"completed","call_id":id,"name":name.strip_prefix('_').unwrap_or(name),"arguments":args}));
-        } else {
-            if let Some(fragment) = block.get("text").and_then(Value::as_str) {
-                text.push_str(fragment);
-                full_text.push_str(fragment);
-            }
-            parts.push(block.clone());
-        }
-    }
-    push_message(&mut output, &mut parts, &mut text, &done.id);
-    json!({"id":done.id,"object":"response","created_at":done.created,"model":done.model,"status":if done.stop_reason == "length" {"incomplete"} else {"completed"},"output":output,"output_text":full_text,"usage":{"input_tokens":done.input_tokens,"output_tokens":done.output_tokens,"total_tokens":done.input_tokens.saturating_add(done.output_tokens)}})
-}
-
-/// Append one contiguous assistant message, preserving its native blocks.
-fn push_message(output: &mut Vec<Value>, parts: &mut Vec<Value>, text: &mut String, id: &str) {
-    if parts.is_empty() {
-        return;
-    }
-    let content = if text.is_empty() {
-        Vec::new()
-    } else {
-        vec![json!({"type":"output_text","text":&*text})]
-    };
-    output.push(json!({"id":format!("msg-{id}-{}", output.len()),"type":"message","status":"completed","role":"assistant","content":content,"provider_parts":&*parts}));
-    parts.clear();
-    text.clear();
-}
-
-/// Stream decoded events to a chat or Responses client.
-#[allow(clippy::too_many_lines)]
-fn stream_response(
-    upstream: reqwest::Response,
-    decoder: Decoder,
-    responses: bool,
-    include_usage: bool,
-) -> Response {
-    let (events, rx) = mpsc::channel::<Result<Event, Infallible>>(64);
-    tokio::spawn(async move {
-        let id = decoder.id.clone();
-        let model = decoder.model.clone();
-        let created = decoder.created;
-        if responses {
-            let data = json!({"type":"response.created","response":{"id":id,"object":"response","created_at":created,"model":model,"status":"in_progress"}});
-            if events
-                .send(Ok(Event::default()
-                    .event("response.created")
-                    .data(data.to_string())))
-                .await
-                .is_err()
-            {
-                return;
-            }
-        }
-        let (tx, mut incoming) = mpsc::channel(64);
-        let job = tokio::spawn(client::consume(upstream, decoder, Some(tx)));
-        let mut tool_ids = std::collections::HashMap::new();
-        let mut next_index = 0_u64;
-        let mut message_index = None;
-        let mut tool_indexes = std::collections::HashMap::new();
-        while let Some(Ok(chunk)) = incoming.recv().await {
-            if responses {
-                let delta = chunk.pointer("/choices/0/delta").unwrap_or(&Value::Null);
-                let fragment = delta
-                    .get("content")
-                    .and_then(Value::as_str)
-                    .map(|s| ("response.output_text.delta", s))
-                    .or_else(|| {
-                        delta
-                            .get("reasoning_content")
-                            .and_then(Value::as_str)
-                            .map(|s| ("response.reasoning_text.delta", s))
-                    });
-                let has_message_part = delta
-                    .pointer("/provider_parts/0/type")
-                    .and_then(Value::as_str)
-                    .is_some_and(|kind| matches!(kind, "thinking" | "redacted_thinking" | "text"));
-                if fragment.is_some() || has_message_part {
-                    let index = if let Some(index) = message_index {
-                        index
-                    } else {
-                        let index = next_index;
-                        next_index = next_index.saturating_add(1);
-                        message_index = Some(index);
-                        let item = json!({"type":"response.output_item.added","output_index":index,"item":{"id":format!("msg-{id}-{index}"),"type":"message","status":"in_progress","role":"assistant","content":[]}});
-                        if events
-                            .send(Ok(Event::default()
-                                .event("response.output_item.added")
-                                .data(item.to_string())))
-                            .await
-                            .is_err()
-                        {
-                            return;
-                        }
-                        let part = json!({"type":"response.content_part.added","item_id":format!("msg-{id}-{index}"),"output_index":index,"content_index":0,"part":{"type":"output_text","text":""}});
-                        if events
-                            .send(Ok(Event::default()
-                                .event("response.content_part.added")
-                                .data(part.to_string())))
-                            .await
-                            .is_err()
-                        {
-                            return;
-                        }
-                        index
-                    };
-                    if let Some((name, text)) = fragment {
-                        let value = json!({"type":name,"item_id":format!("msg-{id}-{index}"),"output_index":index,"content_index":0,"delta":text});
-                        if events
-                            .send(Ok(Event::default().event(name).data(value.to_string())))
-                            .await
-                            .is_err()
-                        {
-                            return;
-                        }
-                    }
-                }
-                if let Some(calls) = delta.get("tool_calls").and_then(Value::as_array) {
-                    for call in calls {
-                        let tool = call.get("index").and_then(Value::as_u64).unwrap_or(0);
-                        if let Some(call_id) = call.get("id").and_then(Value::as_str) {
-                            message_index = None;
-                            let index = next_index;
-                            next_index = next_index.saturating_add(1);
-                            tool_indexes.insert(tool, index);
-                            tool_ids.insert(index, call_id.to_owned());
-                            let item = json!({"type":"response.output_item.added","output_index":index,"item":{"id":call_id,"type":"function_call","status":"in_progress","call_id":call_id,"name":call.pointer("/function/name"),"arguments":""}});
-                            if events
-                                .send(Ok(Event::default()
-                                    .event("response.output_item.added")
-                                    .data(item.to_string())))
-                                .await
-                                .is_err()
-                            {
-                                return;
-                            }
-                        }
-                        let index = tool_indexes.get(&tool).copied().unwrap_or(tool);
-                        if let Some(arguments) = call
-                            .pointer("/function/arguments")
-                            .and_then(Value::as_str)
-                            .filter(|v| !v.is_empty())
-                        {
-                            let data = json!({"type":"response.function_call_arguments.delta","item_id":tool_ids.get(&index),"output_index":index,"delta":arguments});
-                            if events
-                                .send(Ok(Event::default()
-                                    .event("response.function_call_arguments.delta")
-                                    .data(data.to_string())))
-                                .await
-                                .is_err()
-                            {
-                                return;
-                            }
-                        }
-                    }
-                }
-            } else if events
-                .send(Ok(Event::default().data(chunk.to_string())))
-                .await
-                .is_err()
-            {
-                return;
-            }
-        }
-        if let Ok(Ok(done)) = job.await {
-            if responses {
-                let response = response_object(&done);
-                if let Some(items) = response.get("output").and_then(Value::as_array) {
-                    for (index, item) in items.iter().enumerate() {
-                        if item.get("type").and_then(Value::as_str) == Some("message") {
-                            let text = item
-                                .pointer("/content/0/text")
-                                .and_then(Value::as_str)
-                                .unwrap_or_default();
-                            let item_id = item.get("id");
-                            let data = json!({"type":"response.output_text.done","item_id":item_id,"output_index":index,"content_index":0,"text":text});
-                            let _ = events
-                                .send(Ok(Event::default()
-                                    .event("response.output_text.done")
-                                    .data(data.to_string())))
-                                .await;
-                            let data = json!({"type":"response.content_part.done","item_id":item_id,"output_index":index,"content_index":0,"part":{"type":"output_text","text":text}});
-                            let _ = events
-                                .send(Ok(Event::default()
-                                    .event("response.content_part.done")
-                                    .data(data.to_string())))
-                                .await;
-                        }
-                        if item.get("type").and_then(Value::as_str) == Some("function_call") {
-                            let data = json!({"type":"response.function_call_arguments.done","item_id":item.get("id"),"output_index":index,"arguments":item.get("arguments")});
-                            let _ = events
-                                .send(Ok(Event::default()
-                                    .event("response.function_call_arguments.done")
-                                    .data(data.to_string())))
-                                .await;
-                        }
-                        let data = json!({"type":"response.output_item.done","output_index":index,"item":item});
-                        let _ = events
-                            .send(Ok(Event::default()
-                                .event("response.output_item.done")
-                                .data(data.to_string())))
-                            .await;
-                    }
-                }
-                let event = if done.stop_reason == "length" {
-                    "response.incomplete"
-                } else {
-                    "response.completed"
-                };
-                let value = json!({"type":event,"response":response});
-                let _ = events
-                    .send(Ok(Event::default().event(event).data(value.to_string())))
-                    .await;
-            } else if include_usage {
-                let _ = events.send(Ok(Event::default().data(json!({"id":done.id,"object":"chat.completion.chunk","created":done.created,"model":done.model,"choices":[],"usage":done.usage()}).to_string()))).await;
-            }
-            let _ = events.send(Ok(Event::default().data("[DONE]"))).await;
-        } else {
-            let (name, value) = if responses {
-                (
-                    "response.failed",
-                    json!({"type":"response.failed","response":{"id":id,"object":"response","created_at":created,"model":model,"status":"failed","error":{"code":"bad_gateway","message":"Claude upstream stream failed"}}}),
-                )
-            } else {
-                (
-                    "error",
-                    json!({"error":{"message":"Claude upstream stream failed","type":"upstream_error"}}),
-                )
-            };
-            let _ = events
-                .send(Ok(Event::default().event(name).data(value.to_string())))
-                .await;
-        }
-    });
-    Sse::new(ReceiverStream::new(rx)).into_response()
-}
 
 /// Gateway stream behavior tests.
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use super::super::{downstream::{consume, response_object, stream_response}, upstream as client};
     use axum::body::to_bytes;
 
     #[test]
@@ -683,7 +404,7 @@ mod tests {
         let upstream = reqwest::get(format!("http://{address}/events"))
             .await
             .unwrap();
-        let done = client::consume(upstream, Decoder::new("test".into()), None)
+        let done = consume(upstream, Decoder::new("test".into()), None)
             .await
             .unwrap();
         let output = response_object(&done);

@@ -8,7 +8,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Json, Response};
 use serde_json::{Value, json};
 
-use super::{client, payload};
+use super::{payload, upstream as client};
 use crate::provider::{common::request_identity::RequestIdentity, registry};
 use crate::server::{AppState, settings::Permissions};
 

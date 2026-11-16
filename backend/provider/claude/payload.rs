@@ -21,7 +21,7 @@ pub(super) fn billing_header(first_user_text: &str) -> String {
         })
         .collect();
     let hash = Sha256::digest(format!("59cf53e54c78{fingerprint}{CLAUDE_VERSION}").as_bytes());
-    let hex = super::client::hex(&hash);
+    let hex = super::upstream::hex(&hash);
     let suffix: String = hex.chars().take(3).collect();
     format!(
         "x-anthropic-billing-header: cc_version={CLAUDE_VERSION}.{suffix}; cc_entrypoint=cli; cch=00000;"

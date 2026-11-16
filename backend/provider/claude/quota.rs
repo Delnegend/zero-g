@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use super::{auth, client};
+use super::{auth, upstream};
 use crate::provider::quota::{QuotaGroup, QuotaSnapshot, QuotaWindow};
 use crate::server::settings::SettingsStore;
 
@@ -52,7 +52,7 @@ pub(super) async fn fetch(
     let credentials = auth::load(store, provider, credential)
         .await
         .map_err(|_| "Unable to load Claude credentials".to_string())?;
-    let client = client::http()?;
+    let client = upstream::http()?;
     fetch_usage(&client, USAGE_URL, &credentials.access_token).await
 }
 

@@ -1,10 +1,6 @@
 use axum::http::StatusCode;
-use futures_util::StreamExt;
 use serde_json::Value;
 use sha2::Digest;
-use tokio::sync::mpsc;
-
-use super::stream::Decoder;
 use crate::provider::credentials::Credential;
 
 /// Encode bytes as lowercase hexadecimal without intermediate allocations.
@@ -193,47 +189,34 @@ where
     }
 }
 
-/// Dispatches a single upstream event with bounded buffering.
-pub(super) async fn consume(
-    response: reqwest::Response,
-    mut decoder: Decoder,
-    tx: Option<mpsc::Sender<Result<Value, String>>>,
-) -> Result<Decoder, String> {
-    let mut stream = response.bytes_stream();
-    let mut buffer = Vec::new();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| format!("Claude stream failed: {e}"))?;
-        if buffer.len().saturating_add(chunk.len()) > 1024 * 1024 {
-            return Err("Claude stream event too large".into());
+/// Send a translated request using the first available credential.
+pub(super) async fn inference(
+    store: &crate::server::settings::SettingsStore,
+    provider: &crate::provider::registry::Provider,
+    model: &str,
+    session: &str,
+    payload: &Value,
+) -> Result<(reqwest::Response, Credential), Refusal> {
+    let http = http().map_err(|e| Refusal::Failed(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let url = format!("{API_ROOT}/v1/messages?beta=true");
+    first_accepted(store, provider, model, |creds, credential| {
+        let mut payload = payload.clone();
+        if let Some(object) = payload.as_object_mut() {
+            let user_id = user_id(&credential.id, session, creds.account_id.as_deref());
+            object.insert("metadata".into(), serde_json::json!({ "user_id": user_id }));
         }
-        buffer.extend_from_slice(&chunk);
-        while let Some(end) = buffer.iter().position(|b| *b == b'\n') {
-            let bytes: Vec<_> = buffer.drain(..=end).collect();
-            let line = std::str::from_utf8(&bytes)
-                .map_err(|_| "Invalid UTF-8 in Claude stream")?
-                .trim_end();
-            if let Some(data) = line.strip_prefix("data:") {
-                let event: Value = serde_json::from_str(data.trim())
-                    .map_err(|e| format!("Invalid Claude stream event: {e}"))?;
-                for output in decoder.event(&event)? {
-                    if let Some(tx) = &tx {
-                        tx.send(Ok(output)).await.map_err(|_| "Downstream closed")?;
-                    }
-                }
-            }
-        }
-    }
-    if !decoder.finished {
-        return Err("Claude stream ended before message_stop".into());
-    }
-    Ok(decoder)
+        let (http, url) = (&http, &url);
+        async move { send(http, url, &creds.access_token, &payload).await }
+    }).await
 }
+
 
 /// HTTP transport and stream tests.
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use super::super::{downstream::consume, stream::Decoder};
     use axum::{Router, routing::get};
 
     /// Send a signed replay and tool history to a mock upstream.
