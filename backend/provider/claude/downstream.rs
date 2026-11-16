@@ -1,4 +1,7 @@
-use axum::response::{IntoResponse, Response, sse::{Event, Sse}};
+use axum::response::{
+    IntoResponse, Response,
+    sse::{Event, Sse},
+};
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 use std::convert::Infallible;

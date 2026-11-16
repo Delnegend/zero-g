@@ -1,9 +1,9 @@
 use axum::http::StatusCode;
 use std::future::Future;
 
+use super::{ProxyError, error, settings_error};
 use crate::provider::common::cooldown;
 use crate::server::settings::SettingsStore;
-use super::{ProxyError, error, settings_error};
 
 /// Resolve weighted API keys in order and retry only credential-related responses.
 pub(crate) async fn retry_api_keys<F, Fut>(

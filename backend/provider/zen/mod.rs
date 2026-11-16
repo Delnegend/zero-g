@@ -3,6 +3,7 @@ pub(crate) mod catalog;
 
 /// HTTP routes for Zen models and chat completions.
 pub(crate) mod routes;
+/// Upstream Zen API request transport.
 mod upstream;
 
 use crate::database::transaction_with_retry;

@@ -1,9 +1,9 @@
 /// OAuth credentials and token refresh.
 pub(crate) mod auth;
-/// Client-facing response collection and streaming.
-mod downstream;
 /// Dashboard OAuth login endpoints.
 pub(crate) mod dashboard_login;
+/// Client-facing response collection and streaming.
+mod downstream;
 /// Interactive OAuth login flow.
 pub(crate) mod login;
 /// Upstream model discovery and normalization.

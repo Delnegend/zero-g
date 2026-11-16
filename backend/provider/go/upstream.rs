@@ -1,8 +1,8 @@
 use axum::body::Bytes;
 use axum::http::{HeaderMap, Method, header};
 
-use crate::provider::registry::Provider;
 use super::{DEFAULT_BASE, MODELS_BASE};
+use crate::provider::registry::Provider;
 
 /// Select the configured or default base URL for inference or model discovery.
 pub(crate) fn base(provider: &Provider, models: bool) -> &str {

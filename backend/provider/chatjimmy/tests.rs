@@ -1,8 +1,8 @@
 use axum::{Extension, body::Bytes, extract::State, http::StatusCode};
 
+use super::downstream::split_stream_chunks;
 use super::protocol::{ChatJimmyMessage, ChatJimmyOptions, ChatJimmyRequest, parse_upstream};
 use super::routes::chat_handler;
-use super::downstream::split_stream_chunks;
 use crate::provider::registry;
 use crate::server::{
     AppState,

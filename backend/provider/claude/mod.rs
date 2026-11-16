@@ -1,10 +1,10 @@
 //! Claude Code subscription provider.
 /// OAuth credential persistence and refresh.
 mod auth;
-/// Response decoding and client streaming.
-mod downstream;
 /// Dashboard login API.
 pub(crate) mod dashboard_login;
+/// Response decoding and client streaming.
+mod downstream;
 /// Account model discovery.
 mod models;
 pub(crate) use models::{catalog_info, catalog_reference};

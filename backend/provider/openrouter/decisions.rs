@@ -11,9 +11,7 @@ use axum::{
 
 use crate::{
     provider::{
-        common::proxy::check_model,
-        common::request_identity::RequestIdentity,
-        openai,
+        common::proxy::check_model, common::request_identity::RequestIdentity, openai,
         registry::Provider,
     },
     server::{

@@ -9,12 +9,12 @@ use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
+use super::upstream::send_upstream;
 use crate::provider::common::proxy::{ProxyError, check_model, error};
 use crate::provider::common::request_identity::RequestIdentity;
 use crate::provider::{openai, registry::Provider};
 use crate::server::AppState;
 use crate::server::settings::{self, Permissions, SettingsStore};
-use super::upstream::send_upstream;
 
 /// Official OpenAI-compatible Zen inference endpoint.
 pub(super) const BASE_URL: &str = "https://opencode.ai/inference/openai/v1";

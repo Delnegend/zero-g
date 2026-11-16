@@ -1,3 +1,4 @@
+/// Upstream OpenAI-compatible request forwarding.
 mod upstream;
 
 pub(crate) use upstream::send;

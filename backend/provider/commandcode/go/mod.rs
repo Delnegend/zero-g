@@ -24,8 +24,7 @@ use crate::{
     openai::{ChatCompletionRequest, ModelListResponse},
     provider::{
         common::{
-            self, proxy::retry_api_keys, request_identity::RequestIdentity,
-            session::RequestSession,
+            self, proxy::retry_api_keys, request_identity::RequestIdentity, session::RequestSession,
         },
         openai,
         registry::Provider,
@@ -296,11 +295,11 @@ impl common::Provider for GoBackend {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::provider::openai::ModelEndpoint;
     use crate::provider::common::translation;
-    use tokio::sync::mpsc;
+    use crate::provider::openai::ModelEndpoint;
     use axum::body::to_bytes;
     use serde_json::json;
+    use tokio::sync::mpsc;
 
     /// Only Go-tier models are listed, with the CLI catalog's limits and efforts.
     #[test]

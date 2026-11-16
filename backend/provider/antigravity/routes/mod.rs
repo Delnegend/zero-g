@@ -106,8 +106,7 @@ async fn models_handler(
     Extension(provider): Extension<Provider>,
     _identity: Option<Extension<RequestIdentity>>,
 ) -> Response {
-    let live_models = match all_pool_models(&state, &provider).await
-    {
+    let live_models = match all_pool_models(&state, &provider).await {
         Ok(models) => models,
         Err(error) => return pool_error_response(error),
     };
@@ -286,13 +285,13 @@ async fn responses_handler(
         )
         .await
         {
-            Ok(resp) => {
-                Json(crate::provider::antigravity::downstream::responses::response_object(
+            Ok(resp) => Json(
+                crate::provider::antigravity::downstream::responses::response_object(
                     resp,
                     original_model,
-                ))
-                .into_response()
-            }
+                ),
+            )
+            .into_response(),
             Err(error) => pool_error_response(error),
         }
     }

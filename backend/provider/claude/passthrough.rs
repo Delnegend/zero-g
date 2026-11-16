@@ -221,7 +221,8 @@ pub(crate) async fn messages(
 
 /// Extract the origin prefix before `/v1/` for catalog discovery.
 fn origin(url: &str) -> &str {
-    url.split_once("/v1/").map_or(client::API_ROOT, |(prefix, _)| prefix)
+    url.split_once("/v1/")
+        .map_or(client::API_ROOT, |(prefix, _)| prefix)
 }
 
 /// Authorize, prepare, and send the request to `url`, streaming the reply back unchanged.
@@ -314,8 +315,9 @@ async fn forward(
             };
             let (http, headers) = (&http, upstream_headers.clone());
             async move { client::forward(http, url, &creds.access_token, headers, body?).await }
-        })
-        .await;
+        },
+    )
+    .await;
     match attempt {
         Ok((response, credential)) => {
             if response.status().is_success()

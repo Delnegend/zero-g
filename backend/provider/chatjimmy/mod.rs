@@ -18,11 +18,11 @@ mod models;
 mod protocol;
 /// HTTP handlers translating chat requests.
 mod routes;
-/// ChatJimmy request transport.
-mod upstream;
 /// Provider behavior tests.
 #[cfg(test)]
 mod tests;
+/// `ChatJimmy` request transport.
+mod upstream;
 
 pub(crate) use models::catalog_info;
 use models::discover_models;

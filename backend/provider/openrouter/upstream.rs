@@ -6,7 +6,7 @@ use crate::provider::common::request_identity::RequestIdentity;
 use crate::provider::{openai, registry::Provider};
 use crate::server::settings::SettingsStore;
 
-/// Send a Decisions request with weighted OpenRouter credentials.
+/// Send a Decisions request with weighted `OpenRouter` credentials.
 pub(super) async fn send_decision(
     settings: &SettingsStore,
     provider: &Provider,

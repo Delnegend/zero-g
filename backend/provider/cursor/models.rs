@@ -1,14 +1,14 @@
+use prost::Message;
+use serde_json::json;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::LazyLock;
 use std::time::Duration;
-use prost::Message;
-use serde_json::json;
 
 use crate::openai::Model;
 use crate::provider::common::errors::UpstreamError;
+use crate::provider::common::pool::{CatalogCache, eligible};
 use crate::provider::registry::Provider;
 use crate::server::AppState;
-use crate::provider::common::pool::{CatalogCache, eligible};
 
 /// Default Cursor API endpoint.
 const DEFAULT_BASE_URL: &str = "https://api2.cursor.sh";

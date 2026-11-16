@@ -1,14 +1,13 @@
 //! Credential-pool selection and upstream request handling.
 
-
 use axum::response::Response;
 
 use crate::openai::ChatCompletionRequest;
 use crate::provider::antigravity::{AntigravityClient, AntigravityModelInfo, AuthManager};
 use crate::provider::common::cooldown;
 use crate::provider::common::errors::UpstreamError;
-use crate::provider::common::pool::{eligible, rank_accounts, run_candidates};
 pub(super) use crate::provider::common::pool::PoolError;
+use crate::provider::common::pool::{eligible, rank_accounts, run_candidates};
 use crate::provider::common::request_identity::RequestIdentity;
 use crate::provider::credentials::Credential;
 use crate::provider::registry::Provider;

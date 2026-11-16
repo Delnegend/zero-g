@@ -375,14 +375,27 @@ fn defaults_are_discovered_and_ambiguous_suffixes_stay_separate() {
 #[test]
 fn family_alias_resolves_independently_of_account_catalog_order() {
     for reverse in [false, true] {
-        let mut catalogs = vec![models(&["claude-sonnet-4-6"]), models(&["claude-sonnet-5-5-low", "claude-sonnet-5-5-medium", "claude-sonnet-5-5-high"])];
-        if reverse { catalogs.reverse(); }
+        let mut catalogs = vec![
+            models(&["claude-sonnet-4-6"]),
+            models(&[
+                "claude-sonnet-5-5-low",
+                "claude-sonnet-5-5-medium",
+                "claude-sonnet-5-5-high",
+            ]),
+        ];
+        if reverse {
+            catalogs.reverse();
+        }
         let combined = catalogs.into_iter().flatten().collect();
-        assert_eq!(resolve_model(combined, "claude-sonnet-5-5", None, &permissions(&[])).unwrap(), "claude-sonnet-5-5-medium");
+        assert_eq!(
+            resolve_model(combined, "claude-sonnet-5-5", None, &permissions(&[])).unwrap(),
+            "claude-sonnet-5-5-medium"
+        );
     }
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn routes_choose_account_advertising_resolved_model() {
     use crate::storage::{ProviderCredential, ProviderRecord, Secret};
     use axum::{body::Body, http::Request};
@@ -412,23 +425,70 @@ async fn routes_choose_account_advertising_resolved_model() {
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move { axum::serve(listener, fake).await.unwrap() });
     let database = crate::database::Database::open(":memory:").await.unwrap();
-    let store = SettingsStore::new(database.clone(), "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").await.unwrap();
-    toasty::create!(ProviderRecord { id: "agy".to_string(), name: "agy".to_string(), kind: "agy".to_string(), base_url: String::new(), keyless: false, deleted: false }).exec(&mut (*store.database.db).clone()).await.unwrap();
+    let store = SettingsStore::new(
+        database.clone(),
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    )
+    .await
+    .unwrap();
+    toasty::create!(ProviderRecord {
+        id: "agy".to_string(),
+        name: "agy".to_string(),
+        kind: "agy".to_string(),
+        base_url: String::new(),
+        keyless: false,
+        deleted: false
+    })
+    .exec(&mut (*store.database.db).clone())
+    .await
+    .unwrap();
     for account in ["mvn", "kien"] {
-        toasty::create!(ProviderCredential { id: account.to_string(), provider_id: "agy".to_string(), name: account.to_string(), weight: 1, enabled: true }).exec(&mut (*store.database.db).clone()).await.unwrap();
+        toasty::create!(ProviderCredential {
+            id: account.to_string(),
+            provider_id: "agy".to_string(),
+            name: account.to_string(),
+            weight: 1,
+            enabled: true
+        })
+        .exec(&mut (*store.database.db).clone())
+        .await
+        .unwrap();
         let name = format!("credential.{account}.credential");
         let secret = json!({"access_token":account,"project_id":account}).to_string();
-        Secret::upsert_by_name(&name).value(store.encrypt(&name, &secret).unwrap()).exec(&mut (*store.database.db).clone()).await.unwrap();
+        Secret::upsert_by_name(&name)
+            .value(store.encrypt(&name, &secret).unwrap())
+            .exec(&mut (*store.database.db).clone())
+            .await
+            .unwrap();
     }
     let mut client = AntigravityClient::new();
     client.test_endpoint = Some(format!("http://{address}"));
     let mut providers = crate::provider::Providers::new();
     providers.client = Arc::new(client);
-    let state = AppState { providers, settings: store, database, dashboard_auth: crate::server::dashboard_auth_config::test_auth().await };
-    let app = Router::new().route("/v1/chat/completions", post(chat_handler)).route("/v1/responses", post(responses_handler))
-        .layer(Extension(Permissions { providers: vec![], models: vec![] }))
-        .layer(Extension(Provider { id: "agy".into(), name: "agy".into(), kind: "agy".into(), base_url: String::new(), keyless: false }))
-        .layer(Extension(RequestSession { id: "session".into() })).with_state(state);
+    let state = AppState {
+        providers,
+        settings: store,
+        database,
+        dashboard_auth: crate::server::dashboard_auth_config::test_auth().await,
+    };
+    let app = Router::new()
+        .route("/v1/chat/completions", post(chat_handler))
+        .route("/v1/responses", post(responses_handler))
+        .layer(Extension(Permissions {
+            providers: vec![],
+            models: vec![],
+        }))
+        .layer(Extension(Provider {
+            id: "agy".into(),
+            name: "agy".into(),
+            kind: "agy".into(),
+            base_url: String::new(),
+            keyless: false,
+        }))
+        .layer(Extension(RequestSession {
+            id: "session".into(),
+        }))
+        .with_state(state);
     for path in ["/v1/chat/completions", "/v1/responses"] {
         for streaming in [false, true] {
             let body = if path.ends_with("responses") {
@@ -436,10 +496,21 @@ async fn routes_choose_account_advertising_resolved_model() {
             } else {
                 json!({"model":"claude-sonnet-5-5", "messages":[{"role":"user","content":"hello"}], "stream":streaming})
             };
-            let request = Request::builder().method("POST").uri(path).header("content-type", "application/json").body(Body::from(body.to_string())).unwrap();
+            let request = Request::builder()
+                .method("POST")
+                .uri(path)
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap();
             let response = app.clone().oneshot(request).await.unwrap();
             assert_eq!(response.status(), StatusCode::OK);
-            assert_eq!(rx.recv().await.unwrap(), ("Bearer kien".to_owned(), "claude-sonnet-5-5-medium".to_owned()));
+            assert_eq!(
+                rx.recv().await.unwrap(),
+                (
+                    "Bearer kien".to_owned(),
+                    "claude-sonnet-5-5-medium".to_owned()
+                )
+            );
         }
     }
     server.abort();

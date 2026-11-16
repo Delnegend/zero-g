@@ -1,11 +1,11 @@
 use axum::body::Bytes;
 use axum::http::{HeaderMap, Method};
 
+use super::Upstream;
 use crate::provider::common::proxy::{ProxyError, retry_api_keys};
 use crate::provider::common::request_identity::RequestIdentity;
 use crate::provider::{openai, registry::Provider};
 use crate::server::settings::SettingsStore;
-use super::Upstream;
 
 /// Resolve credentials and send a request upstream.
 #[allow(clippy::too_many_arguments)]

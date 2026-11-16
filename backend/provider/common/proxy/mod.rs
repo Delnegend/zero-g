@@ -1,4 +1,6 @@
+/// Client-facing response forwarding and model filtering.
 mod downstream;
+/// Upstream API-key selection and retry transport.
 mod upstream;
 
 pub(crate) use downstream::model_response;

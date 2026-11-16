@@ -301,10 +301,7 @@ where
 /// Accounts that clearly lack `model` are excluded when at least one account advertises it.
 /// When no account advertises `model`, all accounts remain eligible in their original order so
 /// unlisted models remain directly reachable.
-pub(crate) fn rank_accounts<C, Cat, E>(
-    candidates: Vec<(C, Result<Cat, E>)>,
-    model: &str,
-) -> Vec<C>
+pub(crate) fn rank_accounts<C, Cat, E>(candidates: Vec<(C, Result<Cat, E>)>, model: &str) -> Vec<C>
 where
     Cat: AccountCatalog,
 {

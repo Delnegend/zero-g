@@ -116,8 +116,12 @@ async fn account_models(
                 None,
                 vec![credential.clone()],
                 |credential_id, creds| async move {
-                    fetch_account_models(&state.providers.codex_client, Some(&credential_id), &creds)
-                        .await
+                    fetch_account_models(
+                        &state.providers.codex_client,
+                        Some(&credential_id),
+                        &creds,
+                    )
+                    .await
                 },
             )
             .await,
@@ -554,10 +558,12 @@ mod tests {
         let server = tokio::spawn(async move { axum::serve(listener, fake).await.unwrap() });
 
         let database = crate::database::Database::open(":memory:").await.unwrap();
-        let store =
-            SettingsStore::new(database.clone(), "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-                .await
-                .unwrap();
+        let store = SettingsStore::new(
+            database.clone(),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )
+        .await
+        .unwrap();
         toasty::create!(ProviderRecord {
             id: "codex".to_string(),
             name: "Codex".to_string(),

@@ -187,7 +187,14 @@ async fn inference(
         Ok(v) => v,
         Err(e) => return failure(StatusCode::BAD_REQUEST, &e),
     };
-    let attempt = upstream::inference(&state.settings, &provider, &req.model, &session.id, &payload).await;
+    let attempt = upstream::inference(
+        &state.settings,
+        &provider,
+        &req.model,
+        &session.id,
+        &payload,
+    )
+    .await;
     let (response, credential) = match attempt {
         Ok(accepted) => accepted,
         Err(upstream::Refusal::CoolingDown(wait)) => return cooling_down(wait),
@@ -240,15 +247,17 @@ async fn inference(
     }
 }
 
-
 /// Gateway stream behavior tests.
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
+    use super::super::{
+        downstream::{consume, response_object, stream_response},
+        upstream as client,
+    };
     use super::*;
-    use serde_json::json;
-    use super::super::{downstream::{consume, response_object, stream_response}, upstream as client};
     use axum::body::to_bytes;
+    use serde_json::json;
 
     #[test]
     fn preserves_anthropic_billing_errors() {

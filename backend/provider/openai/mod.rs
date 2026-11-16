@@ -1,6 +1,8 @@
+/// Client-facing response forwarding.
+mod downstream;
 /// HTTP routes for OpenAI-compatible providers.
 pub(crate) mod routes;
-mod downstream;
+/// Upstream HTTP request forwarding.
 mod upstream;
 
 pub(crate) use downstream::forward;

@@ -17,7 +17,10 @@ use crate::{
 static CATALOG_CACHE: LazyLock<CatalogCache<Vec<Model>>> = LazyLock::new(CatalogCache::default);
 
 /// Invalidate a credential's cached model catalog after an auth rejection.
-pub(super) async fn invalidate_catalog_on_auth_error(credential_id: &str, status: Option<StatusCode>) {
+pub(super) async fn invalidate_catalog_on_auth_error(
+    credential_id: &str,
+    status: Option<StatusCode>,
+) {
     CATALOG_CACHE
         .invalidate_on_auth_error(credential_id, status)
         .await;

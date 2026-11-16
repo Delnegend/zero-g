@@ -1,11 +1,12 @@
+/// Upstream Go API request transport.
 mod upstream;
 
 pub(crate) use upstream::{base, send_upstream};
 
 use axum::Router;
-use axum::http::{HeaderMap, Method};
 #[cfg(test)]
 use axum::http::header;
+use axum::http::{HeaderMap, Method};
 use serde_json::Value;
 
 use crate::provider::openai;

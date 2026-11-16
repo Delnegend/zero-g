@@ -183,8 +183,7 @@ async fn complete(
     };
     let mut discovered = Vec::with_capacity(credentials.len());
     for credential in credentials {
-        let token =
-            super::auth::access_token(&state.settings, &provider.id, &credential.id).await;
+        let token = super::auth::access_token(&state.settings, &provider.id, &credential.id).await;
         let catalog = match &token {
             Ok(token) => super::models::fetch_account_models(&provider, &credential.id, token)
                 .await
@@ -335,12 +334,7 @@ mod tests {
             .to_string()
     }
 
-    async fn save_cursor_account(
-        store: &SettingsStore,
-        id: &str,
-        name: &str,
-        token: &str,
-    ) {
+    async fn save_cursor_account(store: &SettingsStore, id: &str, name: &str, token: &str) {
         let mut db = (*store.database.db).clone();
         toasty::create!(ProviderCredential {
             id: id.to_string(),
@@ -371,60 +365,65 @@ mod tests {
     async fn routes_to_advertising_account_aggregates_models_and_allows_unlisted() {
         let used_tokens: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let mock_tokens = used_tokens.clone();
-        let fake_upstream = Router::new()
-            .route(
-                "/agent.v1.AgentService/GetUsableModels",
-                post(|headers: HeaderMap| async move {
-                    let models = match auth_token(&headers).as_str() {
-                        "token-a" => vec![UsableModel {
-                            model_id: "model-x".into(),
-                            display_name: "Model X".into(),
-                        }],
-                        "token-b" => vec![UsableModel {
-                            model_id: "model-y".into(),
-                            display_name: "Model Y".into(),
-                        }],
-                        _ => Vec::new(),
-                    };
-                    UsableResponse { models }.encode_to_vec()
-                }),
-            )
-            .route(
-                "/aiserver.v1.AiService/AvailableModels",
-                post(|| async { StatusCode::NOT_FOUND }),
-            )
-            .route(
-                "/agent.v1.AgentService/RunSSE",
-                post(
-                    |AxumState(tokens): AxumState<Arc<Mutex<Vec<String>>>>, headers: HeaderMap| async move {
-                        tokens.lock().unwrap().push(auth_token(&headers));
-                        let update = proto::AgentServerMessage {
-                            message: Some(proto::agent_server_message::Message::InteractionUpdate(
-                                proto::InteractionUpdate {
-                                    message: Some(proto::interaction_update::Message::TextDelta(
-                                        proto::TextDeltaUpdate {
-                                            text: "ok".into(),
-                                        },
-                                    )),
-                                },
-                            )),
+        let fake_upstream =
+            Router::new()
+                .route(
+                    "/agent.v1.AgentService/GetUsableModels",
+                    post(|headers: HeaderMap| async move {
+                        let models = match auth_token(&headers).as_str() {
+                            "token-a" => vec![UsableModel {
+                                model_id: "model-x".into(),
+                                display_name: "Model X".into(),
+                            }],
+                            "token-b" => vec![UsableModel {
+                                model_id: "model-y".into(),
+                                display_name: "Model Y".into(),
+                            }],
+                            _ => Vec::new(),
                         };
-                        let mut body = connect_frame(&update.encode_to_vec());
-                        body.extend_from_slice(&[2, 0, 0, 0, 2]);
-                        body.extend_from_slice(b"{}");
-                        (StatusCode::OK, body)
-                    },
-                ),
-            )
-            .route(
-                "/aiserver.v1.BidiService/BidiAppend",
-                post(|| async { StatusCode::OK }),
-            )
-            .with_state(mock_tokens);
+                        UsableResponse { models }.encode_to_vec()
+                    }),
+                )
+                .route(
+                    "/aiserver.v1.AiService/AvailableModels",
+                    post(|| async { StatusCode::NOT_FOUND }),
+                )
+                .route(
+                    "/agent.v1.AgentService/RunSSE",
+                    post(
+                        |AxumState(tokens): AxumState<Arc<Mutex<Vec<String>>>>,
+                         headers: HeaderMap| async move {
+                            tokens.lock().unwrap().push(auth_token(&headers));
+                            let update = proto::AgentServerMessage {
+                                message: Some(
+                                    proto::agent_server_message::Message::InteractionUpdate(
+                                        proto::InteractionUpdate {
+                                            message: Some(
+                                                proto::interaction_update::Message::TextDelta(
+                                                    proto::TextDeltaUpdate { text: "ok".into() },
+                                                ),
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            };
+                            let mut body = connect_frame(&update.encode_to_vec());
+                            body.extend_from_slice(&[2, 0, 0, 0, 2]);
+                            body.extend_from_slice(b"{}");
+                            (StatusCode::OK, body)
+                        },
+                    ),
+                )
+                .route(
+                    "/aiserver.v1.BidiService/BidiAppend",
+                    post(|| async { StatusCode::OK }),
+                )
+                .with_state(mock_tokens);
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base_url = format!("http://{}", listener.local_addr().unwrap());
-        let server = tokio::spawn(async move { axum::serve(listener, fake_upstream).await.unwrap() });
+        let server =
+            tokio::spawn(async move { axum::serve(listener, fake_upstream).await.unwrap() });
 
         let database = crate::database::Database::open(":memory:").await.unwrap();
         let store = SettingsStore::new(

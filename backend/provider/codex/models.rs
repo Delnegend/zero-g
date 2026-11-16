@@ -105,11 +105,8 @@ pub(super) async fn fetch_account_models(
 ) -> Result<Vec<Model>, UpstreamError> {
     let base_url = client.base_url();
     let account_id = creds.account_id.as_deref().unwrap_or("");
-    let scope = CatalogCache::<Vec<Model>>::scope_hash(&[
-        &creds.access_token,
-        base_url,
-        account_id,
-    ]);
+    let scope =
+        CatalogCache::<Vec<Model>>::scope_hash(&[&creds.access_token, base_url, account_id]);
     if let Some(credential_id) = credential_id
         && let Some(models) = client.model_cache.get(credential_id, scope).await
     {

@@ -1,11 +1,11 @@
 use std::borrow::Cow;
 
-use axum::http::StatusCode;
-use serde_json::Value;
-use sha2::Digest;
 use crate::provider::common::cooldown;
 use crate::provider::common::pool::{PoolError, eligible_by, rank_accounts};
 use crate::provider::credentials::Credential;
+use axum::http::StatusCode;
+use serde_json::Value;
+use sha2::Digest;
 /// Encode bytes as lowercase hexadecimal without intermediate allocations.
 pub(super) fn hex(bytes: &[u8]) -> String {
     let mut encoded = String::with_capacity(bytes.len().saturating_mul(2));
@@ -169,9 +169,13 @@ where
                 continue;
             }
         };
-        let catalog =
-            super::models::account_catalog(&http, catalog_base, &credential.id, &creds.access_token)
-                .await;
+        let catalog = super::models::account_catalog(
+            &http,
+            catalog_base,
+            &credential.id,
+            &creds.access_token,
+        )
+        .await;
         candidates.push(((credential, creds), catalog));
     }
     let ranked = rank_accounts(candidates, model);
@@ -254,13 +258,12 @@ pub(super) async fn inference_at(
     .await
 }
 
-
 /// HTTP transport and stream tests.
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use super::*;
     use super::super::{downstream::consume, stream::Decoder};
+    use super::*;
     use axum::{Router, routing::get};
 
     /// Send a signed replay and tool history to a mock upstream.
@@ -526,10 +529,16 @@ mod tests {
         }))
         .unwrap();
         let payload_y = super::super::payload::build(&req_y).unwrap();
-        let (resp_y, cred_y) =
-            inference_at(&state.settings, &provider, &root, "model-y", "sess", &payload_y)
-                .await
-                .unwrap_or_else(|_| panic!("expected model-y to succeed"));
+        let (resp_y, cred_y) = inference_at(
+            &state.settings,
+            &provider,
+            &root,
+            "model-y",
+            "sess",
+            &payload_y,
+        )
+        .await
+        .unwrap_or_else(|_| panic!("expected model-y to succeed"));
         assert!(resp_y.status().is_success());
         assert_eq!(cred_y.id, "b");
 
@@ -539,14 +548,23 @@ mod tests {
         }))
         .unwrap();
         let payload_z = super::super::payload::build(&req_z).unwrap();
-        let (resp_z, _) =
-            inference_at(&state.settings, &provider, &root, "model-z", "sess", &payload_z)
-                .await
-                .unwrap_or_else(|_| panic!("expected unlisted model-z to reach pool"));
+        let (resp_z, _) = inference_at(
+            &state.settings,
+            &provider,
+            &root,
+            "model-z",
+            "sess",
+            &payload_z,
+        )
+        .await
+        .unwrap_or_else(|_| panic!("expected unlisted model-z to reach pool"));
         assert!(resp_z.status().is_success());
 
         let recorded = seen.lock().unwrap();
-        assert_eq!(recorded[0], ("Bearer token-b".to_owned(), "model-y".to_owned()));
+        assert_eq!(
+            recorded[0],
+            ("Bearer token-b".to_owned(), "model-y".to_owned())
+        );
         assert_eq!(recorded[1].1, "model-z");
     }
 }

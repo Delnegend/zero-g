@@ -67,6 +67,7 @@ pub(super) fn chunk_event(
 }
 
 /// Produce either a buffered completion or its simulated SSE stream.
+#[allow(clippy::too_many_lines)]
 pub(super) async fn respond(
     state: AppState,
     provider: registry::Provider,

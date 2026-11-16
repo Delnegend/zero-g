@@ -3,8 +3,8 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde_json::Value;
 
-use crate::server::settings::Permissions;
 use super::{error, filter_models};
+use crate::server::settings::Permissions;
 
 /// Forward unrestricted model responses unchanged, filtering successful restricted lists.
 pub(crate) async fn model_response(

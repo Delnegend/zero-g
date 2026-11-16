@@ -1,5 +1,6 @@
 /// Native `OpenRouter` Decisions API forwarding.
 mod decisions;
+/// Upstream Decisions API request transport.
 mod upstream;
 
 use std::{sync::LazyLock, time::Duration};

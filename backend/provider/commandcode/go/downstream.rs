@@ -1,8 +1,8 @@
 //! Command Code `/alpha/generate` stream decoding.
 
+use super::error;
 use axum::http::StatusCode;
 use axum::response::Response;
-use super::error;
 
 use futures_util::StreamExt;
 use serde_json::Value;
@@ -28,9 +28,7 @@ pub(super) async fn upstream_failure(response: reqwest::Response) -> Response {
     let body = response.bytes().await.unwrap_or_default();
     let reason = serde_json::from_slice::<Value>(&body)
         .ok()
-        .and_then(|value| {
-            error_message(&value).map(|m| m.chars().take(300).collect::<String>())
-        });
+        .and_then(|value| error_message(&value).map(|m| m.chars().take(300).collect::<String>()));
     let message = reason.map_or_else(
         || format!("Command Code returned {status}"),
         |reason| format!("Command Code returned {status}: {reason}"),

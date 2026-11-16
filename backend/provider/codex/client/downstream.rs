@@ -9,6 +9,7 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::error;
 
+use crate::openai::Model;
 use crate::openai::{
     AssistantMessage, ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse, Choice,
     ChunkChoice, ChunkDelta, ChunkFunctionCall, ChunkToolCall, FunctionCall, ToolCall, Usage,
@@ -17,7 +18,6 @@ use crate::provider::codex::auth::{CODEX_BASE_URL, Credentials};
 use crate::provider::codex::payload::{
     build_codex_payload_from_chat, build_codex_payload_from_responses,
 };
-use crate::openai::Model;
 use crate::provider::common::errors::UpstreamError;
 use crate::provider::common::pool::CatalogCache;
 #[cfg(test)]
@@ -67,7 +67,9 @@ impl CodexClient {
         session_id: &str,
     ) -> Result<Response, UpstreamError> {
         let payload = build_codex_payload_from_chat(req);
-        let upstream = self.send_request(credential_id, creds, payload, session_id).await?;
+        let upstream = self
+            .send_request(credential_id, creds, payload, session_id)
+            .await?;
         let model = req.model.clone();
         let include_usage = req
             .stream_options
@@ -106,7 +108,9 @@ impl CodexClient {
         session_id: &str,
     ) -> Result<ChatCompletionResponse, UpstreamError> {
         let payload = build_codex_payload_from_chat(req);
-        let upstream = self.send_request(credential_id, creds, payload, session_id).await?;
+        let upstream = self
+            .send_request(credential_id, creds, payload, session_id)
+            .await?;
         let model = req.model.clone();
         let mut text_acc = String::new();
         let mut reasoning_acc = String::new();
@@ -240,7 +244,9 @@ impl CodexClient {
         session_id: &str,
     ) -> Result<Response, UpstreamError> {
         let payload = build_codex_payload_from_responses(req);
-        let upstream = self.send_request(credential_id, creds, payload, session_id).await?;
+        let upstream = self
+            .send_request(credential_id, creds, payload, session_id)
+            .await?;
         let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(100);
 
         tokio::spawn(async move {
@@ -273,7 +279,9 @@ impl CodexClient {
         session_id: &str,
     ) -> Result<Value, UpstreamError> {
         let payload = build_codex_payload_from_responses(req);
-        let upstream = self.send_request(credential_id, creds, payload, session_id).await?;
+        let upstream = self
+            .send_request(credential_id, creds, payload, session_id)
+            .await?;
         let mut output_text = String::new();
 
         let mut byte_stream = upstream.bytes_stream();
