@@ -36,9 +36,24 @@ impl AntigravityClient {
         info: Option<&super::AntigravityModelInfo>,
     ) -> Value {
         let meta = Self::new_request_meta(wire_model, session_id);
-        let (system_prompts, contents) = Self::collect_messages(&req.messages, wire_model);
+        let (system_prompts, mut contents) = Self::collect_messages(&req.messages, wire_model);
         let generation_config = Self::build_generation_config(req, info);
         let labels = Self::build_labels(&meta.traj_id, meta.is_claude);
+
+        // Cloud Code Assist answers 429 RESOURCE_EXHAUSTED to some third-party
+        // `systemInstruction` text that it accepts as user text, so system
+        // prompts lead the first user turn instead.
+        if !system_prompts.is_empty() {
+            let system = json!({ "text": system_prompts.join("\n\n") });
+            match contents.first_mut() {
+                Some(first) if first["role"] == "user" => {
+                    if let Some(parts) = first["parts"].as_array_mut() {
+                        parts.insert(0, system);
+                    }
+                }
+                _ => contents.insert(0, json!({ "role": "user", "parts": [system] })),
+            }
+        }
 
         let mut inner_request = json!({
             "contents": contents,
@@ -46,14 +61,6 @@ impl AntigravityClient {
             "labels": labels,
             "sessionId": meta.session_id,
         });
-
-        if !system_prompts.is_empty() {
-            let combined = system_prompts.join("\n\n");
-            inner_request["systemInstruction"] = json!({
-                "role": "user",
-                "parts": [{ "text": combined }]
-            });
-        }
 
         if let Some(tools) = &req.tools
             && !tools.is_empty()

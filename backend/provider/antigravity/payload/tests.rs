@@ -51,16 +51,13 @@ fn test_build_request_payload_system_and_user() {
     assert_eq!(payload["userAgent"], "antigravity");
 
     let inner = &payload["request"];
-    assert_eq!(inner["systemInstruction"]["role"], "user");
-    assert_eq!(
-        inner["systemInstruction"]["parts"][0]["text"],
-        "You are an assistant"
-    );
+    assert!(inner.get("systemInstruction").is_none());
 
     let contents = inner["contents"].as_array().unwrap();
     assert_eq!(contents.len(), 1);
     assert_eq!(contents[0]["role"], "user");
-    assert_eq!(contents[0]["parts"][0]["text"], "Hello world");
+    assert_eq!(contents[0]["parts"][0]["text"], "You are an assistant");
+    assert_eq!(contents[0]["parts"][1]["text"], "Hello world");
 
     assert_eq!(inner["labels"]["used_claude"], "true");
     let temp = inner["generationConfig"]["temperature"].as_f64().unwrap();
