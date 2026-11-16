@@ -65,16 +65,16 @@ check:
     just lint
     just frontend-build
     just api-check
-    cd frontend && bun test src
-    bun test scripts
+    cd frontend && NODE_ENV=test bun test src
+    NODE_ENV=test bun test scripts
     cargo fmt --check
     cargo clippy --all-targets -- -D warnings
     cargo test
 
 # Run tests
 test: frontend-build
-    cd frontend && bun test src
-    bun test scripts
+    cd frontend && NODE_ENV=test bun test src
+    NODE_ENV=test bun test scripts
     cargo test
 
 # Build release binary
