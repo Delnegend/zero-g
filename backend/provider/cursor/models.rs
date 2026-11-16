@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
+use std::sync::LazyLock;
 use std::time::Duration;
-
 use prost::Message;
 use serde_json::json;
 
@@ -8,6 +8,7 @@ use crate::openai::Model;
 use crate::provider::common::errors::UpstreamError;
 use crate::provider::registry::Provider;
 use crate::server::AppState;
+use crate::provider::common::pool::{CatalogCache, eligible};
 
 /// Default Cursor API endpoint.
 const DEFAULT_BASE_URL: &str = "https://api2.cursor.sh";
@@ -17,6 +18,19 @@ const CLIENT_VERSION: &str = "cli-2026.09.02-c22c1a3";
 const USABLE_PATH: &str = "/agent.v1.AgentService/GetUsableModels";
 /// Rich model metadata RPC.
 const AVAILABLE_PATH: &str = "/aiserver.v1.AiService/AvailableModels";
+
+/// In-memory cache of per-credential discovered Cursor model catalogs.
+static CATALOG_CACHE: LazyLock<CatalogCache<Vec<Model>>> = LazyLock::new(CatalogCache::default);
+
+/// Invalidates any cached catalog for `credential_id` on upstream auth rejection.
+pub(super) async fn invalidate_catalog_on_auth_error(
+    credential_id: &str,
+    status: Option<reqwest::StatusCode>,
+) {
+    CATALOG_CACHE
+        .invalidate_on_auth_error(credential_id, status)
+        .await;
+}
 
 /// Account-scoped usable model response. Unknown protobuf fields are ignored.
 #[derive(Clone, PartialEq, Message)]
@@ -148,48 +162,100 @@ struct Variant {
     legacy_slug: Option<String>,
 }
 
-/// Discover the catalog for one eligible account, trying another only for
-/// authentication or rate-limit failures, as for the other provider pools.
+/// Shared HTTP client for Cursor model discovery.
+fn discovery_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Failed to initialize Cursor client: {e}"))
+}
+
+/// Resolves the upstream base URL for Cursor requests.
+fn base_url(provider: &Provider) -> &str {
+    if provider.base_url.is_empty() {
+        DEFAULT_BASE_URL
+    } else {
+        &provider.base_url
+    }
+}
+
+/// Fetches or returns the cached model catalog for a single Cursor credential.
+pub(super) async fn fetch_account_models(
+    provider: &Provider,
+    credential_id: &str,
+    token: &str,
+) -> Result<Vec<Model>, UpstreamError> {
+    let base = base_url(provider);
+    let scope = CatalogCache::<Vec<Model>>::scope_hash(&[token, base]);
+    if let Some(cached) = CATALOG_CACHE.get(credential_id, scope).await {
+        return Ok(cached);
+    }
+    let client = discovery_client().map_err(UpstreamError::from)?;
+    match fetch_models(&client, base, token).await {
+        Ok(models) => {
+            CATALOG_CACHE
+                .insert(credential_id.to_owned(), scope, models.clone())
+                .await;
+            Ok(models)
+        }
+        Err(error) => {
+            CATALOG_CACHE
+                .invalidate_on_auth_error(credential_id, error.status)
+                .await;
+            Err(error)
+        }
+    }
+}
+
+/// Discovers and aggregates models across all eligible Cursor accounts (union, deduplicated by ID).
 pub(crate) async fn fetch_catalog_pool(
     state: &AppState,
     provider: &Provider,
     identity: Option<&crate::provider::common::request_identity::RequestIdentity>,
 ) -> Result<Vec<Model>, String> {
-    let credentials = crate::provider::credentials::list(&state.settings, provider).await?;
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(10))
-        .build()
-        .map_err(|e| format!("Failed to initialize Cursor client: {e}"))?;
-    let base = if provider.base_url.is_empty() {
-        DEFAULT_BASE_URL
-    } else {
-        &provider.base_url
-    };
-    let mut last = None;
+    let credentials = eligible(&state.settings, provider)
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut models = Vec::new();
+    let mut seen = HashSet::new();
+    let mut last_error = None;
+    let mut succeeded = false;
     for credential in credentials {
         let token =
             match super::auth::access_token(&state.settings, &provider.id, &credential.id).await {
                 Ok(token) => token,
                 Err(error) => {
-                    last = Some(error);
+                    last_error = Some(error);
                     continue;
                 }
             };
-        match fetch_models(&client, base, &token).await {
-            Ok(models) => {
-                if let Some(identity) = identity {
+        match fetch_account_models(provider, &credential.id, &token).await {
+            Ok(account_models) => {
+                if !succeeded && let Some(identity) = identity {
                     identity.set_credential(&credential.id, &credential.name);
                 }
-                return Ok(models);
+                succeeded = true;
+                for model in account_models {
+                    if seen.insert(model.id.clone()) {
+                        models.push(model);
+                    }
+                }
             }
-            Err(error) if error.retryable() => last = Some(error.message),
-            Err(error) => return Err(error.message),
+            Err(error) => {
+                if last_error.is_none() || error.retryable() {
+                    last_error = Some(error.message);
+                }
+            }
         }
     }
-    Err(last.unwrap_or_else(|| {
-        "Cursor is not configured. Authenticate on the dashboard Providers page.".to_string()
-    }))
+    if succeeded {
+        Ok(models)
+    } else {
+        Err(last_error.unwrap_or_else(|| {
+            "Cursor is not configured. Authenticate on the dashboard Providers page.".to_string()
+        }))
+    }
 }
 
 /// Execute an authenticated unary protobuf request.
