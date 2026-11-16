@@ -1831,16 +1831,16 @@ export type ProvidersResponseOutput = zod.output<typeof ProvidersResponse>;
 export const QuotaWindow = zod
   .object({
     label: zod.string().describe("Display label for the window."),
-    remaining_percent: zod
-      .number()
-      .nullable()
-      .describe("Remaining quota as a percentage, when available."),
     reset_at: zod
       .int()
       .nullable()
       .describe("Reset timestamp, when provided by the upstream."),
+    used_percent: zod
+      .number()
+      .nullable()
+      .describe("Used quota as a percentage, when available."),
   })
-  .describe("Usage remaining within a provider-defined time window.");
+  .describe("Usage within a provider-defined time window.");
 
 export type QuotaWindow = zod.input<typeof QuotaWindow>;
 export type QuotaWindowOutput = zod.output<typeof QuotaWindow>;
@@ -1853,16 +1853,16 @@ export const QuotaGroup = zod
         zod
           .object({
             label: zod.string().describe("Display label for the window."),
-            remaining_percent: zod
-              .number()
-              .nullable()
-              .describe("Remaining quota as a percentage, when available."),
             reset_at: zod
               .int()
               .nullable()
               .describe("Reset timestamp, when provided by the upstream."),
+            used_percent: zod
+              .number()
+              .nullable()
+              .describe("Used quota as a percentage, when available."),
           })
-          .describe("Usage remaining within a provider-defined time window."),
+          .describe("Usage within a provider-defined time window."),
       )
       .describe("Quota windows within the pool."),
   })
@@ -1881,18 +1881,16 @@ export const QuotaSnapshot = zod
             zod
               .object({
                 label: zod.string().describe("Display label for the window."),
-                remaining_percent: zod
-                  .number()
-                  .nullable()
-                  .describe("Remaining quota as a percentage, when available."),
                 reset_at: zod
                   .int()
                   .nullable()
                   .describe("Reset timestamp, when provided by the upstream."),
+                used_percent: zod
+                  .number()
+                  .nullable()
+                  .describe("Used quota as a percentage, when available."),
               })
-              .describe(
-                "Usage remaining within a provider-defined time window.",
-              ),
+              .describe("Usage within a provider-defined time window."),
           )
           .describe("Individual windows reported by the provider."),
       })
@@ -1911,22 +1909,20 @@ export const QuotaSnapshot = zod
                         label: zod
                           .string()
                           .describe("Display label for the window."),
-                        remaining_percent: zod
-                          .number()
-                          .nullable()
-                          .describe(
-                            "Remaining quota as a percentage, when available.",
-                          ),
                         reset_at: zod
                           .int()
                           .nullable()
                           .describe(
                             "Reset timestamp, when provided by the upstream.",
                           ),
+                        used_percent: zod
+                          .number()
+                          .nullable()
+                          .describe(
+                            "Used quota as a percentage, when available.",
+                          ),
                       })
-                      .describe(
-                        "Usage remaining within a provider-defined time window.",
-                      ),
+                      .describe("Usage within a provider-defined time window."),
                   )
                   .describe("Quota windows within the pool."),
               })

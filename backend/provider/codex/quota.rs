@@ -129,7 +129,7 @@ fn append_windows(
         };
         windows.push(QuotaWindow {
             label,
-            remaining_percent: used.map(|value| 100.0 - value.clamp(0.0, 100.0)),
+            used_percent: used.map(|value| value.clamp(0.0, 100.0)),
             reset_at,
         });
     }
@@ -174,10 +174,10 @@ mod tests {
         }));
         assert_eq!(result.len(), 3);
         assert_eq!(result[0].label, "5 hours");
-        assert_eq!(result[0].remaining_percent, Some(87.5));
+        assert_eq!(result[0].used_percent, Some(12.5));
         assert_eq!(result[0].reset_at, Some(1_700_001_000));
         assert_eq!(result[1].label, "7 days");
-        assert_eq!(result[1].remaining_percent, Some(0.0));
+        assert_eq!(result[1].used_percent, Some(100.0));
         assert_eq!(result[1].reset_at, Some(1_700_000_900));
         assert_eq!(result[2].label, "1 hour (Spark)");
         assert_eq!(result[2].reset_at, Some(1_700_002_000));
@@ -191,12 +191,12 @@ mod tests {
         }, "additional_rate_limits": [{"metered_feature": "codex_bengalfox", "rate_limit": {
             "primary_window": {"used_percent": -20}
         }}]}));
-        assert_eq!(result[0].remaining_percent, None);
+        assert_eq!(result[0].used_percent, None);
         assert_eq!(result[0].reset_at, None);
         assert_eq!(result[0].label, "Primary window");
-        assert_eq!(result[1].remaining_percent, Some(0.0));
+        assert_eq!(result[1].used_percent, Some(100.0));
         assert_eq!(result[1].label, "90 seconds");
-        assert_eq!(result[2].remaining_percent, Some(100.0));
+        assert_eq!(result[2].used_percent, Some(0.0));
         assert_eq!(result[2].label, "Primary window (Spark)");
     }
 
@@ -215,6 +215,6 @@ mod tests {
             }}]}),
         );
         assert_eq!(result[0].label, "Secondary window (Custom model)");
-        assert_eq!(result[0].remaining_percent, Some(58.0));
+        assert_eq!(result[0].used_percent, Some(42.0));
     }
 }

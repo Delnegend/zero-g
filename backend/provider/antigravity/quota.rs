@@ -170,11 +170,11 @@ fn window_order(bucket: &Bucket) -> u8 {
     u8::from(bucket_window(bucket) != "5 hours")
 }
 
-/// Convert a fraction into a percentage while preserving unknown values.
-fn percent(value: Option<f64>) -> Option<f64> {
+/// Convert a remaining fraction into a used percentage while preserving unknown values.
+fn used_percent(value: Option<f64>) -> Option<f64> {
     value
         .filter(|fraction| fraction.is_finite())
-        .map(|fraction| fraction.clamp(0.0, 1.0) * 100.0)
+        .map(|fraction| ((1.0 - fraction.clamp(0.0, 1.0)) * 1000.0).round() / 10.0)
 }
 
 /// Read each upstream bucket separately, keeping shared groups shared.
@@ -219,7 +219,7 @@ fn parse_summary(data: Value) -> Result<QuotaSnapshot, String> {
         let window = bucket_window(bucket);
         let mut entry = QuotaWindow {
             label: window.to_string(),
-            remaining_percent: percent(bucket.remaining_fraction),
+            used_percent: used_percent(bucket.remaining_fraction),
             reset_at: reset_time(bucket.reset_time.as_deref()),
         };
         if let Some(existing) = groups.iter_mut().find(|existing| existing.label == group) {
@@ -259,7 +259,7 @@ mod tests {
         })).unwrap() else { panic!("expected grouped quota"); };
         assert_eq!(groups[0].label, "Antigravity");
         assert_eq!(groups[0].windows[0].label, "5 hours");
-        assert_eq!(groups[0].windows[0].remaining_percent, None);
+        assert_eq!(groups[0].windows[0].used_percent, None);
         assert_eq!(groups[0].windows[0].reset_at, Some(1_893_456_000));
     }
 
@@ -305,9 +305,9 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["5 hours", "Weekly"]
         );
-        assert_eq!(groups[0].windows[0].remaining_percent, Some(80.0));
+        assert_eq!(groups[0].windows[0].used_percent, Some(20.0));
         assert_eq!(groups[0].windows[0].reset_at, Some(1_893_456_000));
-        assert_eq!(groups[1].windows[0].remaining_percent, Some(60.0));
+        assert_eq!(groups[1].windows[0].used_percent, Some(40.0));
         assert_eq!(
             groups[2]
                 .windows
@@ -316,8 +316,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["5 hours", "Weekly"]
         );
-        assert_eq!(groups[2].windows[0].remaining_percent, Some(30.0));
-        assert_eq!(groups[2].windows[1].remaining_percent, Some(20.0));
+        assert_eq!(groups[2].windows[0].used_percent, Some(70.0));
+        assert_eq!(groups[2].windows[1].used_percent, Some(80.0));
         server.abort();
     }
 

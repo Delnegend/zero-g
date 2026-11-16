@@ -637,8 +637,8 @@ test("quota resets show a countdown and reveal the exact time", async () => {
     Response.json({
       kind: "quota",
       windows: [
-        { label: "5 hours", remaining_percent: null, reset_at: reset },
-        { label: "Weekly", remaining_percent: null, reset_at: reset - 86400 },
+        { label: "5 hours", used_percent: null, reset_at: reset },
+        { label: "Weekly", used_percent: null, reset_at: reset - 86400 },
       ],
     })) as typeof fetch;
   const user = userEvent.setup();
@@ -669,17 +669,17 @@ test("Antigravity quotas show each pool with its own windows", async () => {
         {
           label: "Gemini Models",
           windows: [
-            { label: "5 hours", remaining_percent: 80, reset_at: null },
-            { label: "Weekly", remaining_percent: 40, reset_at: null },
+            { label: "5 hours", used_percent: 80, reset_at: null },
+            { label: "Weekly", used_percent: 40, reset_at: null },
           ],
         },
         {
           label: "Claude and GPT models",
           windows: [
-            { label: "5 hours", remaining_percent: 30, reset_at: null },
-            { label: "Weekly", remaining_percent: null, reset_at: null },
-            { label: "Daily", remaining_percent: 0, reset_at: null },
-            { label: "Monthly", remaining_percent: 100, reset_at: null },
+            { label: "5 hours", used_percent: 30, reset_at: null },
+            { label: "Weekly", used_percent: null, reset_at: null },
+            { label: "Daily", used_percent: 0, reset_at: null },
+            { label: "Monthly", used_percent: 100, reset_at: null },
           ],
         },
       ],
@@ -695,35 +695,35 @@ test("Antigravity quotas show each pool with its own windows", async () => {
   );
   const gemini = await screen.findByRole("group", { name: "Gemini Models" });
   const claude = screen.getByRole("group", { name: "Claude and GPT models" });
-  assert.ok(within(gemini).getByText("80% remaining"));
-  assert.ok(within(gemini).getByText("40% remaining"));
-  assert.ok(within(claude).getByText("30% remaining"));
-  assert.ok(within(claude).getByText("Unknown remaining"));
+  assert.ok(within(gemini).getByText("80% used"));
+  assert.ok(within(gemini).getByText("40% used"));
+  assert.ok(within(claude).getByText("30% used"));
+  assert.ok(within(claude).getByText("Unknown used"));
   assert.equal(
     within(gemini)
-      .getByRole("progressbar", { name: "5 hours remaining" })
+      .getByRole("progressbar", { name: "5 hours used" })
       .getAttribute("aria-valuenow"),
     "80",
   );
   assert.equal(
     within(gemini)
-      .getByRole("progressbar", { name: "Weekly remaining" })
+      .getByRole("progressbar", { name: "Weekly used" })
       .getAttribute("aria-valuenow"),
     "40",
   );
   assert.equal(
-    within(claude).queryByRole("progressbar", { name: "Weekly remaining" }),
+    within(claude).queryByRole("progressbar", { name: "Weekly used" }),
     null,
   );
   assert.equal(
     within(claude)
-      .getByRole("progressbar", { name: "Daily remaining" })
+      .getByRole("progressbar", { name: "Daily used" })
       .getAttribute("aria-valuenow"),
     "0",
   );
   assert.equal(
     within(claude)
-      .getByRole("progressbar", { name: "Monthly remaining" })
+      .getByRole("progressbar", { name: "Monthly used" })
       .getAttribute("aria-valuenow"),
     "100",
   );
@@ -738,8 +738,8 @@ test("connected Claude credentials show subscription quota", async () => {
             {
               label: "Claude subscription",
               windows: [
-                { label: "5 hours", remaining_percent: 80, reset_at: null },
-                { label: "Weekly", remaining_percent: 60, reset_at: null },
+                { label: "5 hours", used_percent: 80, reset_at: null },
+                { label: "Weekly", used_percent: 60, reset_at: null },
               ],
             },
           ],
@@ -779,8 +779,8 @@ test("connected Claude credentials show subscription quota", async () => {
   const group = await screen.findByRole("group", {
     name: "Claude subscription",
   });
-  assert.ok(within(group).getByText("80% remaining"));
-  assert.ok(within(group).getByText("60% remaining"));
+  assert.ok(within(group).getByText("80% used"));
+  assert.ok(within(group).getByText("60% used"));
 });
 
 test("Codex device code copies with temporary confirmation", async () => {

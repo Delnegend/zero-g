@@ -39,7 +39,7 @@ pub(crate) fn parse_go(value: &Value) -> Result<QuotaSnapshot, String> {
             .map(|d| d.timestamp());
         windows.push(QuotaWindow {
             label: label.to_string(),
-            remaining_percent: Some(100.0 - used.clamp(0.0, 100.0)),
+            used_percent: Some(used.clamp(0.0, 100.0)),
             reset_at,
         });
     }

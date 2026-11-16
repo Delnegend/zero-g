@@ -39,7 +39,7 @@ function ResetTime({ reset }: { reset: Date }) {
 }
 
 function WindowUsage({ window }: { window: QuotaWindow }) {
-  const value = window.remaining_percent;
+  const value = window.used_percent;
   const known =
     value !== null && Number.isFinite(value) && value >= 0 && value <= 100;
   const percent = known ? `${Number(value.toFixed(1))}%` : "Unknown";
@@ -52,12 +52,12 @@ function WindowUsage({ window }: { window: QuotaWindow }) {
       {known && (
         <Progress
           value={value}
-          aria-label={`${window.label} remaining`}
+          aria-label={`${window.label} used`}
           className="col-span-2 row-start-2 gap-0 @md:col-span-1 @md:col-start-2 @md:row-start-1"
         />
       )}
       <p className="col-start-2 row-start-1 text-muted-foreground tabular-nums @md:col-start-3">
-        {percent} remaining
+        {percent} used
       </p>
       {reset && Number.isFinite(reset.getTime()) && (
         <div className="col-span-2 row-start-3 @md:col-span-1 @md:col-start-4 @md:row-start-1">
@@ -105,7 +105,7 @@ export function CredentialUsage({
       {connected &&
         usage.data?.kind === "quota" &&
         (usage.data.windows.length ? (
-          <div className="space-y-3 @md:grid @md:grid-cols-[4.5rem_minmax(0,1fr)_8rem_minmax(11rem,max-content)] @md:gap-x-3">
+          <div className="space-y-3 @md:grid @md:grid-cols-[4.5rem_minmax(0,1fr)_max-content_minmax(11rem,max-content)] @md:gap-x-3">
             {usage.data.windows.map((window, index) => (
               <WindowUsage key={`${window.label}-${index}`} window={window} />
             ))}
@@ -116,7 +116,7 @@ export function CredentialUsage({
           </p>
         ))}
       {connected && usage.data?.kind === "grouped_quota" && (
-        <div className="space-y-4 @md:grid @md:grid-cols-[4.5rem_minmax(0,1fr)_8rem_minmax(11rem,max-content)] @md:gap-x-3">
+        <div className="space-y-4 @md:grid @md:grid-cols-[4.5rem_minmax(0,1fr)_max-content_minmax(11rem,max-content)] @md:gap-x-3">
           {usage.data.groups.map((group, index) => (
             <section
               key={`${group.label}-${index}`}
