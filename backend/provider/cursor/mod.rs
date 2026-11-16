@@ -4,14 +4,14 @@
 mod auth;
 /// Dashboard PKCE authorization endpoints.
 pub(crate) mod dashboard_login;
+/// Client-facing inference endpoints and response handling.
+mod downstream;
 /// Account-scoped Cursor model discovery.
 mod models;
 /// Conversion of conversation history to Cursor records.
 mod replay;
-/// Virtual-key-protected inference endpoints.
-mod routes;
-/// Cursor agent RPC transport.
-mod transport;
+/// Cursor's interleaved agent RPC conversation.
+mod upstream;
 
 /// Cursor's agent wire protocol, generated from the vendored upstream schema.
 #[allow(
@@ -45,7 +45,7 @@ impl super::common::Provider for Backend {
     fn router(
         settings: &crate::server::settings::SettingsStore,
     ) -> axum::Router<crate::server::AppState> {
-        routes::router(settings)
+        downstream::router(settings)
     }
 
     async fn discover(

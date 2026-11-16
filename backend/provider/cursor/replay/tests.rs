@@ -141,7 +141,7 @@ async fn tool_choice_router() -> axum::Router {
         dashboard_auth: crate::server::dashboard_auth_config::test_auth().await,
     };
     Router::new()
-        .nest("/cursor/{id}", super::super::routes::router(&store))
+        .nest("/cursor/{id}", super::super::downstream::router(&store))
         .with_state(state)
 }
 
