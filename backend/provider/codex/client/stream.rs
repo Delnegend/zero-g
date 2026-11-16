@@ -41,6 +41,8 @@ pub(super) enum CodexParsedEvent {
         status: String,
         /// Original terminal response object, if supplied.
         response: Option<Value>,
+        /// Error details supplied by a failed terminal event.
+        error: Option<Value>,
     },
     /// Token usage reported by the upstream response.
     Usage(Usage),
@@ -319,6 +321,11 @@ impl SseLineDecoder {
                     .to_string(),
                     status: status.to_string(),
                     response: val.get("response").cloned(),
+                    error: val
+                        .pointer("/response/error")
+                        .or_else(|| val.get("error"))
+                        .filter(|error| !error.is_null())
+                        .cloned(),
                 });
             }
             _ => {}

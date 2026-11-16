@@ -142,6 +142,7 @@ impl CodexClient {
     }
 
     /// Collects an upstream stream into a single chat completion.
+    #[allow(clippy::too_many_lines)]
     pub(super) async fn complete_chat_non_streaming(
         &self,
         creds: &Credentials,
@@ -178,9 +179,22 @@ impl CodexClient {
                             return Err("Codex emitted an unmatched tool event".into());
                         }
                     }
-                    CodexParsedEvent::Finish { reason, status, .. } => {
+                    CodexParsedEvent::Finish {
+                        reason,
+                        status,
+                        error,
+                        ..
+                    } => {
                         if !matches!(status.as_str(), "completed" | "incomplete") {
-                            return Err("Codex response failed".into());
+                            return Err(error
+                                .and_then(|error| {
+                                    error
+                                        .get("message")
+                                        .and_then(Value::as_str)
+                                        .map(str::to_owned)
+                                })
+                                .unwrap_or_else(|| "Codex response failed".to_owned())
+                                .into());
                         }
                         finish_reason = Some(reason);
                     }
@@ -708,13 +722,19 @@ async fn pump_chat_chunks(
                             }
                         }
                         CodexParsedEvent::Finish {
-                            mut reason, status, ..
+                            mut reason,
+                            status,
+                            error,
+                            ..
                         } => {
                             if !matches!(status.as_str(), "completed" | "incomplete") {
+                                let detail = error.unwrap_or_else(
+                                    || serde_json::json!({"message":"Codex response failed"}),
+                                );
                                 let _ = tx
-                                    .send(Ok(Event::default().event("error").data(
-                                        "{\"error\":{\"message\":\"Codex response failed\"}}",
-                                    )))
+                                    .send(Ok(Event::default()
+                                        .event("error")
+                                        .data(serde_json::json!({"error":detail}).to_string())))
                                     .await;
                                 return;
                             }

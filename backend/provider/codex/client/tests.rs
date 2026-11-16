@@ -471,6 +471,27 @@ async fn terminal_statuses_are_preserved() {
     }
 }
 
+/// Codex error details survive conversion to chat errors in both modes.
+#[tokio::test]
+async fn chat_preserves_upstream_failure_details() {
+    let (client, _requests) = fake_client("data: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"code\":\"model_unavailable\",\"message\":\"model is unavailable\"}}}\n\n").await;
+    let error = client
+        .complete_chat_non_streaming(&credentials(), &chat_request(), "scoped")
+        .await
+        .unwrap_err();
+    assert!(error.message.contains("model is unavailable"));
+    let body = stream_body(
+        client
+            .stream_chat(&credentials(), &chat_request(), "scoped")
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(body.contains("model is unavailable"));
+    assert!(body.contains("model_unavailable"));
+    assert!(!body.contains("[DONE]"));
+}
+
 /// Both APIs send the middleware-derived identity as headers and cache key.
 #[tokio::test]
 async fn scoped_identity_reaches_both_upstream_apis() {
