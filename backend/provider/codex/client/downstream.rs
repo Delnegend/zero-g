@@ -17,7 +17,9 @@ use crate::provider::codex::auth::{CODEX_BASE_URL, Credentials};
 use crate::provider::codex::payload::{
     build_codex_payload_from_chat, build_codex_payload_from_responses,
 };
+use crate::openai::Model;
 use crate::provider::common::errors::UpstreamError;
+use crate::provider::common::pool::CatalogCache;
 #[cfg(test)]
 use crate::provider::common::stream::MAX_SSE_BYTES;
 use crate::responses::ResponseCreateRequest;
@@ -38,6 +40,8 @@ pub(crate) struct CodexClient {
     pub(super) http: reqwest::Client,
     /// Responses API base URL.
     pub(super) base_url: String,
+    /// Per-credential cached model catalogs.
+    pub(crate) model_cache: std::sync::Arc<CatalogCache<Vec<Model>>>,
 }
 
 impl CodexClient {
@@ -50,19 +54,20 @@ impl CodexClient {
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
             base_url: CODEX_BASE_URL.to_string(),
+            model_cache: std::sync::Arc::new(CatalogCache::default()),
         }
     }
 
     /// Translates and streams a chat completion as SSE chunks.
-    pub(in crate::provider::codex) async fn stream_chat(
+    pub(in crate::provider::codex) async fn stream_chat_for(
         &self,
+        credential_id: Option<&str>,
         creds: &Credentials,
         req: &ChatCompletionRequest,
         session_id: &str,
     ) -> Result<Response, UpstreamError> {
         let payload = build_codex_payload_from_chat(req);
-        let upstream = self.send_request(creds, payload, session_id).await?;
-
+        let upstream = self.send_request(credential_id, creds, payload, session_id).await?;
         let model = req.model.clone();
         let include_usage = req
             .stream_options
@@ -80,17 +85,28 @@ impl CodexClient {
             .into_response())
     }
 
+    /// Translates and streams a chat completion as SSE chunks.
+    #[cfg(test)]
+    pub(in crate::provider::codex) async fn stream_chat(
+        &self,
+        creds: &Credentials,
+        req: &ChatCompletionRequest,
+        session_id: &str,
+    ) -> Result<Response, UpstreamError> {
+        self.stream_chat_for(None, creds, req, session_id).await
+    }
+
     /// Collects an upstream stream into a single chat completion.
     #[allow(clippy::too_many_lines)]
-    pub(in crate::provider::codex) async fn complete_chat_non_streaming(
+    pub(in crate::provider::codex) async fn complete_chat_non_streaming_for(
         &self,
+        credential_id: Option<&str>,
         creds: &Credentials,
         req: &ChatCompletionRequest,
         session_id: &str,
     ) -> Result<ChatCompletionResponse, UpstreamError> {
         let payload = build_codex_payload_from_chat(req);
-        let upstream = self.send_request(creds, payload, session_id).await?;
-
+        let upstream = self.send_request(credential_id, creds, payload, session_id).await?;
         let model = req.model.clone();
         let mut text_acc = String::new();
         let mut reasoning_acc = String::new();
@@ -203,16 +219,28 @@ impl CodexClient {
         })
     }
 
-    /// Forwards a Responses request as an SSE event stream.
-    pub(in crate::provider::codex) async fn stream_responses(
+    /// Collects an upstream stream into a single chat completion.
+    #[cfg(test)]
+    pub(in crate::provider::codex) async fn complete_chat_non_streaming(
         &self,
+        creds: &Credentials,
+        req: &ChatCompletionRequest,
+        session_id: &str,
+    ) -> Result<ChatCompletionResponse, UpstreamError> {
+        self.complete_chat_non_streaming_for(None, creds, req, session_id)
+            .await
+    }
+
+    /// Forwards a Responses request as an SSE event stream.
+    pub(in crate::provider::codex) async fn stream_responses_for(
+        &self,
+        credential_id: Option<&str>,
         creds: &Credentials,
         req: &ResponseCreateRequest,
         session_id: &str,
     ) -> Result<Response, UpstreamError> {
         let payload = build_codex_payload_from_responses(req);
-        let upstream = self.send_request(creds, payload, session_id).await?;
-
+        let upstream = self.send_request(credential_id, creds, payload, session_id).await?;
         let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(100);
 
         tokio::spawn(async move {
@@ -224,16 +252,28 @@ impl CodexClient {
             .into_response())
     }
 
-    /// Collects an upstream stream into a single Responses object.
-    pub(in crate::provider::codex) async fn complete_responses_non_streaming(
+    /// Forwards a Responses request as an SSE event stream.
+    #[cfg(test)]
+    pub(in crate::provider::codex) async fn stream_responses(
         &self,
+        creds: &Credentials,
+        req: &ResponseCreateRequest,
+        session_id: &str,
+    ) -> Result<Response, UpstreamError> {
+        self.stream_responses_for(None, creds, req, session_id)
+            .await
+    }
+
+    /// Collects an upstream stream into a single Responses object.
+    pub(in crate::provider::codex) async fn complete_responses_non_streaming_for(
+        &self,
+        credential_id: Option<&str>,
         creds: &Credentials,
         req: &ResponseCreateRequest,
         session_id: &str,
     ) -> Result<Value, UpstreamError> {
         let payload = build_codex_payload_from_responses(req);
-        let upstream = self.send_request(creds, payload, session_id).await?;
-
+        let upstream = self.send_request(credential_id, creds, payload, session_id).await?;
         let mut output_text = String::new();
 
         let mut byte_stream = upstream.bytes_stream();
@@ -296,6 +336,18 @@ impl CodexClient {
             }
         }
         Err("Codex stream ended without a terminal response".into())
+    }
+
+    /// Collects an upstream stream into a single Responses object.
+    #[cfg(test)]
+    pub(in crate::provider::codex) async fn complete_responses_non_streaming(
+        &self,
+        creds: &Credentials,
+        req: &ResponseCreateRequest,
+        session_id: &str,
+    ) -> Result<Value, UpstreamError> {
+        self.complete_responses_non_streaming_for(None, creds, req, session_id)
+            .await
     }
 }
 

@@ -3,11 +3,12 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::openai::{Model, ModelListResponse};
-use crate::provider::codex::auth::{CODEX_BASE_URL, CODEX_CLIENT_VERSION, Credentials};
+use crate::provider::codex::CodexClient;
+use crate::provider::codex::auth::{CODEX_CLIENT_VERSION, Credentials};
 use crate::provider::common::errors::UpstreamError;
+use crate::provider::common::pool::CatalogCache;
 use crate::provider::registry::Provider;
 use crate::server::AppState;
-
 /// Upstream model list, which may use either supported envelope field.
 #[derive(Deserialize)]
 struct CodexModelsResponse {
@@ -95,11 +96,44 @@ fn modalities(value: Option<&Value>) -> Option<Vec<String>> {
         .collect()
 }
 
-/// Fetches the normalized model list using the supplied credentials.
-pub(super) async fn fetch_codex_models(
+/// Fetches the normalized model list for a credential, using `client`'s catalog cache when
+/// `credential_id` is provided.
+pub(super) async fn fetch_account_models(
+    client: &CodexClient,
+    credential_id: Option<&str>,
     creds: &Credentials,
-) -> Result<ModelListResponse, UpstreamError> {
-    fetch_models(creds).await
+) -> Result<Vec<Model>, UpstreamError> {
+    let base_url = client.base_url();
+    let account_id = creds.account_id.as_deref().unwrap_or("");
+    let scope = CatalogCache::<Vec<Model>>::scope_hash(&[
+        &creds.access_token,
+        base_url,
+        account_id,
+    ]);
+    if let Some(credential_id) = credential_id
+        && let Some(models) = client.model_cache.get(credential_id, scope).await
+    {
+        return Ok(models);
+    }
+    let models = match fetch_models(base_url, creds).await {
+        Ok(response) => response.data,
+        Err(err) => {
+            if let Some(credential_id) = credential_id {
+                client
+                    .model_cache
+                    .invalidate_on_auth_error(credential_id, err.status)
+                    .await;
+            }
+            return Err(err);
+        }
+    };
+    if let Some(credential_id) = credential_id {
+        client
+            .model_cache
+            .insert(credential_id.to_owned(), scope, models.clone())
+            .await;
+    }
+    Ok(models)
 }
 
 /// Fetches normalized models and catalog metadata through the provider credential pool.
@@ -107,21 +141,22 @@ pub(crate) async fn fetch_catalog_pool(
     state: &AppState,
     provider: &Provider,
 ) -> Result<ModelListResponse, String> {
-    crate::provider::codex::routes::with_pool(state, provider, None, |creds| async move {
-        fetch_models(&creds).await
-    })
-    .await
-    .map_err(|e| e.message)
+    crate::provider::codex::routes::aggregate_models(state, provider)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Fetches and normalizes an upstream model list, retaining provider metadata.
-async fn request_models(creds: &Credentials) -> Result<CodexModelsResponse, UpstreamError> {
+async fn request_models(
+    base_url: &str,
+    creds: &Credentials,
+) -> Result<CodexModelsResponse, UpstreamError> {
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| "Failed to initialize Codex client")?;
 
-    let url = format!("{CODEX_BASE_URL}/codex/models?client_version={CODEX_CLIENT_VERSION}");
+    let url = format!("{base_url}/codex/models?client_version={CODEX_CLIENT_VERSION}");
     let mut req = client
         .get(&url)
         .header("Authorization", format!("Bearer {}", creds.access_token))
@@ -159,8 +194,11 @@ async fn request_models(creds: &Credentials) -> Result<CodexModelsResponse, Upst
 }
 
 /// Normalize the upstream model list while retaining provider metadata.
-async fn fetch_models(creds: &Credentials) -> Result<ModelListResponse, UpstreamError> {
-    let parsed = request_models(creds).await?;
+async fn fetch_models(
+    base_url: &str,
+    creds: &Credentials,
+) -> Result<ModelListResponse, UpstreamError> {
+    let parsed = request_models(base_url, creds).await?;
 
     let entries = parsed
         .models

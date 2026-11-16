@@ -5,9 +5,20 @@ use crate::provider::codex::auth::{CODEX_CLIENT_VERSION, Credentials};
 use crate::provider::common::errors::UpstreamError;
 
 impl CodexClient {
+    /// Returns the configured Codex upstream base URL.
+    pub(in crate::provider::codex) fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    /// Overrides the upstream base URL for integration tests.
+    #[cfg(test)]
+    pub(in crate::provider::codex) fn set_base_url_for_test(&mut self, url: String) {
+        self.base_url = url;
+    }
     /// Sends an authenticated streaming request to the Codex Responses endpoint.
-    pub(super) async fn send_request(
+    pub(in crate::provider::codex) async fn send_request(
         &self,
+        credential_id: Option<&str>,
         creds: &Credentials,
         mut payload: Value,
         session_id: &str,
@@ -55,6 +66,11 @@ impl CodexClient {
 
         if !resp.status().is_success() {
             let status = resp.status();
+            if let Some(credential_id) = credential_id {
+                self.model_cache
+                    .invalidate_on_auth_error(credential_id, Some(status))
+                    .await;
+            }
             let headers = Box::new(resp.headers().clone());
             let body = resp.text().await.unwrap_or_default();
             return Err(UpstreamError {
@@ -63,7 +79,6 @@ impl CodexClient {
                 headers,
             });
         }
-
         Ok(resp)
     }
 }
