@@ -17,13 +17,14 @@ impl AntigravityClient {
     /// Collect a streaming generation into a non-streaming chat response.
     pub(super) async fn complete_non_streaming(
         &self,
+        credential_id: Option<&str>,
         creds: &Credentials,
         req: &ChatCompletionRequest,
         session_id: &str,
     ) -> Result<ChatCompletionResponse, UpstreamError> {
         let wire_model = req.model.clone();
         let is_claude = wire_model.contains("claude");
-        let models = self.fetch_models(creds).await?;
+        let models = self.fetch_models(credential_id, creds).await?;
         let info = models
             .iter()
             .find(|(id, _)| id == &wire_model)
@@ -31,7 +32,9 @@ impl AntigravityClient {
         let payload =
             Self::build_request_payload(req, &creds.project_id, &wire_model, session_id, info);
 
-        let response = self.stream_request(creds, &payload, is_claude).await?;
+        let response = self
+            .stream_request(credential_id, creds, &payload, is_claude)
+            .await?;
         let mut events = spawn_event_stream(response.bytes_stream());
 
         let mut collected = CollectedResponse::default();

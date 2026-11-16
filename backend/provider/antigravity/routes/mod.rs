@@ -28,7 +28,7 @@ pub(crate) use model_routing::to_model_entry;
 pub(crate) use pool::fetch_models;
 #[cfg(test)]
 use pool::try_candidates;
-use pool::{pool_error_response, pool_models, pooled_stream, with_model_pool};
+use pool::{all_pool_models, pool_error_response, pooled_stream, with_model_pool};
 
 /// Builds the virtual-key-protected Antigravity API routes.
 pub(crate) fn router(settings: &SettingsStore) -> Router<AppState> {
@@ -104,14 +104,9 @@ async fn models_handler(
     State(state): State<AppState>,
     Extension(permissions): Extension<Permissions>,
     Extension(provider): Extension<Provider>,
-    identity: Option<Extension<RequestIdentity>>,
+    _identity: Option<Extension<RequestIdentity>>,
 ) -> Response {
-    let live_models = match pool_models(
-        &state,
-        &provider,
-        identity.as_ref().map(|Extension(identity)| identity),
-    )
-    .await
+    let live_models = match all_pool_models(&state, &provider).await
     {
         Ok(models) => models,
         Err(error) => return pool_error_response(error),
@@ -172,11 +167,15 @@ async fn chat_handler(
             &provider,
             identity.as_ref().map(|Extension(identity)| identity),
             &req.model,
-            |creds| {
+            |credential_id, creds| {
                 let req = &req;
                 let client = &state.providers.client;
                 let session_id = &session.id;
-                async move { client.complete_non_streaming(&creds, req, session_id).await }
+                async move {
+                    client
+                        .complete_non_streaming(Some(&credential_id), &creds, req, session_id)
+                        .await
+                }
             },
         )
         .await
@@ -274,13 +273,13 @@ async fn responses_handler(
             &provider,
             identity.as_ref().map(|Extension(identity)| identity),
             &chat_req.model,
-            |creds| {
+            |credential_id, creds| {
                 let chat_req = &chat_req;
                 let client = &state.providers.client;
                 let session_id = &session.id;
                 async move {
                     client
-                        .complete_non_streaming(&creds, chat_req, session_id)
+                        .complete_non_streaming(Some(&credential_id), &creds, chat_req, session_id)
                         .await
                 }
             },

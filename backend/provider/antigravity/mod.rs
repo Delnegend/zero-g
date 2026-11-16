@@ -68,29 +68,11 @@ fn replay_signature(model: &str, signature: &str) -> Option<String> {
 pub(crate) struct AntigravityClient {
     /// Shared connection pool used for upstream requests.
     client: reqwest::Client,
-    /// Most recent credential-bound discovery result, held for a short interval.
-    model_cache: tokio::sync::Mutex<Option<ModelCache>>,
+    /// Per-credential discovery cache keyed by credential ID and token/project scope.
+    model_cache: crate::provider::common::pool::CatalogCache<Vec<(String, AntigravityModelInfo)>>,
     /// Isolated endpoint override used only by behavioral tests.
     #[cfg(test)]
     test_endpoint: Option<String>,
-}
-
-/// A bounded discovery cache scoped to the exact upstream credentials.
-struct ModelCache {
-    /// SHA-256 digest of the access token used for discovery.
-    token: [u8; 32],
-    /// Project associated with the credentials.
-    project: String,
-    /// Instant at which discovery succeeded.
-    fetched: std::time::Instant,
-    /// Enabled discovered models.
-    models: Vec<(String, AntigravityModelInfo)>,
-}
-
-/// Computes the cache identity without retaining a bearer token.
-fn token_digest(token: &str) -> [u8; 32] {
-    use sha2::Digest;
-    sha2::Sha256::digest(token.as_bytes()).into()
 }
 
 impl AntigravityClient {
@@ -98,7 +80,7 @@ impl AntigravityClient {
     pub(crate) fn new() -> Self {
         Self {
             client: reqwest::Client::new(),
-            model_cache: tokio::sync::Mutex::new(None),
+            model_cache: crate::provider::common::pool::CatalogCache::default(),
             #[cfg(test)]
             test_endpoint: None,
         }

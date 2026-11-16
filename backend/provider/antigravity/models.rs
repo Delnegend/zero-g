@@ -304,19 +304,17 @@ impl AntigravityClient {
     /// Fetch enabled, user-facing models from the available upstream endpoints.
     pub(super) async fn fetch_models(
         &self,
+        credential_id: Option<&str>,
         creds: &Credentials,
     ) -> Result<Vec<(String, AntigravityModelInfo)>, UpstreamError> {
-        let token = super::token_digest(&creds.access_token);
+        let scope = crate::provider::common::pool::CatalogCache::<()>::scope_hash(&[
+            &creds.access_token,
+            &creds.project_id,
+        ]);
+        if let Some(credential_id) = credential_id
+            && let Some(models) = self.model_cache.get(credential_id, scope).await
         {
-            let mut cache = self.model_cache.lock().await;
-            if let Some(entry) = cache.as_ref()
-                && entry.token == token
-                && entry.project == creds.project_id
-                && entry.fetched.elapsed() < std::time::Duration::from_secs(300)
-            {
-                return Ok(entry.models.clone());
-            }
-            *cache = None;
+            return Ok(models);
         }
         #[cfg(test)]
         let endpoints = self.endpoints();
@@ -352,12 +350,11 @@ impl AntigravityClient {
                         models.push((id, info));
                     }
                     models.sort_by(|a, b| a.0.cmp(&b.0));
-                    *self.model_cache.lock().await = Some(super::ModelCache {
-                        token,
-                        project: creds.project_id.clone(),
-                        fetched: std::time::Instant::now(),
-                        models: models.clone(),
-                    });
+                    if let Some(credential_id) = credential_id {
+                        self.model_cache
+                            .insert(credential_id.to_owned(), scope, models.clone())
+                            .await;
+                    }
                     return Ok(models);
                 }
                 Ok(r) => {

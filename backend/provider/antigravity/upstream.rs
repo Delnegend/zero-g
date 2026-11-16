@@ -11,6 +11,7 @@ impl AntigravityClient {
     /// Send a streaming generation request, falling back on upstream failures.
     pub(super) async fn stream_request(
         &self,
+        credential_id: Option<&str>,
         creds: &Credentials,
         payload: &Value,
         is_claude: bool,
@@ -41,16 +42,10 @@ impl AntigravityClient {
                 }
                 Ok(resp) => {
                     let status = resp.status();
-                    if status == reqwest::StatusCode::UNAUTHORIZED
-                        || status == reqwest::StatusCode::FORBIDDEN
-                    {
-                        let mut cache = self.model_cache.lock().await;
-                        if cache.as_ref().is_some_and(|entry| {
-                            entry.token == super::token_digest(&creds.access_token)
-                                && entry.project == creds.project_id
-                        }) {
-                            *cache = None;
-                        }
+                    if let Some(credential_id) = credential_id {
+                        self.model_cache
+                            .invalidate_on_auth_error(credential_id, Some(status))
+                            .await;
                     }
                     let headers = Box::new(resp.headers().clone());
                     let body = resp.text().await.unwrap_or_default();
