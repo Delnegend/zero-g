@@ -4,7 +4,7 @@ use crate::provider::openai::routes::{Upstream, models_handler, send};
 use crate::server::settings::Permissions;
 use axum::Extension;
 use axum::Json;
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::extract::RawQuery;
 use axum::http::StatusCode;
 use serde_json::json;

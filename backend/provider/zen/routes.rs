@@ -1,6 +1,6 @@
 use axum::body::Bytes;
 use axum::extract::{RawQuery, State};
-use axum::http::{HeaderMap, Method, StatusCode};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Router};
@@ -9,11 +9,12 @@ use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
-use crate::provider::common::proxy::{ProxyError, check_model, error, retry_api_keys};
+use crate::provider::common::proxy::{ProxyError, check_model, error};
 use crate::provider::common::request_identity::RequestIdentity;
 use crate::provider::{openai, registry::Provider};
 use crate::server::AppState;
 use crate::server::settings::{self, Permissions, SettingsStore};
+use super::upstream::send_upstream;
 
 /// Official OpenAI-compatible Zen inference endpoint.
 pub(super) const BASE_URL: &str = "https://opencode.ai/inference/openai/v1";
@@ -335,43 +336,6 @@ async fn responses_handler(
         body,
         "responses",
         identity.as_ref().map(|Extension(identity)| identity),
-    )
-    .await
-}
-
-/// Forward a request with weighted Zen credentials.
-#[allow(clippy::too_many_arguments)]
-async fn send_upstream(
-    settings: &SettingsStore,
-    provider: &Provider,
-    base: &str,
-    path: &str,
-    query: Option<&str>,
-    headers: &HeaderMap,
-    body: Bytes,
-    identity: Option<&RequestIdentity>,
-) -> Result<reqwest::Response, ProxyError> {
-    retry_api_keys(
-        settings,
-        provider,
-        "No connected Zen credentials",
-        identity,
-        |key| {
-            let body = body.clone();
-            async move {
-                openai::send_with_headers(
-                    base,
-                    &key,
-                    path,
-                    query,
-                    Method::POST,
-                    headers,
-                    Some(body),
-                    true,
-                )
-                .await
-            }
-        },
     )
     .await
 }

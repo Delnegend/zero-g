@@ -4,14 +4,14 @@ use axum::{
     Extension, Router,
     body::Bytes,
     extract::{RawQuery, State},
-    http::{HeaderMap, Method},
+    http::HeaderMap,
     response::{IntoResponse, Response},
     routing::post,
 };
 
 use crate::{
     provider::{
-        common::proxy::{check_model, retry_api_keys},
+        common::proxy::check_model,
         common::request_identity::RequestIdentity,
         openai,
         registry::Provider,
@@ -21,6 +21,8 @@ use crate::{
         settings::{self, Permissions, SettingsStore},
     },
 };
+
+use super::upstream::send_decision;
 
 /// Fixed upstream API root for a Decisions request.
 #[derive(Clone)]
@@ -52,29 +54,14 @@ async fn decide(
     if let Err(error) = check_model(&body, &permissions) {
         return error.into_response();
     }
-    let response = retry_api_keys(
+    let response = send_decision(
         &state.settings,
         &provider,
-        "No connected OpenRouter credentials",
+        &api_root,
         identity.as_ref().map(|Extension(identity)| identity),
-        |key| {
-            let body = body.clone();
-            let api_root = &api_root;
-            let headers = &headers;
-            let query = &query;
-            async move {
-                openai::send(
-                    api_root,
-                    &key,
-                    "alpha/decisions",
-                    query.as_deref(),
-                    Method::POST,
-                    headers,
-                    Some(body),
-                )
-                .await
-            }
-        },
+        query.as_deref(),
+        &headers,
+        body,
     )
     .await;
     match response {

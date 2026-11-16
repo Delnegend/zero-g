@@ -1,3 +1,7 @@
+mod upstream;
+
+pub(crate) use upstream::send;
+
 use axum::body::Bytes;
 use axum::extract::{RawQuery, State};
 use axum::http::{HeaderMap, Method};
@@ -11,7 +15,7 @@ use serde_json::Value;
 
 #[cfg(test)]
 use crate::provider::common::proxy::filter_models;
-use crate::provider::common::proxy::{ProxyError, check_model, model_response, retry_api_keys};
+use crate::provider::common::proxy::{check_model, model_response};
 use crate::provider::common::request_identity::RequestIdentity;
 use crate::provider::openai;
 use crate::provider::registry::Provider;
@@ -70,63 +74,6 @@ fn router_with(
             (settings.clone(), kind),
             settings::virtual_key_auth,
         ))
-}
-
-/// Resolve credentials and send a request upstream.
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn send(
-    settings: &SettingsStore,
-    provider: &Provider,
-    upstream: &Upstream,
-    path: &str,
-    query: Option<&str>,
-    method: Method,
-    headers: &HeaderMap,
-    body: Option<Bytes>,
-    identity: Option<&RequestIdentity>,
-) -> Result<reqwest::Response, ProxyError> {
-    retry_api_keys(
-        settings,
-        provider,
-        match upstream {
-            Upstream::OpenAi(_) => "No connected OpenAI-compatible credentials",
-            Upstream::Go => "No connected OpenCode Go credentials",
-        },
-        identity,
-        |key| {
-            let method = method.clone();
-            let body = body.clone();
-            async move {
-                match upstream {
-                    Upstream::OpenAi(fixed_base) => {
-                        openai::send(
-                            fixed_base.as_deref().unwrap_or(&provider.base_url),
-                            &key,
-                            path,
-                            query,
-                            method,
-                            headers,
-                            body,
-                        )
-                        .await
-                    }
-                    Upstream::Go => {
-                        crate::provider::go::send_upstream(
-                            crate::provider::go::base(provider, path == "models"),
-                            &key,
-                            path,
-                            query,
-                            method,
-                            headers,
-                            body,
-                        )
-                        .await
-                    }
-                }
-            }
-        },
-    )
-    .await
 }
 
 /// Fetch and filter models allowed by the virtual key.
