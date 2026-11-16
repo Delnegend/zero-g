@@ -893,6 +893,10 @@ async fn chat_route_preserves_signatures_and_applies_discovered_profile() {
         .unwrap();
     assert_eq!(failed["response"]["status"], "failed");
     assert_eq!(failed["response"]["error"]["code"], "bad_gateway");
+    assert_eq!(
+        failed["response"]["error"]["message"],
+        "Upstream stream ended without a finish reason"
+    );
     assert!(
         !events
             .iter()

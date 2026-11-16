@@ -111,3 +111,5 @@ curl http://127.0.0.1:8080/v1/decisions \
 | **Unsupported Limits**  | Codex                              | Accepts but does not forward `max_tokens` and `max_completion_tokens`; an effective output cap is unknown.                                                   |
 | **Strict Wire Options** | Antigravity, Codex, Claude, Cursor | Reject unsupported options (e.g. unknown structured formats, stop sequences, unsupported choice counts) with clear errors instead of dropping them silently. |
 | **Claude Billing**      | Claude subscription                | Reports Anthropic's known third-party extra-usage restriction when returned; other upstream error bodies remain private.                                     |
+
+Antigravity stream errors include the upstream error or stream failure detail. These details are visible to the client and stored in request logs.

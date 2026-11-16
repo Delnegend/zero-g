@@ -23,10 +23,10 @@ pub(crate) trait SseSerializer {
         Vec::new()
     }
     /// Produces a consumer-visible upstream failure event.
-    fn error(&mut self) -> Event {
+    fn error(&mut self, message: &str) -> Event {
         Event::default().data(
             serde_json::to_string(&crate::server::error_body(
-                "Upstream request failed",
+                message,
                 "upstream_error",
                 Some("bad_gateway"),
             ))
@@ -47,7 +47,7 @@ where
     }
 
     let mut upstream_events = spawn_event_stream(upstream.bytes_stream());
-    let mut had_error = false;
+    let mut failure = None;
     let mut finish = None;
 
     while let Some(result) = upstream_events.recv().await {
@@ -62,15 +62,17 @@ where
             }
             Err(error) => {
                 tracing::error!("Error reading upstream bytes: {error}");
-                had_error = true;
+                failure = Some(error);
                 break;
             }
         }
     }
-    had_error |= finish.is_none();
-
-    if had_error {
-        let _ = tx.send(Ok(serializer.error())).await;
+    if let Some(error) = failure.or_else(|| {
+        finish
+            .is_none()
+            .then(|| "Upstream stream ended without a finish reason".to_string())
+    }) {
+        let _ = tx.send(Ok(serializer.error(&error))).await;
     } else {
         if let Some(reason) = finish {
             for out in serializer.handle(AntigravityEvent::Finish { reason }) {
@@ -84,9 +86,6 @@ where
                 return;
             }
         }
-    }
-
-    if !had_error {
         let _ = tx.send(Ok(Event::default().data("[DONE]"))).await;
     }
 }
@@ -144,13 +143,20 @@ mod tests {
 
     #[tokio::test]
     async fn incomplete_and_invalid_streams_never_claim_success() {
-        for body in [
-            "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"partial\"}]}}]}}\n\n",
-            "data: {\"response\":",
-            "data: {\"error\":{\"message\":\"failed\"}}\n\n",
+        for (body, expected) in [
+            (
+                "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"partial\"}]}}]}}\n\n",
+                "Upstream stream ended without a finish reason",
+            ),
+            ("data: {\"response\":", "Truncated upstream event"),
+            (
+                "data: {\"error\":{\"message\":\"provider quota exhausted\"}}\n\n",
+                "provider quota exhausted",
+            ),
         ] {
             let output = chat_from_upstream(body).await;
             assert!(output.contains("upstream_error"));
+            assert!(output.contains(expected), "{output}");
             assert!(!output.contains("[DONE]"));
             assert!(!output.contains("\"finish_reason\":\"stop\""));
         }

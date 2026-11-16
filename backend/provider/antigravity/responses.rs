@@ -52,7 +52,7 @@ impl crate::provider::antigravity::sse::SseSerializer for ResponsesStreamSeriali
         ]
     }
 
-    fn error(&mut self) -> Event {
+    fn error(&mut self, message: &str) -> Event {
         Event::default().event("response.failed").data(
             json!({
                 "type": "response.failed",
@@ -62,7 +62,7 @@ impl crate::provider::antigravity::sse::SseSerializer for ResponsesStreamSeriali
                     "created_at": self.created,
                     "model": self.original_model,
                     "status": "failed",
-                    "error": { "code": "bad_gateway", "message": "Upstream request failed" }
+                    "error": { "code": "bad_gateway", "message": message }
                 }
             })
             .to_string(),
