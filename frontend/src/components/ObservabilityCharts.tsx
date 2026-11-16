@@ -5,7 +5,8 @@ import { scaleBand } from "@tanstack/charts/scales/band";
 import { scaleLinear } from "@tanstack/charts/scales/linear";
 import { tooltip } from "@tanstack/charts/tooltip";
 import { Minus, TrendingDown, TrendingUp } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { Card } from "./ui/card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import type { ObservabilityComparison } from "@/server/api/observability";
@@ -162,18 +163,7 @@ function GraphPanel({
   showLegend?: boolean;
   emptyMessage?: string;
 }) {
-  const [desktop, setDesktop] = useState(
-    () =>
-      typeof window !== "undefined" &&
-      window.matchMedia("(min-width: 640px)").matches,
-  );
-  useEffect(() => {
-    const media = window.matchMedia("(min-width: 640px)");
-    const update = () => setDesktop(media.matches);
-    update();
-    media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
-  }, []);
+  const desktop = useMediaQuery("(min-width: 640px)");
   const pointCount = series.reduce(
     (total, item) => total + item.points.length,
     0,
