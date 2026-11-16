@@ -57,6 +57,7 @@ zero-g/
 
 - Rust modules with tests live in named directories with `mod.rs` as entry.
 - OAuth providers keep their stored credential fields private in their own `auth.rs`.
+- Provider integrations separate external calls (`upstream`) from client-facing response processing (`downstream`) where practical. Routes connect request validation, provider calls, and response handling; compatible providers may share these modules. Cursor keeps its two-way provider conversation together in `upstream/`.
 
 ### Observability
 
