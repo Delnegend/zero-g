@@ -1,5 +1,9 @@
 //! Command Code `/alpha/generate` stream decoding.
 
+use axum::http::StatusCode;
+use axum::response::Response;
+use super::error;
+
 use futures_util::StreamExt;
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -17,6 +21,55 @@ pub(super) fn error_message(value: &Value) -> Option<&str> {
         .or_else(|| value.get("error").and_then(Value::as_str))
         .or_else(|| value.get("message").and_then(Value::as_str))
         .filter(|message| !message.is_empty())
+}
+/// Report a rejected request with Command Code's own reason, such as a plan restriction.
+pub(super) async fn upstream_failure(response: reqwest::Response) -> Response {
+    let status = response.status();
+    let body = response.bytes().await.unwrap_or_default();
+    let reason = serde_json::from_slice::<Value>(&body)
+        .ok()
+        .and_then(|value| {
+            error_message(&value).map(|m| m.chars().take(300).collect::<String>())
+        });
+    let message = reason.map_or_else(
+        || format!("Command Code returned {status}"),
+        |reason| format!("Command Code returned {status}: {reason}"),
+    );
+    if status.is_client_error() {
+        error(
+            status,
+            &message,
+            "invalid_request_error",
+            "upstream_rejected",
+        )
+    } else {
+        error(
+            StatusCode::BAD_GATEWAY,
+            &message,
+            "upstream_error",
+            "bad_gateway",
+        )
+    }
+}
+
+/// Translate a successful generate stream into the requested client response.
+pub(super) async fn respond(
+    response: reqwest::Response,
+    req: crate::openai::ChatCompletionRequest,
+    responses: bool,
+) -> Response {
+    let (tx, rx) = mpsc::channel(32);
+    tokio::spawn(consume(response, tx));
+    crate::provider::common::translation::respond(
+        rx,
+        req.model,
+        req.stream.unwrap_or(false),
+        responses,
+        req.stream_options
+            .and_then(|options| options.include_usage)
+            .unwrap_or(false),
+    )
+    .await
 }
 
 /// Decode one stream line; lines without client-visible output yield no events.

@@ -3,31 +3,29 @@
 //! The Go plan has no Provider API entitlement; the official CLI streams through this
 //! undocumented endpoint instead, so its wire format can change without notice.
 
+/// Client-facing stream decoding and response handling.
+mod downstream;
 /// `OpenAI` request conversion to the generate wire.
 mod payload;
-/// Generate stream decoding.
-mod stream;
-
-use std::sync::LazyLock;
-
+/// Generate request transport.
+mod upstream;
 use axum::{
     Extension, Json, Router,
     body::Bytes,
     extract::State,
-    http::{HeaderMap, Method, StatusCode, header},
+    http::{HeaderMap, Method, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use tokio::sync::mpsc;
 
 use crate::{
     openai::{ChatCompletionRequest, ModelListResponse},
     provider::{
         common::{
             self, proxy::retry_api_keys, request_identity::RequestIdentity,
-            session::RequestSession, translation,
+            session::RequestSession,
         },
         openai,
         registry::Provider,
@@ -133,72 +131,6 @@ fn thread_id(session: &str) -> String {
         .to_string()
 }
 
-/// Shared client for generate requests; streams have no overall deadline.
-static CLIENT: LazyLock<Result<reqwest::Client, reqwest::Error>> = LazyLock::new(|| {
-    reqwest::Client::builder()
-        // Never send the API key to a redirect target.
-        .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .build()
-});
-
-/// Send one generate request with the CLI's identifying headers.
-async fn send(
-    root: &str,
-    key: &str,
-    thread: &str,
-    body: Bytes,
-) -> Result<reqwest::Response, &'static str> {
-    let client = CLIENT
-        .as_ref()
-        .map_err(|_| "Failed to initialize Command Code Go provider")?;
-    client
-        .post(format!("{}/alpha/generate", root.trim_end_matches('/')))
-        .bearer_auth(key)
-        .header(header::CONTENT_TYPE, "application/json")
-        .header(header::USER_AGENT, "cli")
-        .header("x-command-code-version", CLI_VERSION)
-        .header("x-cli-environment", "production")
-        .header("x-project-slug", "project")
-        .header("x-taste-learning", "false")
-        .header("x-session-id", thread)
-        .body(body)
-        .send()
-        .await
-        // Reqwest errors can contain URLs; never expose them.
-        .map_err(|_| "Failed to contact Command Code")
-}
-
-/// Report a rejected request with Command Code's own reason, such as a plan restriction.
-async fn upstream_failure(response: reqwest::Response) -> Response {
-    let status = response.status();
-    let body = response.bytes().await.unwrap_or_default();
-    let reason = serde_json::from_slice::<Value>(&body)
-        .ok()
-        .and_then(|value| {
-            stream::error_message(&value).map(|m| m.chars().take(300).collect::<String>())
-        });
-    let message = reason.map_or_else(
-        || format!("Command Code returned {status}"),
-        |reason| format!("Command Code returned {status}: {reason}"),
-    );
-    if status.is_client_error() {
-        error(
-            status,
-            &message,
-            "invalid_request_error",
-            "upstream_rejected",
-        )
-    } else {
-        error(
-            StatusCode::BAD_GATEWAY,
-            &message,
-            "upstream_error",
-            "bad_gateway",
-        )
-    }
-}
-
 /// Authorize, translate, and stream one turn through the generate endpoint.
 async fn complete(
     state: AppState,
@@ -244,27 +176,16 @@ async fn complete(
         |key| {
             let body = body.clone();
             let thread = thread.as_str();
-            async move { send(root, &key, thread, body).await }
+            async move { upstream::send(root, &key, thread, body).await }
         },
     )
     .await
     {
         Ok(response) if response.status().is_success() => response,
-        Ok(response) => return upstream_failure(response).await,
+        Ok(response) => return downstream::upstream_failure(response).await,
         Err(error) => return error.into_response(),
     };
-    let (tx, rx) = mpsc::channel(32);
-    tokio::spawn(stream::consume(response, tx));
-    translation::respond(
-        rx,
-        req.model,
-        req.stream.unwrap_or(false),
-        responses,
-        req.stream_options
-            .and_then(|options| options.include_usage)
-            .unwrap_or(false),
-    )
-    .await
+    downstream::respond(response, req, responses).await
 }
 
 /// Lists Go plan models permitted by the virtual key.
@@ -376,6 +297,8 @@ impl common::Provider for GoBackend {
 mod tests {
     use super::*;
     use crate::provider::openai::ModelEndpoint;
+    use crate::provider::common::translation;
+    use tokio::sync::mpsc;
     use axum::body::to_bytes;
     use serde_json::json;
 
@@ -424,7 +347,7 @@ mod tests {
         );
         let response = reqwest::Response::from(axum::http::Response::new(body));
         let (tx, rx) = mpsc::channel(32);
-        tokio::spawn(stream::consume(response, tx));
+        tokio::spawn(downstream::consume(response, tx));
         let response = translation::respond(rx, "m".into(), false, false, false).await;
         assert_eq!(response.status(), StatusCode::OK);
         let value: Value =
@@ -447,7 +370,7 @@ mod tests {
         let body = "{\"type\":\"text-delta\",\"text\":\"partial\"}\n";
         let response = reqwest::Response::from(axum::http::Response::new(body));
         let (tx, rx) = mpsc::channel(32);
-        tokio::spawn(stream::consume(response, tx));
+        tokio::spawn(downstream::consume(response, tx));
         let response = translation::respond(rx, "m".into(), false, false, false).await;
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
     }
