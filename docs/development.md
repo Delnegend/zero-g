@@ -79,6 +79,8 @@ All three need dashboard auth and share one filter (`filter.rs`): range, dimensi
 | Retention     | Bodies after `body_retention_days` (7), rows after `log_retention_days` (90)                                                         |
 | Queries       | Built with Toasty; no hand-written SQL                                                                                               |
 
+The response body Copy button copies the selected readable or raw view and briefly shows a green check when copying succeeds.
+
 ---
 
 ## Contract & Schema Lifecycle

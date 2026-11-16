@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { Check } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { JsonCode, JsonTokens, toJsonText } from "@/components/HighlightedJson";
 import { parseResponseBody } from "@/lib/responseBody";
@@ -28,6 +29,62 @@ function Code({ value }: { value: unknown }) {
     <pre className="break-all whitespace-pre-wrap">
       <JsonCode value={value} />
     </pre>
+  );
+}
+
+function CopyButton({
+  text,
+  onCopy,
+  onError,
+}: {
+  text: string;
+  onCopy: () => void;
+  onError: () => void;
+}) {
+  const [feedback, setFeedback] = useState<"idle" | "visible" | "fading">(
+    "idle",
+  );
+
+  useEffect(() => {
+    if (feedback === "idle") return;
+    const timer = window.setTimeout(
+      () => setFeedback(feedback === "visible" ? "fading" : "idle"),
+      feedback === "visible" ? 1000 : 150,
+    );
+    return () => window.clearTimeout(timer);
+  }, [feedback]);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(text);
+      onCopy();
+      setFeedback("visible");
+    } catch {
+      onError();
+    }
+  }
+
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant="ghost"
+      className="relative overflow-hidden"
+      onClick={() => void copy()}
+    >
+      Copy
+      <span
+        aria-hidden="true"
+        className={`pointer-events-none absolute inset-0 flex items-center justify-center rounded bg-green-100 text-green-700 transition-opacity duration-150 motion-reduce:transition-none dark:bg-green-950 dark:text-green-400 ${feedback === "visible" ? "opacity-100" : "opacity-0"}`}
+      >
+        <Check className="size-5" />
+      </span>
+      {feedback !== "idle" && (
+        <span className="sr-only" role="status">
+          Copied
+        </span>
+      )}
+    </Button>
   );
 }
 
@@ -86,15 +143,6 @@ export function ResponseBody({
     (choice) => choice.text || choice.reasoning || choice.toolCalls.length,
   );
 
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(view === "raw" ? body : readable);
-      setCopyStatus("Copied");
-    } catch {
-      setCopyStatus("Could not copy response");
-    }
-  }
-
   return (
     <div className="min-w-0">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -124,14 +172,12 @@ export function ResponseBody({
           >
             Raw
           </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            onClick={() => void copy()}
-          >
-            Copy
-          </Button>
+          <CopyButton
+            key={view}
+            text={view === "raw" ? body : readable}
+            onCopy={() => setCopyStatus("")}
+            onError={() => setCopyStatus("Could not copy response")}
+          />
         </div>
       </div>
       {copyStatus && (
@@ -160,7 +206,7 @@ export function ResponseBody({
             {choices.map((choice) => (
               <section
                 key={`${choice.index}-${choice.id ?? ""}`}
-                className="space-y-2"
+                className="space-y-4"
               >
                 {choice.text && (
                   <div>
