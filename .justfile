@@ -94,7 +94,6 @@ version action ver="":
       set|bump)
         [ -n "{{ver}}" ] || { echo "usage: just version set X.Y.Z" >&2; exit 1; }
         sed -i -E '0,/^version = ".*"/s//version = "{{ver}}"/' Cargo.toml
-        cargo check
         just api-generate
         ;;
       *) echo "usage: just version get|set X.Y.Z" >&2; exit 1 ;;
