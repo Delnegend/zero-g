@@ -77,79 +77,102 @@ pub(in crate::server) async fn capture(
         (String::new(), String::new(), String::new())
     };
     let status = i64::from(response.status().as_u16());
+    let is_sse = response
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value
+                .split(';')
+                .next()
+                .is_some_and(|value| value.trim().eq_ignore_ascii_case("text/event-stream"))
+        });
     let (parts, body) = response.into_parts();
     let stream = FinalizeStream {
         inner: Box::pin(body.into_data_stream()),
-        finish: Some(Box::new(move |bytes, completed, stream_usage| {
-            // Anonymous responses can contain reflected request data as well.
-            let response_body = if authenticated {
-                let mut text = String::from_utf8_lossy(&bytes).into_owned();
-                if text.len() > RESPONSE_CAPTURE_LIMIT {
-                    let mut end = RESPONSE_CAPTURE_LIMIT;
-                    while !text.is_char_boundary(end) {
-                        end = end.saturating_sub(1);
+        finish: Some(Box::new(
+            move |bytes, completed, transport_failed, (stream_usage, stream_failed)| {
+                // Anonymous responses can contain reflected request data as well.
+                let response_body = if authenticated {
+                    let mut text = String::from_utf8_lossy(&bytes).into_owned();
+                    if text.len() > RESPONSE_CAPTURE_LIMIT {
+                        let mut end = RESPONSE_CAPTURE_LIMIT;
+                        while !text.is_char_boundary(end) {
+                            end = end.saturating_sub(1);
+                        }
+                        text.truncate(end);
                     }
-                    text.truncate(end);
-                }
-                text
-            } else {
-                String::new()
-            };
-            let body_usage = usage(&response_body);
-            let (input_tokens, output_tokens) = (
-                stream_usage.0.or(body_usage.0),
-                stream_usage.1.or(body_usage.1),
-            );
-            let log = LogEntry {
-                id: 0,
-                created_at: now(),
-                provider,
-                model,
-                path,
-                // An error reply is final even if the client hangs up before its last byte.
-                status: if completed || status >= 400 {
-                    status
+                    text
                 } else {
-                    499
-                },
-                latency_ms: i64::try_from(start.elapsed().as_millis()).unwrap_or(i64::MAX),
-                input_tokens,
-                output_tokens,
-                virtual_key_id: identity.virtual_key_id,
-                virtual_key_name: identity.virtual_key_name,
-                credential_id: identity.credential_id,
-                credential_name: identity.credential_name,
-                request_body: Some(request_body),
-                response_body: Some(response_body),
-            };
-            tokio::spawn(async move {
-                let bodies = match CompressedBodies::new(&log) {
-                    Ok(bodies) => bodies,
-                    Err(err) => {
-                        error!("Could not compress request log bodies: {err}");
-                        return;
-                    }
+                    String::new()
                 };
-                let result = transaction_with_retry!(database, |mut tx| {
-                    insert(&mut tx, &log, &bodies).await?;
-                    tx.commit().await?;
-                    Ok(())
+                let body_usage = usage(&response_body);
+                let (input_tokens, output_tokens) = (
+                    stream_usage.0.or(body_usage.0),
+                    stream_usage.1.or(body_usage.1),
+                );
+                let response_failed = stream_failed
+                    || (!is_sse
+                        && serde_json::from_str::<Value>(&response_body).is_ok_and(|value| {
+                            value.get("object").and_then(Value::as_str) == Some("response")
+                                && value.get("status").and_then(Value::as_str) == Some("failed")
+                        }));
+                let log = LogEntry {
+                    id: 0,
+                    created_at: now(),
+                    provider,
+                    model,
+                    path,
+                    // An error reply is final even if the client hangs up before its last byte.
+                    status: if status < 400 && (response_failed || transport_failed) {
+                        502
+                    } else if completed || status >= 400 {
+                        status
+                    } else {
+                        499
+                    },
+                    latency_ms: i64::try_from(start.elapsed().as_millis()).unwrap_or(i64::MAX),
+                    input_tokens,
+                    output_tokens,
+                    virtual_key_id: identity.virtual_key_id,
+                    virtual_key_name: identity.virtual_key_name,
+                    credential_id: identity.credential_id,
+                    credential_name: identity.credential_name,
+                    request_body: Some(request_body),
+                    response_body: Some(response_body),
+                };
+                tokio::spawn(async move {
+                    let bodies = match CompressedBodies::new(&log) {
+                        Ok(bodies) => bodies,
+                        Err(err) => {
+                            error!("Could not compress request log bodies: {err}");
+                            return;
+                        }
+                    };
+                    let result = transaction_with_retry!(database, |mut tx| {
+                        insert(&mut tx, &log, &bodies).await?;
+                        tx.commit().await?;
+                        Ok(())
+                    });
+                    if let Err(err) = result {
+                        error!("Could not store request log: {err}");
+                    }
                 });
-                if let Err(err) = result {
-                    error!("Could not store request log: {err}");
-                }
-            });
-        })),
+            },
+        )),
         captured: Vec::new(),
         capture_body: authenticated,
-        stream_usage: StreamUsage::default(),
+        stream_usage: StreamUsage {
+            is_sse,
+            ..StreamUsage::default()
+        },
         failed: false,
     };
     Response::from_parts(parts, Body::from_stream(stream))
 }
 
 /// Callback receiving captured bytes and whether the response completed.
-type Completion = Box<dyn FnOnce(Vec<u8>, bool, (Option<i64>, Option<i64>)) + Send>;
+type Completion = Box<dyn FnOnce(Vec<u8>, bool, bool, ((Option<i64>, Option<i64>), bool)) + Send>;
 
 /// Response stream that records bytes and finalizes on completion or drop.
 struct FinalizeStream<S> {
@@ -189,7 +212,12 @@ where
                 if let Some(finish) = self.finish.take() {
                     let completed = !self.failed;
                     let stream_usage = self.stream_usage.finish();
-                    finish(std::mem::take(&mut self.captured), completed, stream_usage);
+                    finish(
+                        std::mem::take(&mut self.captured),
+                        completed,
+                        self.failed,
+                        stream_usage,
+                    );
                 }
             }
             _ => {}
@@ -201,7 +229,12 @@ impl<S> Drop for FinalizeStream<S> {
     fn drop(&mut self) {
         if let Some(finish) = self.finish.take() {
             let stream_usage = self.stream_usage.finish();
-            finish(std::mem::take(&mut self.captured), false, stream_usage);
+            finish(
+                std::mem::take(&mut self.captured),
+                false,
+                self.failed,
+                stream_usage,
+            );
         }
     }
 }
@@ -215,6 +248,10 @@ struct StreamUsage {
     oversized: bool,
     /// Most recently observed input and output token counts.
     counts: (Option<i64>, Option<i64>),
+    /// Parse failure events only for server-sent event responses.
+    is_sse: bool,
+    /// A terminal protocol error was observed after HTTP headers.
+    failed: bool,
 }
 
 impl StreamUsage {
@@ -246,15 +283,24 @@ impl StreamUsage {
             let counts = usage(line);
             self.counts.0 = counts.0.or(self.counts.0);
             self.counts.1 = counts.1.or(self.counts.1);
+            if self.is_sse {
+                let data = line.strip_prefix("data:").unwrap_or_default().trim();
+                if let Ok(value) = serde_json::from_str::<Value>(data) {
+                    self.failed |= value.get("error").is_some_and(|error| !error.is_null())
+                        || value.get("type").and_then(Value::as_str) == Some("response.failed")
+                        || value.pointer("/response/status").and_then(Value::as_str)
+                            == Some("failed");
+                }
+            }
         }
         self.line.clear();
         self.oversized = false;
     }
 
     /// Process the final unterminated line and return observed counts.
-    fn finish(&mut self) -> (Option<i64>, Option<i64>) {
+    fn finish(&mut self) -> ((Option<i64>, Option<i64>), bool) {
         self.finish_line();
-        self.counts
+        (self.counts, self.failed)
     }
 }
 
@@ -681,13 +727,90 @@ mod tests {
         assert_eq!(anonymous.provider, "");
         assert_eq!(anonymous.model, "");
         let error = logs.iter().find(|log| log.path == "/error").unwrap();
-        assert_eq!(error.status, 499);
+        assert_eq!(error.status, 502);
         assert_eq!(error.response_body.as_deref(), Some("partial"));
         assert!(error.input_tokens.is_none());
         assert!(error.output_tokens.is_none());
         drop(app);
         drop(database);
         std::fs::remove_file(path).unwrap();
+    }
+
+    /// Semantic stream failures are logged as gateway failures after HTTP 200 headers.
+    #[tokio::test]
+    async fn capture_records_stream_failure_without_changing_wire_status() {
+        let path =
+            std::env::temp_dir().join(format!("zero-g-failure-log-{}.db", uuid::Uuid::new_v4()));
+        let database = Database::open(path.to_str().unwrap()).await.unwrap();
+        let app = Router::new()
+            .route("/stream", post(|| async {
+                ([(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+                    "data: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"message\":\"upstream failed\"}}}\n\n")
+            }))
+            .route_layer(middleware::from_fn(|request: Request, next: Next| async move {
+                request.extensions().get::<RequestIdentity>().unwrap().set_virtual_key("test", "test");
+                next.run(request).await
+            }))
+            .route_layer(middleware::from_fn_with_state(database.clone(), capture))
+            .with_state(database.clone());
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/stream")
+                    .body(Body::from(r#"{"model":"codex/gpt-6.1-terra"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert!(
+            std::str::from_utf8(&body)
+                .unwrap()
+                .contains("upstream failed")
+        );
+        let logs = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let logs = super::super::logs::query(
+                    &database,
+                    &super::super::filter::Filter::default(),
+                    &super::super::logs::Page::default(),
+                )
+                .await
+                .unwrap()
+                .logs;
+                if !logs.is_empty() {
+                    break logs;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(serde_json::to_value(&logs[0]).unwrap()["status"], 502);
+        drop(app);
+        drop(database);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    /// Failure detection handles fragmented events without treating normal text as errors.
+    #[test]
+    fn detects_fragmented_stream_failures() {
+        let mut stream = StreamUsage {
+            is_sse: true,
+            ..StreamUsage::default()
+        };
+        stream.push(b"data: {\"error\":");
+        stream.push(b"{\"message\":\"failure\"}}\n\n");
+        assert!(stream.finish().1);
+        let mut stream = StreamUsage {
+            is_sse: true,
+            ..StreamUsage::default()
+        };
+        stream.push(b"data: {\"choices\":[{\"delta\":{\"content\":\"error\"}}]}\n\n");
+        assert!(!stream.finish().1);
     }
 
     /// Read usage counts from JSON and streaming responses.
@@ -712,6 +835,6 @@ mod tests {
         assert_eq!(usage(anthropic), (Some(123), Some(42)));
         let mut stream = StreamUsage::default();
         stream.push(anthropic.as_bytes());
-        assert_eq!(stream.finish(), (Some(123), Some(42)));
+        assert_eq!(stream.finish().0, (Some(123), Some(42)));
     }
 }

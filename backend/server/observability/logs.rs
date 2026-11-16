@@ -263,17 +263,6 @@ pub(super) async fn query(
 /// zstd level for stored bodies: about 2.7x smaller on agent conversations at low CPU cost.
 const BODY_COMPRESSION_LEVEL: i32 = 3;
 
-/// Compress a captured body for storage.
-pub(super) fn compress(text: &str) -> std::io::Result<Vec<u8>> {
-    zstd::bulk::compress(text.as_bytes(), BODY_COMPRESSION_LEVEL)
-}
-
-/// Restore a stored body; bytes that are not valid UTF-8 are replaced, as at capture.
-fn decompress(bytes: &[u8]) -> std::io::Result<String> {
-    let text = zstd::stream::decode_all(bytes)?;
-    Ok(String::from_utf8(text).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into()))
-}
-
 /// Retrieve one captured log and its bodies without loading unrelated records.
 pub(super) async fn detail(database: &Database, id: i64) -> Result<Option<LogEntry>, String> {
     let found = transaction_with_retry!(database, |mut tx| {
@@ -305,8 +294,14 @@ impl CompressedBodies {
     /// Compress a log's bodies; an absent body is stored as empty.
     pub(super) fn new(log: &LogEntry) -> std::io::Result<Self> {
         Ok(Self {
-            request: compress(log.request_body.as_deref().unwrap_or_default())?,
-            response: compress(log.response_body.as_deref().unwrap_or_default())?,
+            request: zstd::bulk::compress(
+                log.request_body.as_deref().unwrap_or_default().as_bytes(),
+                BODY_COMPRESSION_LEVEL,
+            )?,
+            response: zstd::bulk::compress(
+                log.response_body.as_deref().unwrap_or_default().as_bytes(),
+                BODY_COMPRESSION_LEVEL,
+            )?,
         })
     }
 }
@@ -501,13 +496,22 @@ pub(super) struct LogEntry {
 impl LogEntry {
     /// Combine log metadata with its separately stored bodies, which are null when expired.
     fn from_parts(r: RequestLog, body: Option<RequestLogBody>) -> std::io::Result<Self> {
-        let (request_body, response_body) = match body {
-            Some(b) => (
-                Some(decompress(&b.request_body)?),
-                Some(decompress(&b.response_body)?),
-            ),
-            None => (None, None),
-        };
+        let (request_body, response_body) =
+            match body {
+                Some(b) => {
+                    let request = zstd::stream::decode_all(b.request_body.as_slice())?;
+                    let response = zstd::stream::decode_all(b.response_body.as_slice())?;
+                    (
+                        Some(String::from_utf8(request).unwrap_or_else(|e| {
+                            String::from_utf8_lossy(e.as_bytes()).into_owned()
+                        })),
+                        Some(String::from_utf8(response).unwrap_or_else(|e| {
+                            String::from_utf8_lossy(e.as_bytes()).into_owned()
+                        })),
+                    )
+                }
+                None => (None, None),
+            };
         Ok(Self {
             id: r.id,
             created_at: r.created_at,
