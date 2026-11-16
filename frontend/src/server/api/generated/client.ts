@@ -3,7 +3,7 @@
  * Do not edit manually.
  * zero-g
  * OpenAI-compatible AI gateway for multiple providers
- * OpenAPI spec version: 1.1.1
+ * OpenAPI spec version: 1.2.0
  */
 import {
   AntigravityFinishResponse,
