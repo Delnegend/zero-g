@@ -10,14 +10,16 @@ use crate::provider::common::{Provider, ProviderDescriptor};
 use crate::provider::registry;
 use crate::server::{AppState, settings::SettingsStore};
 
+/// Client-facing streaming response construction.
+mod downstream;
 /// Model discovery and catalog metadata.
 mod models;
 /// Upstream request and response representations.
 mod protocol;
 /// HTTP handlers translating chat requests.
 mod routes;
-/// Streaming response chunk construction.
-mod stream;
+/// ChatJimmy request transport.
+mod upstream;
 /// Provider behavior tests.
 #[cfg(test)]
 mod tests;
