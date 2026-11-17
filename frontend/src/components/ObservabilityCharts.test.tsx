@@ -140,6 +140,10 @@ test("token usage combines input and output while preserving totals, trends and 
       /Output tokens: 33.33% lower.*Previous 3 hours: 9 tokens/.test(label),
     ),
   );
+  const trendContainer =
+    panel.querySelector("button")?.parentElement?.parentElement;
+  assert.ok(trendContainer?.classList.contains("flex-col"));
+  assert.ok(trendContainer?.classList.contains("items-end"));
   assert.match(
     panel.querySelector('[aria-label="Token usage by type data"]')
       ?.textContent ?? "",

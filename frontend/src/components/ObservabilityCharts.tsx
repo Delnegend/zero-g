@@ -335,7 +335,7 @@ function GraphPanel({
         <h2 className="shrink-0 text-sm font-medium">{title}</h2>
         {comparison && <GraphTrend title={title} comparison={comparison} />}
         {comparisons && (
-          <div className="flex flex-wrap justify-end">
+          <div className="flex flex-col items-end">
             {comparisons.map(({ title: label, value }) => (
               <span
                 key={label}
