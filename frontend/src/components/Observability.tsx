@@ -183,27 +183,27 @@ export function RequestLogs({
                 </DrawerDescription>
               </DrawerHeader>
               <div className="min-h-0 overflow-y-auto overscroll-contain p-4">
-                <dl className="flex min-w-0 flex-wrap gap-x-8 gap-y-2 text-sm">
-                  <div className="max-w-full min-w-0">
+                <dl className="grid min-w-0 grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-[minmax(0,1.5fr)_minmax(0,0.6fr)_minmax(0,0.8fr)_minmax(0,1fr)]">
+                  <div className="min-w-0">
                     <dt className="text-muted-foreground">Path</dt>
                     <dd className="font-mono break-all">{selected.path}</dd>
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <dt className="text-muted-foreground">Status</dt>
                     <dd>{selected.status}</dd>
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <dt className="text-muted-foreground">Latency</dt>
                     <dd>{number.format(selected.latency_ms)} ms</dd>
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <dt className="text-muted-foreground">Tokens</dt>
-                    <dd>
+                    <dd className="wrap-break-word">
                       {formatTokens(selected.input_tokens)} in ·{" "}
                       {formatTokens(selected.output_tokens)} out
                     </dd>
                   </div>
-                  <div className="max-w-full min-w-0">
+                  <div className="col-span-2 min-w-0">
                     <dt className="text-muted-foreground">Virtual key</dt>
                     <dd className="wrap-break-word">
                       {selected.virtual_key_name ??
@@ -211,7 +211,7 @@ export function RequestLogs({
                         "Unknown"}
                     </dd>
                   </div>
-                  <div className="max-w-full min-w-0">
+                  <div className="col-span-2 min-w-0">
                     <dt className="text-muted-foreground">
                       Provider credential
                     </dt>
