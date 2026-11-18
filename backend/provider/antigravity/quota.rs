@@ -126,8 +126,10 @@ struct Bucket {
 /// Convert a timestamp without inventing a reset time.
 fn reset_time(value: Option<&str>) -> Option<i64> {
     value
-        .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
-        .map(|time| time.timestamp())
+        .and_then(|value| {
+            time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).ok()
+        })
+        .map(time::OffsetDateTime::unix_timestamp)
 }
 
 /// Normalize recognizable window names without inferring them from reset times.

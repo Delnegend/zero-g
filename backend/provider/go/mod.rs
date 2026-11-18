@@ -41,8 +41,11 @@ pub(crate) fn parse_go(value: &Value) -> Result<QuotaSnapshot, String> {
         let reset_at = window
             .get("resetsAt")
             .and_then(Value::as_str)
-            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-            .map(|d| d.timestamp());
+            .and_then(|value| {
+                time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339)
+                    .ok()
+            })
+            .map(time::OffsetDateTime::unix_timestamp);
         windows.push(QuotaWindow {
             label: label.to_string(),
             remaining_percent: Some(100.0 - used.clamp(0.0, 100.0)),

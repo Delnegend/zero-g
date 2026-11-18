@@ -106,8 +106,14 @@ fn parse_usage(usage: Usage) -> Result<QuotaSnapshot, String> {
             let reset_at = window
                 .resets_at
                 .as_deref()
-                .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
-                .map(|time| time.timestamp());
+                .and_then(|value| {
+                    time::OffsetDateTime::parse(
+                        value,
+                        &time::format_description::well_known::Rfc3339,
+                    )
+                    .ok()
+                })
+                .map(time::OffsetDateTime::unix_timestamp);
             windows.push(QuotaWindow {
                 label: label.to_string(),
                 remaining_percent,

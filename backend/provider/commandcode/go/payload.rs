@@ -58,7 +58,7 @@ pub(super) fn build(req: &ChatCompletionRequest, thread_id: &str) -> Result<Valu
     Ok(json!({
         "config": {
             "workingDir": "/",
-            "date": chrono::Utc::now().format("%Y-%m-%d").to_string(),
+            "date": time::OffsetDateTime::now_utc().date().to_string(),
             "environment": "linux",
             "structure": [],
             "isGitRepo": false,

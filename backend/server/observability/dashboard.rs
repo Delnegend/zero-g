@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
-use chrono::{DateTime, Datelike, Months, NaiveDate, Utc};
 use serde::Serialize;
+use time::{Date, Month, OffsetDateTime};
 use tracing::error;
 
 use super::filter::{Filter, FilterOptions, options};
@@ -251,9 +251,23 @@ pub(super) enum Interval {
 }
 
 /// Convert Unix seconds to a supported UTC date.
-fn date(timestamp: i64) -> Result<DateTime<Utc>, String> {
-    DateTime::from_timestamp(timestamp, 0)
-        .ok_or_else(|| format!("timestamp outside supported date range: {timestamp}"))
+fn date(timestamp: i64) -> Result<OffsetDateTime, String> {
+    OffsetDateTime::from_unix_timestamp(timestamp)
+        .map_err(|_| format!("timestamp outside supported date range: {timestamp}"))
+}
+
+/// Add calendar months, clamping the day at the end of the destination month.
+fn add_months(value: OffsetDateTime, months: i32) -> Option<OffsetDateTime> {
+    let date = value.date();
+    let index = date
+        .year()
+        .checked_mul(12)?
+        .checked_add(i32::from(u8::from(date.month())).checked_sub(1)?)?
+        .checked_add(months)?;
+    let year = index.div_euclid(12);
+    let month = Month::try_from(u8::try_from(index.rem_euclid(12).checked_add(1)?).ok()?).ok()?;
+    let day = date.day().min(month.length(year));
+    Some(value.replace_date(Date::from_calendar_date(year, month, day).ok()?))
 }
 
 /// Choose a bucket granularity for the requested time range.
@@ -263,19 +277,13 @@ fn interval(since: Option<i64>, until: Option<i64>) -> Result<Interval, String> 
     let (Some(start), Some(end)) = (start, end) else {
         return Ok(Interval::Day);
     };
-    if end.signed_duration_since(start).num_seconds() <= 86_400 {
+    if end.unix_timestamp().saturating_sub(start.unix_timestamp()) <= 86_400 {
         return Ok(Interval::Hour);
     }
-    if start
-        .checked_add_months(Months::new(3))
-        .is_none_or(|limit| end <= limit)
-    {
+    if add_months(start, 3).is_none_or(|limit| end <= limit) {
         return Ok(Interval::Day);
     }
-    if start
-        .checked_add_months(Months::new(36))
-        .is_none_or(|limit| end <= limit)
-    {
+    if add_months(start, 36).is_none_or(|limit| end <= limit) {
         return Ok(Interval::Month);
     }
     Ok(Interval::Year)
@@ -286,13 +294,12 @@ fn bucket_start(timestamp: i64, interval: Interval) -> Result<i64, String> {
     let value = date(timestamp)?;
     let day = match interval {
         Interval::Hour => return Ok(timestamp.div_euclid(3600).saturating_mul(3600)),
-        Interval::Day => Some(value.date_naive()),
-        Interval::Month => NaiveDate::from_ymd_opt(value.year(), value.month(), 1),
-        Interval::Year => NaiveDate::from_ymd_opt(value.year(), 1, 1),
+        Interval::Day => Ok(value.date()),
+        Interval::Month => Date::from_calendar_date(value.year(), value.month(), 1),
+        Interval::Year => Date::from_calendar_date(value.year(), Month::January, 1),
     };
-    day.and_then(|day| day.and_hms_opt(0, 0, 0))
-        .map(|day| day.and_utc().timestamp())
-        .ok_or_else(|| format!("cannot bucket timestamp: {timestamp}"))
+    day.map(|day| day.midnight().assume_utc().unix_timestamp())
+        .map_err(|_| format!("cannot bucket timestamp: {timestamp}"))
 }
 
 /// Aggregate statistics for the selected range.
@@ -853,12 +860,12 @@ mod tests {
     #[test]
     fn interval_thresholds_and_utc_bucket_boundaries() {
         let stamp = |year, month, day, hour, minute, second| {
-            NaiveDate::from_ymd_opt(year, month, day)
+            Date::from_calendar_date(year, Month::try_from(month).unwrap(), day)
                 .unwrap()
-                .and_hms_opt(hour, minute, second)
+                .with_hms(hour, minute, second)
                 .unwrap()
-                .and_utc()
-                .timestamp()
+                .assume_utc()
+                .unix_timestamp()
         };
         let selected =
             |start, end| serde_json::to_value(interval(Some(start), Some(end)).unwrap()).unwrap();
