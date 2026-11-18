@@ -33,8 +33,15 @@ function dashboardAuth(): Plugin {
             cookie: req.headers.cookie,
           }),
         };
+        const target =
+          pathname.startsWith("/src/") ||
+          pathname.startsWith("/@") ||
+          pathname.startsWith("/node_modules/") ||
+          pathname.includes(".")
+            ? "/"
+            : pathname + url.search;
         const check = http.request(
-          "http://127.0.0.1:8080/api/auth/user",
+          `http://127.0.0.1:8080${target}`,
           {
             method: "GET",
             headers,
