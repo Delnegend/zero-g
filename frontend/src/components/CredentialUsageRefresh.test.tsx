@@ -98,7 +98,7 @@ test("refresh updates quota windows without remounting the credential", async ()
       windows: [
         {
           label: "Weekly",
-          used_percent: calls === 1 ? 80 : 45,
+          remaining_percent: calls === 1 ? 80 : 45,
           reset_at: null,
         },
       ],
@@ -106,11 +106,11 @@ test("refresh updates quota windows without remounting the credential", async ()
   }) as typeof fetch;
 
   const view = mount();
-  assert.ok(await view.findByText("80% used"));
+  assert.ok(await view.findByText("80% left"));
   testingLibrary.fireEvent.click(
     view.getByRole("button", { name: "Refresh usage" }),
   );
-  assert.ok(await view.findByText("45% used"));
+  assert.ok(await view.findByText("45% left"));
   assert.equal(calls, 2);
 });
 

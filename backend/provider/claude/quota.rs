@@ -91,7 +91,7 @@ async fn fetch_usage(
     parse_usage(usage)
 }
 
-/// Convert upstream utilization percentages to the shared used-quota format.
+/// Convert used percentages to the shared remaining-quota format.
 fn parse_usage(usage: Usage) -> Result<QuotaSnapshot, String> {
     let mut windows = Vec::new();
     for (label, window) in [
@@ -102,7 +102,7 @@ fn parse_usage(usage: Usage) -> Result<QuotaSnapshot, String> {
         ("Weekly · OAuth apps", usage.seven_day_oauth_apps),
     ] {
         if let Some(window) = window {
-            let used_percent = used(window.utilization)?;
+            let remaining_percent = remaining(window.utilization)?;
             let reset_at = window
                 .resets_at
                 .as_deref()
@@ -110,7 +110,7 @@ fn parse_usage(usage: Usage) -> Result<QuotaSnapshot, String> {
                 .map(|time| time.timestamp());
             windows.push(QuotaWindow {
                 label: label.to_string(),
-                used_percent,
+                remaining_percent,
                 reset_at,
             });
         }
@@ -118,7 +118,7 @@ fn parse_usage(usage: Usage) -> Result<QuotaSnapshot, String> {
     if let Some(extra) = usage.extra.filter(|extra| extra.is_enabled) {
         windows.push(QuotaWindow {
             label: "Extra usage · Monthly".to_string(),
-            used_percent: used(extra.utilization)?,
+            remaining_percent: remaining(extra.utilization)?,
             reset_at: None,
         });
     }
@@ -133,11 +133,13 @@ fn parse_usage(usage: Usage) -> Result<QuotaSnapshot, String> {
     })
 }
 
-/// Reject invalid usage instead of displaying a fabricated used percentage.
-fn used(utilization: Option<f64>) -> Result<Option<f64>, String> {
+/// Reject invalid usage instead of displaying a fabricated remaining percentage.
+fn remaining(utilization: Option<f64>) -> Result<Option<f64>, String> {
     match utilization {
         None => Ok(None),
-        Some(value) if value.is_finite() && (0.0..=100.0).contains(&value) => Ok(Some(value)),
+        Some(value) if value.is_finite() && (0.0..=100.0).contains(&value) => {
+            Ok(Some(100.0 - value))
+        }
         Some(_) => Err("Invalid Claude usage percentage".to_string()),
     }
 }
@@ -148,7 +150,7 @@ mod tests {
     use axum::{Json, Router, http::StatusCode, routing::get};
     use serde_json::json;
 
-    /// The dashboard gets used capacity and the account's actual quota windows.
+    /// The dashboard gets remaining capacity and the account's actual quota windows.
     #[tokio::test]
     async fn usage_returns_real_windows() {
         let app = Router::new().route(
@@ -188,11 +190,11 @@ mod tests {
                 "Extra usage · Monthly"
             ]
         );
-        assert_eq!(group.windows[0].used_percent, Some(6.0));
+        assert_eq!(group.windows[0].remaining_percent, Some(94.0));
         assert_eq!(group.windows[0].reset_at, Some(1_893_456_000));
-        assert_eq!(group.windows[1].used_percent, Some(35.0));
-        assert_eq!(group.windows[2].used_percent, Some(100.0));
-        assert_eq!(group.windows[3].used_percent, Some(12.5));
+        assert_eq!(group.windows[1].remaining_percent, Some(65.0));
+        assert_eq!(group.windows[2].remaining_percent, Some(0.0));
+        assert_eq!(group.windows[3].remaining_percent, Some(87.5));
         server.abort();
     }
 

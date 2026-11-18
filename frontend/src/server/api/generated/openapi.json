@@ -4035,22 +4035,22 @@
       },
       "QuotaWindow": {
         "type": "object",
-        "description": "Usage within a provider-defined time window.",
-        "required": ["label", "used_percent", "reset_at"],
+        "description": "Usage remaining within a provider-defined time window.",
+        "required": ["label", "remaining_percent", "reset_at"],
         "properties": {
           "label": {
             "type": "string",
             "description": "Display label for the window."
           },
+          "remaining_percent": {
+            "type": ["number", "null"],
+            "format": "double",
+            "description": "Remaining quota as a percentage, when available."
+          },
           "reset_at": {
             "type": ["integer", "null"],
             "format": "int64",
             "description": "Reset timestamp, when provided by the upstream."
-          },
-          "used_percent": {
-            "type": ["number", "null"],
-            "format": "double",
-            "description": "Used quota as a percentage, when available."
           }
         }
       },

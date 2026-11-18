@@ -9,14 +9,14 @@ use serde::Serialize;
 
 use crate::{provider::registry, server::settings::SettingsStore, storage::ProviderCredential};
 
-/// Usage within a provider-defined time window.
+/// Usage remaining within a provider-defined time window.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct QuotaWindow {
     /// Display label for the window.
     pub(crate) label: String,
-    /// Used quota as a percentage, when available.
+    /// Remaining quota as a percentage, when available.
     #[schema(required = true)]
-    pub(crate) used_percent: Option<f64>,
+    pub(crate) remaining_percent: Option<f64>,
     /// Reset timestamp, when provided by the upstream.
     #[schema(required = true)]
     pub(crate) reset_at: Option<i64>,
@@ -235,16 +235,19 @@ mod tests {
         );
         assert!(parse_balance(&serde_json::json!({"availableMicroCents":"1"})).is_err());
     }
-    /// Go usage preserves used percentages and requires windows.
+    /// Go usage preserves remaining percentages and requires windows.
     #[test]
-    fn go_usage_preserves_used_and_rejects_missing_windows() {
+    fn go_usage_preserves_remaining_and_rejects_missing_windows() {
         let value = serde_json::json!({"usage":{"rolling":{"percent":25,"resetsAt":"2026-01-01T00:00:00Z"},"weekly":{"percent":80},"monthly":{"percent":101}}});
         let QuotaSnapshot::Quota { windows } = parse_go(&value).unwrap() else {
             panic!()
         };
         assert_eq!(
-            windows.iter().map(|x| x.used_percent).collect::<Vec<_>>(),
-            vec![Some(25.0), Some(80.0), Some(100.0)]
+            windows
+                .iter()
+                .map(|x| x.remaining_percent)
+                .collect::<Vec<_>>(),
+            vec![Some(75.0), Some(20.0), Some(0.0)]
         );
         assert!(windows[0].reset_at.is_some());
         assert!(parse_go(&serde_json::json!({"usage":{"rolling":{"percent":25}}})).is_err());

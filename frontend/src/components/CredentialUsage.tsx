@@ -39,7 +39,7 @@ function ResetTime({ reset }: { reset: Date }) {
 }
 
 function WindowUsage({ window }: { window: QuotaWindow }) {
-  const value = window.used_percent;
+  const value = window.remaining_percent;
   const known =
     value !== null && Number.isFinite(value) && value >= 0 && value <= 100;
   const percent = known ? `${Number(value.toFixed(1))}%` : "Unknown";
@@ -52,12 +52,12 @@ function WindowUsage({ window }: { window: QuotaWindow }) {
       {known && (
         <Progress
           value={value}
-          aria-label={`${window.label} used`}
+          aria-label={`${window.label} remaining`}
           className="col-span-2 row-start-2 gap-0 @md:col-span-1 @md:col-start-2 @md:row-start-1"
         />
       )}
       <p className="col-start-2 row-start-1 text-muted-foreground tabular-nums @md:col-start-3">
-        {percent} used
+        {percent} left
       </p>
       {reset && Number.isFinite(reset.getTime()) && (
         <div className="col-span-2 row-start-3 @md:col-span-1 @md:col-start-4 @md:row-start-1">
