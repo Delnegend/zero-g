@@ -27,7 +27,7 @@ export function useSignInPolling({
           : "codex";
     const delay =
       flow.kind === "google" ? 2000 : Math.max(1, flow.data.interval) * 1000;
-    let timer: number;
+    const timer = { id: 0 };
     const poll = async () => {
       try {
         const result = await pollSignIn(
@@ -41,7 +41,7 @@ export function useSignInPolling({
         if (result.status === "complete") {
           onComplete();
         } else if (result.status === "pending") {
-          timer = window.setTimeout(() => void poll(), delay);
+          timer.id = window.setTimeout(() => void poll(), delay);
         } else {
           onFailure(
             ("error" in result &&
@@ -54,10 +54,10 @@ export function useSignInPolling({
         if (!controller.signal.aborted) onFailure(message(err));
       }
     };
-    timer = window.setTimeout(() => void poll(), delay);
+    timer.id = window.setTimeout(() => void poll(), delay);
     return () => {
       controller.abort();
-      window.clearTimeout(timer);
+      window.clearTimeout(timer.id);
     };
   }, [flow, providerId, providerKind, onComplete, onFailure]);
 }
