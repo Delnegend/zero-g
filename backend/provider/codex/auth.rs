@@ -206,15 +206,15 @@ impl CodexAuthManager {
         };
 
         info!("Refreshing OpenAI Codex access token...");
-        let client = reqwest::Client::new();
         let params = [
             ("grant_type", "refresh_token"),
             ("refresh_token", rt.as_str()),
             ("client_id", CODEX_CLIENT_ID),
         ];
 
-        let resp = client
+        let resp = crate::util::http_client()
             .post(token_url)
+            .timeout(std::time::Duration::from_secs(30))
             .form(&params)
             .send()
             .await

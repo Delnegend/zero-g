@@ -1,18 +1,7 @@
-use std::sync::LazyLock;
-
 use axum::body::Bytes;
 use axum::http::header;
 
 use super::CLI_VERSION;
-
-/// Shared client for generate requests; streams have no overall deadline.
-static CLIENT: LazyLock<Result<reqwest::Client, reqwest::Error>> = LazyLock::new(|| {
-    reqwest::Client::builder()
-        // Never send the API key to a redirect target.
-        .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .build()
-});
 
 /// Send one generate request with the CLI's identifying headers.
 pub(super) async fn send(
@@ -21,10 +10,7 @@ pub(super) async fn send(
     thread: &str,
     body: Bytes,
 ) -> Result<reqwest::Response, &'static str> {
-    let client = CLIENT
-        .as_ref()
-        .map_err(|_| "Failed to initialize Command Code Go provider")?;
-    client
+    crate::util::http_client()
         .post(format!("{}/alpha/generate", root.trim_end_matches('/')))
         .bearer_auth(key)
         .header(header::CONTENT_TYPE, "application/json")

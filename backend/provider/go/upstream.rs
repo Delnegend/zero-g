@@ -23,21 +23,12 @@ pub(crate) async fn send_upstream(
     headers: &HeaderMap,
     body: Option<Bytes>,
 ) -> Result<reqwest::Response, &'static str> {
-    use std::sync::LazyLock;
-    static CLIENT: LazyLock<Result<reqwest::Client, reqwest::Error>> = LazyLock::new(|| {
-        reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-    });
     let mut url = format!("{}/{}", base.trim_end_matches('/'), path);
     if let Some(query) = query {
         url.push('?');
         url.push_str(query);
     }
-    let client = CLIENT
-        .as_ref()
-        .map_err(|_| "Failed to initialize OpenCode Go provider")?;
-    let mut request = client
+    let mut request = crate::util::http_client()
         .request(method, url)
         .header(
             header::USER_AGENT,

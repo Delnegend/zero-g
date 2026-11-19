@@ -40,6 +40,7 @@ pub(super) async fn fetch_or_onboard_project_at(
 
     let load_resp = client
         .post(&load_url)
+        .timeout(Duration::from_secs(30))
         .bearer_auth(access_token)
         .header("User-Agent", ANTIGRAVITY_USER_AGENT)
         .json(&load_body)
@@ -69,6 +70,7 @@ pub(super) async fn fetch_or_onboard_project_at(
 
     let retry_resp = client
         .post(&load_url)
+        .timeout(Duration::from_secs(30))
         .bearer_auth(access_token)
         .header("User-Agent", ANTIGRAVITY_USER_AGENT)
         .json(&load_body)
@@ -159,6 +161,7 @@ async fn onboard_user(
         let poll_url = format!("{endpoint}/v1internal/{op_name}");
         let poll_resp = client
             .get(&poll_url)
+            .timeout(Duration::from_secs(30))
             .bearer_auth(access_token)
             .header("User-Agent", ANTIGRAVITY_USER_AGENT)
             .send()

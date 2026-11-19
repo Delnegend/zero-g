@@ -35,7 +35,6 @@ pub(super) async fn exchange_token_at(
     redirect_uri: &str,
     token_url: &str,
 ) -> Result<Credentials, String> {
-    let client = reqwest::Client::new();
     let params = [
         ("grant_type", "authorization_code"),
         ("client_id", CODEX_CLIENT_ID),
@@ -44,8 +43,9 @@ pub(super) async fn exchange_token_at(
         ("redirect_uri", redirect_uri),
     ];
 
-    let token_resp = client
+    let token_resp = crate::util::http_client()
         .post(token_url)
+        .timeout(std::time::Duration::from_secs(30))
         .form(&params)
         .send()
         .await

@@ -40,7 +40,6 @@ const FETCH_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Serializes concurrent datasheet synchronizations.
 static SYNC_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
 /// Cached datasheet entries indexed by their source keys.
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ModelData {
@@ -60,11 +59,7 @@ async fn fetch_datasheet(input: &str) -> Result<String, String> {
 /// Download and validate a size-limited JSON object without following redirects.
 async fn fetch_datasheet_inner(input: &str) -> Result<String, String> {
     let url = validate_url(input)?;
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|_| "Unable to create datasheet HTTP client")?;
-    let response = client
+    let response = crate::util::http_client()
         .get(url)
         .send()
         .await

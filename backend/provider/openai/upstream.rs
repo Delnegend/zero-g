@@ -1,15 +1,5 @@
-use std::sync::LazyLock;
-
 use axum::body::Bytes;
 use axum::http::{HeaderMap, Method, header};
-
-/// Shared client used for OpenAI-compatible upstream requests.
-static CLIENT: LazyLock<Result<reqwest::Client, reqwest::Error>> = LazyLock::new(|| {
-    reqwest::Client::builder()
-        // Never send the upstream credential to a redirect target.
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-});
 
 /// Send an authenticated OpenAI-compatible upstream request.
 pub(crate) async fn send(
@@ -41,10 +31,7 @@ pub(crate) async fn send_with_headers(
         url.push('?');
         url.push_str(query);
     }
-    let client = CLIENT
-        .as_ref()
-        .map_err(|_| "Failed to initialize OpenAI-compatible provider")?;
-    let mut request = client.request(method, url);
+    let mut request = crate::util::http_client().request(method, url);
     for (name, value) in headers {
         let allowed = name == header::ACCEPT
             || name == header::CONTENT_TYPE

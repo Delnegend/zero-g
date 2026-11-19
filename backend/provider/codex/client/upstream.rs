@@ -29,8 +29,7 @@ impl CodexClient {
             .and_then(|m| m.as_str())
             .unwrap_or("gpt-5.5");
 
-        let mut builder = self
-            .http
+        let mut builder = crate::util::http_client()
             .post(&url)
             .header("Authorization", format!("Bearer {}", creds.access_token))
             .header("OpenAI-Beta", "responses=experimental")

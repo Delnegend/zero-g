@@ -112,8 +112,9 @@ pub(crate) struct Api;
 
 /// Requests a device code from the authorization endpoint.
 async fn request_device_code(url: &str) -> Result<DeviceStart, (StatusCode, String)> {
-    let response = reqwest::Client::new()
+    let response = crate::util::http_client()
         .post(url)
+        .timeout(Duration::from_secs(30))
         .json(&json!({"client_id": CODEX_CLIENT_ID}))
         .send()
         .await
@@ -243,7 +244,7 @@ async fn codex_poll(
         credentials
     };
     let response = tokio::time::timeout(Duration::from_secs(30), async {
-        reqwest::Client::new()
+        crate::util::http_client()
             .post(CODEX_DEVICE_TOKEN_URL)
             .json(&json!({"device_auth_id":device_id,"user_code":user_code}))
             .send()

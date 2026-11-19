@@ -66,8 +66,6 @@ fn replay_signature(model: &str, signature: &str) -> Option<String> {
 
 /// HTTP client for the Antigravity upstream API.
 pub(crate) struct AntigravityClient {
-    /// Shared connection pool used for upstream requests.
-    client: reqwest::Client,
     /// Per-credential discovery cache keyed by credential ID and token/project scope.
     model_cache: crate::provider::common::pool::CatalogCache<Vec<(String, AntigravityModelInfo)>>,
     /// Isolated endpoint override used only by behavioral tests.
@@ -79,7 +77,6 @@ impl AntigravityClient {
     /// Creates a client with a fresh HTTP connection pool.
     pub(crate) fn new() -> Self {
         Self {
-            client: reqwest::Client::new(),
             model_cache: crate::provider::common::pool::CatalogCache::default(),
             #[cfg(test)]
             test_endpoint: None,

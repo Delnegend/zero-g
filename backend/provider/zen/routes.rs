@@ -52,12 +52,9 @@ static METADATA_CACHE: LazyLock<Mutex<MetadataCache>> = LazyLock::new(|| Mutex::
 
 /// Fetch only the `OpenCode` section, bounding request time and catalog size.
 async fn load_metadata(url: &str) -> Result<Metadata, String> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(25))
-        .build()
-        .map_err(|error| error.to_string())?;
-    let mut response = client
+    let mut response = crate::util::http_redirect_client()
         .get(url)
+        .timeout(Duration::from_secs(25))
         .send()
         .await
         .map_err(|error| error.to_string())?
@@ -192,14 +189,19 @@ pub(super) async fn fetch_models(
 
 /// Fetch and filter IDs from Zen independently of optional community metadata.
 async fn fetch_official_models(url: &str, permissions: &Permissions) -> Result<Value, ProxyError> {
-    let response = reqwest::Client::new().get(url).send().await.map_err(|_| {
-        error(
-            StatusCode::BAD_GATEWAY,
-            "Unable to fetch Zen models",
-            "upstream_error",
-            "bad_gateway",
-        )
-    })?;
+    let response = crate::util::http_client()
+        .get(url)
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|_| {
+            error(
+                StatusCode::BAD_GATEWAY,
+                "Unable to fetch Zen models",
+                "upstream_error",
+                "bad_gateway",
+            )
+        })?;
     if !response.status().is_success() {
         return Err(error(
             StatusCode::BAD_GATEWAY,

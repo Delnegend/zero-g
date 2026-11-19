@@ -29,13 +29,8 @@ pub(crate) async fn fetch(
         return Err("Antigravity access token has expired".to_string());
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|_| "Failed to create Antigravity usage client".to_string())?;
     fetch_usage(
-        &client,
+        crate::util::http_client(),
         &[CLOUD_CODE_ASSIST_ENDPOINT, SANDBOX_ENDPOINT],
         &credentials.access_token,
         &credentials.project_id,
@@ -54,6 +49,7 @@ async fn fetch_usage(
     for endpoint in endpoints {
         let response = client
             .post(format!("{endpoint}/v1internal:retrieveUserQuotaSummary"))
+            .timeout(Duration::from_secs(15))
             .bearer_auth(token)
             .header(reqwest::header::USER_AGENT, ANTIGRAVITY_USER_AGENT)
             .json(&serde_json::json!({ "project": project }))

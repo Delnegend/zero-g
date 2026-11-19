@@ -218,7 +218,7 @@ async fn cursor_poll(
         drop(pending);
         values
     };
-    let response = poll_upstream(&reqwest::Client::new(), POLL_URL, &uuid, &verifier).await;
+    let response = poll_upstream(crate::util::http_client(), POLL_URL, &uuid, &verifier).await;
     let mut pending = flows.0.lock().await;
     let flow = pending
         .get_mut(&input.id)

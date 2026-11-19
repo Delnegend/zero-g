@@ -24,8 +24,7 @@ impl AntigravityClient {
 
         for endpoint in &endpoints {
             let url = format!("{endpoint}/v1internal:streamGenerateContent?alt=sse");
-            let mut req_builder = self
-                .client
+            let mut req_builder = crate::util::http_client()
                 .post(&url)
                 .header("Authorization", format!("Bearer {}", creds.access_token))
                 .header("Content-Type", "application/json")

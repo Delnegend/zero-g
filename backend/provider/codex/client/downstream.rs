@@ -36,8 +36,6 @@ use stream::{
 /// HTTP client for translating requests to the Codex Responses endpoint.
 #[derive(Clone)]
 pub(crate) struct CodexClient {
-    /// Shared connection pool used for upstream requests.
-    pub(super) http: reqwest::Client,
     /// Responses API base URL.
     pub(super) base_url: String,
     /// Per-credential cached model catalogs.
@@ -48,11 +46,6 @@ impl CodexClient {
     /// Builds a client with connection pooling and TCP no-delay enabled.
     pub(crate) fn new() -> Self {
         Self {
-            http: reqwest::Client::builder()
-                .pool_max_idle_per_host(10)
-                .tcp_nodelay(true)
-                .build()
-                .unwrap_or_else(|_| reqwest::Client::new()),
             base_url: CODEX_BASE_URL.to_string(),
             model_cache: std::sync::Arc::new(CatalogCache::default()),
         }

@@ -3,7 +3,7 @@ mod decisions;
 /// Upstream Decisions API request transport.
 mod upstream;
 
-use std::{sync::LazyLock, time::Duration};
+use std::time::Duration;
 
 use axum::{
     Json, Router,
@@ -295,14 +295,6 @@ impl common::DashboardProvider for Backend {
     }
 }
 
-/// Shared client for account credit requests.
-static CLIENT: LazyLock<Result<reqwest::Client, reqwest::Error>> = LazyLock::new(|| {
-    reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(15))
-        .build()
-});
-
 /// Parse purchased credits and spending into a remaining USD balance.
 fn parse_balance(value: &Value) -> Result<QuotaSnapshot, String> {
     let data = value
@@ -352,11 +344,9 @@ impl common::QuotaProvider for Backend {
             .await
             .map_err(|_| "Failed to load OpenRouter management key")?
             .ok_or("Connect an OpenRouter management key to see the balance")?;
-        let client = CLIENT
-            .as_ref()
-            .map_err(|_| "Unable to create OpenRouter client")?;
-        let response = client
+        let response = crate::util::http_client()
             .get(CREDITS_URL)
+            .timeout(Duration::from_secs(15))
             .bearer_auth(key)
             .header(reqwest::header::ACCEPT, "application/json")
             .send()

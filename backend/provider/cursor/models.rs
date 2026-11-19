@@ -162,15 +162,6 @@ struct Variant {
     legacy_slug: Option<String>,
 }
 
-/// Shared HTTP client for Cursor model discovery.
-fn discovery_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(10))
-        .build()
-        .map_err(|e| format!("Failed to initialize Cursor client: {e}"))
-}
-
 /// Resolves the upstream base URL for Cursor requests.
 fn base_url(provider: &Provider) -> &str {
     if provider.base_url.is_empty() {
@@ -191,8 +182,7 @@ pub(super) async fn fetch_account_models(
     if let Some(cached) = CATALOG_CACHE.get(credential_id, scope).await {
         return Ok(cached);
     }
-    let client = discovery_client().map_err(UpstreamError::from)?;
-    match fetch_models(&client, base, token).await {
+    match fetch_models(crate::util::http_client(), base, token).await {
         Ok(models) => {
             CATALOG_CACHE
                 .insert(credential_id.to_owned(), scope, models.clone())
@@ -268,6 +258,7 @@ async fn unary(
 ) -> Result<Vec<u8>, UpstreamError> {
     let response = client
         .post(format!("{}{path}", base.trim_end_matches('/')))
+        .timeout(Duration::from_secs(10))
         .bearer_auth(token)
         .header("content-type", "application/proto")
         .header("connect-protocol-version", "1")

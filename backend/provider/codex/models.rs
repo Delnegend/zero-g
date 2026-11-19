@@ -9,6 +9,7 @@ use crate::provider::common::errors::UpstreamError;
 use crate::provider::common::pool::CatalogCache;
 use crate::provider::registry::Provider;
 use crate::server::AppState;
+
 /// Upstream model list, which may use either supported envelope field.
 #[derive(Deserialize)]
 struct CodexModelsResponse {
@@ -148,14 +149,10 @@ async fn request_models(
     base_url: &str,
     creds: &Credentials,
 ) -> Result<CodexModelsResponse, UpstreamError> {
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|_| "Failed to initialize Codex client")?;
-
     let url = format!("{base_url}/codex/models?client_version={CODEX_CLIENT_VERSION}");
-    let mut req = client
+    let mut req = crate::util::http_client()
         .get(&url)
+        .timeout(std::time::Duration::from_secs(30))
         .header("Authorization", format!("Bearer {}", creds.access_token))
         .header("OpenAI-Beta", "responses=experimental")
         .header("originator", "omp")

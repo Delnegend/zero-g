@@ -19,6 +19,7 @@ use std::time::Duration;
 const DEFAULT_BASE: &str = "https://opencode.ai/inference/go/openai/v1";
 /// `OpenCode` Go model discovery API base URL.
 const MODELS_BASE: &str = "https://opencode.ai/zen/go/v1";
+
 /// Convert an `OpenCode` Go usage response into a quota snapshot.
 pub(crate) fn parse_go(value: &Value) -> Result<QuotaSnapshot, String> {
     let usage = value
@@ -67,13 +68,9 @@ pub(crate) async fn go_usage(
     if key.is_empty() {
         return Err("OpenCode Go requires an API key".into());
     }
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(15))
-        .build()
-        .map_err(|_| "Unable to create OpenCode Go client")?;
-    let response = client
+    let response = crate::util::http_client()
         .get("https://opencode.ai/zen/go/v1/usage")
+        .timeout(Duration::from_secs(15))
         .bearer_auth(key)
         .header(reqwest::header::ACCEPT, "application/json")
         .send()

@@ -17,14 +17,13 @@ pub(crate) async fn fetch(
         .await
         .map_err(|_| "Unable to load OpenAI Codex credentials".to_string())?
         .ok_or_else(|| "OpenAI Codex is not connected".to_string())?;
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(15))
-        .user_agent(format!("codex_cli_rs/{CODEX_CLIENT_VERSION}"))
-        .build()
-        .map_err(|_| "Unable to initialize Codex usage client".to_string())?;
-    let mut request = client
+    let mut request = crate::util::http_client()
         .get(format!("{CODEX_BASE_URL}/wham/usage"))
+        .timeout(Duration::from_secs(15))
+        .header(
+            reqwest::header::USER_AGENT,
+            format!("codex_cli_rs/{CODEX_CLIENT_VERSION}"),
+        )
         .bearer_auth(&creds.access_token);
     if let Some(account_id) = &creds.account_id {
         request = request.header("ChatGPT-Account-Id", account_id);

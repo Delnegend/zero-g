@@ -218,7 +218,7 @@ pub(super) async fn discover_at(
     for credential in credentials {
         match auth::load(&state.settings, &provider.id, &credential.id).await {
             Ok(creds) => {
-                match account_catalog(&http, base, &credential.id, &creds.access_token).await {
+                match account_catalog(http, base, &credential.id, &creds.access_token).await {
                     Ok(account_models) => {
                         if !succeeded && let Some(identity) = identity {
                             identity.set_credential(&credential.id, &credential.name);

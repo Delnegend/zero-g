@@ -117,7 +117,6 @@ impl AuthManager {
 
         info!("Refreshing Google Antigravity access token...");
 
-        let client = reqwest::Client::new();
         let params = [
             ("client_id", OAUTH_CLIENT_ID),
             ("client_secret", OAUTH_CLIENT_SECRET),
@@ -125,8 +124,9 @@ impl AuthManager {
             ("grant_type", "refresh_token"),
         ];
 
-        let resp = client
+        let resp = crate::util::http_client()
             .post(token_url)
+            .timeout(std::time::Duration::from_secs(30))
             .form(&params)
             .send()
             .await

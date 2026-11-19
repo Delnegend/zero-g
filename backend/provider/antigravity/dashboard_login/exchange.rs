@@ -63,12 +63,10 @@ pub(super) async fn finish_google_exchange(
     code: &str,
     verifier: &str,
 ) -> Result<Json<AntigravityFinishResponse>, (StatusCode, String)> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(|e| error(format!("Failed to create OAuth client: {e}")))?;
+    let client = crate::util::http_client();
     let response = client
         .post(&flows.token_url)
+        .timeout(Duration::from_secs(30))
         .form(&[
             ("client_id", agy::OAUTH_CLIENT_ID),
             ("client_secret", agy::OAUTH_CLIENT_SECRET),
@@ -103,6 +101,7 @@ pub(super) async fn finish_google_exchange(
     }
     let email = match client
         .get(&flows.userinfo_url)
+        .timeout(Duration::from_secs(30))
         .bearer_auth(&token.access_token)
         .send()
         .await
@@ -115,7 +114,7 @@ pub(super) async fn finish_google_exchange(
         _ => None,
     };
     let project_id = crate::provider::antigravity::login::fetch_or_onboard_project_at(
-        &client,
+        client,
         &token.access_token,
         &flows.cloud_url,
     )

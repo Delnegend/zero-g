@@ -175,13 +175,9 @@ pub(crate) async fn zen_balance(
         .secret_get(&SecretKind::ConsoleWorkspace.name(credential))
         .await?
         .ok_or("Connect an OpenCode Console workspace to see the balance")?;
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(15))
-        .build()
-        .map_err(|_| "Unable to create Console client")?;
-    let response = client
+    let response = crate::util::http_client()
         .get("https://opencode.ai/console/api/billing/status")
+        .timeout(Duration::from_secs(15))
         .header(
             reqwest::header::COOKIE,
             format!("__Host-console_session={session}"),

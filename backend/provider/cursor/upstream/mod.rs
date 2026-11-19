@@ -1,10 +1,9 @@
-use futures_util::StreamExt;
-use prost::Message;
-use tokio::sync::mpsc;
-
 use super::{proto, replay::Replay};
 use crate::provider::common::errors::UpstreamError;
 use crate::provider::common::translation::Event;
+use futures_util::StreamExt;
+use prost::Message;
+use tokio::sync::mpsc;
 
 /// Execution request handling and MCP argument decoding.
 mod exec;
@@ -116,7 +115,6 @@ impl Wire {
         Ok(())
     }
 }
-
 /// Open `RunSSE` and send the initial append concurrently: some servers do not
 /// flush response headers until they receive the first client message.
 pub(super) async fn start(
@@ -124,10 +122,7 @@ pub(super) async fn start(
     token: &str,
     replay: Replay,
 ) -> Result<mpsc::Receiver<Result<Event, String>>, UpstreamError> {
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| format!("Cursor client initialization failed: {e}"))?;
+    let client = crate::util::http_client().clone();
     let id = uuid::Uuid::new_v4().to_string();
     let mut wire = Wire {
         client,

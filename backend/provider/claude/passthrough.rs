@@ -313,7 +313,7 @@ async fn forward(
                     client::attest(&value).map(Bytes::from)
                 }
             };
-            let (http, headers) = (&http, upstream_headers.clone());
+            let headers = upstream_headers.clone();
             async move { client::forward(http, url, &creds.access_token, headers, body?).await }
         },
     )

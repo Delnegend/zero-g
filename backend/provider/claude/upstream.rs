@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::sync::LazyLock;
 
 use crate::provider::common::cooldown;
 use crate::provider::common::pool::{PoolError, eligible_by, rank_accounts};
@@ -16,14 +17,19 @@ pub(super) fn hex(bytes: &[u8]) -> String {
     encoded
 }
 
-/// Create a bounded client that never forwards credentials through redirects.
-pub(super) fn http() -> Result<reqwest::Client, String> {
+/// Shared bounded client that never forwards credentials through redirects.
+static CLIENT: LazyLock<Result<reqwest::Client, String>> = LazyLock::new(|| {
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(std::time::Duration::from_secs(10))
         .read_timeout(std::time::Duration::from_secs(120))
         .build()
         .map_err(|e| format!("Failed to build Claude HTTP client: {e}"))
+});
+
+/// Return the shared Claude HTTP client.
+pub(super) fn http() -> Result<&'static reqwest::Client, String> {
+    CLIENT.as_ref().map_err(Clone::clone)
 }
 
 /// Serialize and attest the exact request bytes sent to Claude Code's API.
@@ -169,13 +175,9 @@ where
                 continue;
             }
         };
-        let catalog = super::models::account_catalog(
-            &http,
-            catalog_base,
-            &credential.id,
-            &creds.access_token,
-        )
-        .await;
+        let catalog =
+            super::models::account_catalog(http, catalog_base, &credential.id, &creds.access_token)
+                .await;
         candidates.push(((credential, creds), catalog));
     }
     let ranked = rank_accounts(candidates, model);
@@ -252,7 +254,7 @@ pub(super) async fn inference_at(
             let user_id = user_id(&credential.id, session, creds.account_id.as_deref());
             object.insert("metadata".into(), serde_json::json!({ "user_id": user_id }));
         }
-        let (http, url) = (&http, &url);
+        let url = &url;
         async move { send(http, url, &creds.access_token, &payload).await }
     })
     .await
@@ -338,7 +340,7 @@ mod tests {
         let req: crate::openai::ChatCompletionRequest = serde_json::from_value(serde_json::json!({"model":"claude","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"beforeafter","provider_parts":[{"type":"text","text":"before"},{"type":"tool_use","id":"call-1","name":"_search","input":{"q":1}},{"type":"thinking","thinking":"thought","signature":"signed"},{"type":"text","text":"after"}],"tool_calls":[{"id":"call-1","type":"function","function":{"name":"search","arguments":"{\"q\":1}"}}]},{"role":"tool","tool_call_id":"call-1","content":"result"}],"tools":[{"type":"function","function":{"name":"search","parameters":{"type":"object"}}}]})).unwrap();
         let payload = super::super::payload::build(&req).unwrap();
         let response = send(
-            &http().unwrap(),
+            http().unwrap(),
             &format!("http://{address}/"),
             "secret",
             &payload,

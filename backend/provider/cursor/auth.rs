@@ -1,8 +1,7 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::provider::login::credential_lock;
 use crate::server::settings::SettingsStore;
@@ -65,7 +64,7 @@ pub(super) async fn access_token(
             .await?
             .ok_or_else(|| "Cursor credential has not been authorized".to_string())?;
     if now_ms().saturating_add(300_000) >= credentials.expires_at {
-        credentials = refresh(&reqwest::Client::new(), REFRESH_URL, &credentials).await?;
+        credentials = refresh(crate::util::http_client(), REFRESH_URL, &credentials).await?;
         save(store, provider, credential, &credentials).await?;
     }
     Ok(credentials.access_token)

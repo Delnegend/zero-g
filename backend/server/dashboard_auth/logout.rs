@@ -2,7 +2,6 @@
 
 use axum::http::{HeaderValue, header};
 use axum::response::{IntoResponse, Redirect, Response};
-
 /// Queries the `OpenID` Connect discovery document to find `end_session_endpoint`.
 pub(crate) async fn discover_end_session_endpoint(issuer: &str) -> Option<String> {
     if let Ok(override_url) = std::env::var("ZERO_G_OIDC_END_SESSION_ENDPOINT")
@@ -14,11 +13,12 @@ pub(crate) async fn discover_end_session_endpoint(issuer: &str) -> Option<String
         "{}/.well-known/openid-configuration",
         issuer.trim_end_matches('/')
     );
-    let client = reqwest::Client::builder()
+    let response = crate::util::http_redirect_client()
+        .get(&discovery_url)
         .timeout(std::time::Duration::from_secs(5))
-        .build()
+        .send()
+        .await
         .ok()?;
-    let response = client.get(&discovery_url).send().await.ok()?;
     if !response.status().is_success() {
         return None;
     }
