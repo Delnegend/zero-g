@@ -51,8 +51,8 @@ check-dependencies:
     tree="$(cargo tree --locked --target all --all-features --prefix none --format '{p}')"
     while IFS= read -r package; do
         case "$package" in
-            "rsa v0.10.0-rc.19"|"rsa v0.10.0-rc.19 (*)")
-                echo "rsa 0.10.0-rc.19 is now used; remove the OSV exception and reassess it" >&2
+            "rsa v0.10.0-rc.20"|"rsa v0.10.0-rc.20 (*)")
+                echo "rsa 0.10.0-rc.20 is now used; remove the OSV exception and reassess it" >&2
                 exit 1
                 ;;
         esac
