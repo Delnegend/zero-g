@@ -23,3 +23,12 @@ reason = "RUSTSEC-2023-0071 concerns private-key timing; OIDC verifies public si
 id = "GHSA-474x-hrwr-fgx4"
 ignoreUntil = 2026-11-28
 reason = "Affected through ReDoc; fixed release remains quarantined until 2026-11-17."
+
+# Upstream dependencies (openidconnect/oauth2 and turso/toasty) still require chrono.
+[[PackageOverrides]]
+name = "chrono"
+version = "0.4.45"
+ecosystem = "crates.io"
+vulnerability.ignore = true
+effectiveUntil = 2026-12-19
+reason = "RUSTSEC-2026-0543 (unmaintained); direct chrono use was removed, remaining only via openidconnect and turso."
