@@ -11,7 +11,7 @@ use tracing::info;
 /// OAuth client identifier used by Codex.
 pub(crate) const CODEX_CLIENT_ID: &str = env!("CODEX_OAUTH_CLIENT_ID");
 /// Endpoint for exchanging and refreshing OAuth tokens.
-pub(super) const CODEX_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
+pub(in crate::provider::codex) const CODEX_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 /// Base URL for the `ChatGPT` backend API.
 pub(super) const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api";
 /// Codex client version sent to the backend.
@@ -212,7 +212,7 @@ impl CodexAuthManager {
             ("client_id", CODEX_CLIENT_ID),
         ];
 
-        let resp = crate::util::http_client()
+        let resp = crate::util::HTTP_CLIENT
             .post(token_url)
             .timeout(std::time::Duration::from_secs(30))
             .form(&params)

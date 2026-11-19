@@ -104,7 +104,7 @@ pub(super) async fn fetch_account_models(
     credential_id: Option<&str>,
     creds: &Credentials,
 ) -> Result<Vec<Model>, UpstreamError> {
-    let base_url = client.base_url();
+    let base_url = client.base_url.as_str();
     let account_id = creds.account_id.as_deref().unwrap_or("");
     let scope =
         CatalogCache::<Vec<Model>>::scope_hash(&[&creds.access_token, base_url, account_id]);
@@ -150,7 +150,7 @@ async fn request_models(
     creds: &Credentials,
 ) -> Result<CodexModelsResponse, UpstreamError> {
     let url = format!("{base_url}/codex/models?client_version={CODEX_CLIENT_VERSION}");
-    let mut req = crate::util::http_client()
+    let mut req = crate::util::HTTP_CLIENT
         .get(&url)
         .timeout(std::time::Duration::from_secs(30))
         .header("Authorization", format!("Bearer {}", creds.access_token))

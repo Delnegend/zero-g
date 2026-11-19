@@ -18,20 +18,14 @@ pub(super) fn hex(bytes: &[u8]) -> String {
 }
 
 /// Shared bounded client that never forwards credentials through redirects.
-static CLIENT: LazyLock<Result<reqwest::Client, String>> = LazyLock::new(|| {
+pub(super) static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(std::time::Duration::from_secs(10))
         .read_timeout(std::time::Duration::from_secs(120))
         .build()
-        .map_err(|e| format!("Failed to build Claude HTTP client: {e}"))
+        .unwrap_or_else(|_| reqwest::Client::new())
 });
-
-/// Return the shared Claude HTTP client.
-pub(super) fn http() -> Result<&'static reqwest::Client, String> {
-    CLIENT.as_ref().map_err(Clone::clone)
-}
-
 /// Serialize and attest the exact request bytes sent to Claude Code's API.
 pub(super) fn attest(payload: &Value) -> Result<String, String> {
     let mut body = serde_json::to_string(payload).map_err(|e| e.to_string())?;
@@ -164,7 +158,6 @@ where
             ));
         }
     };
-    let http = http().map_err(|e| Refusal::Failed(StatusCode::INTERNAL_SERVER_ERROR, e))?;
     let mut failure = None;
     let mut candidates = Vec::with_capacity(credentials.len());
     for credential in credentials {
@@ -175,9 +168,13 @@ where
                 continue;
             }
         };
-        let catalog =
-            super::models::account_catalog(http, catalog_base, &credential.id, &creds.access_token)
-                .await;
+        let catalog = super::models::account_catalog(
+            &HTTP_CLIENT,
+            catalog_base,
+            &credential.id,
+            &creds.access_token,
+        )
+        .await;
         candidates.push(((credential, creds), catalog));
     }
     let ranked = rank_accounts(candidates, model);
@@ -245,7 +242,6 @@ pub(super) async fn inference_at(
     session: &str,
     payload: &Value,
 ) -> Result<(reqwest::Response, Credential), Refusal> {
-    let http = http().map_err(|e| Refusal::Failed(StatusCode::INTERNAL_SERVER_ERROR, e))?;
     let base = base.trim_end_matches('/');
     let url = format!("{base}/v1/messages?beta=true");
     first_accepted_at(store, provider, base, model, |creds, credential| {
@@ -255,7 +251,7 @@ pub(super) async fn inference_at(
             object.insert("metadata".into(), serde_json::json!({ "user_id": user_id }));
         }
         let url = &url;
-        async move { send(http, url, &creds.access_token, &payload).await }
+        async move { send(&HTTP_CLIENT, url, &creds.access_token, &payload).await }
     })
     .await
 }
@@ -340,7 +336,7 @@ mod tests {
         let req: crate::openai::ChatCompletionRequest = serde_json::from_value(serde_json::json!({"model":"claude","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"beforeafter","provider_parts":[{"type":"text","text":"before"},{"type":"tool_use","id":"call-1","name":"_search","input":{"q":1}},{"type":"thinking","thinking":"thought","signature":"signed"},{"type":"text","text":"after"}],"tool_calls":[{"id":"call-1","type":"function","function":{"name":"search","arguments":"{\"q\":1}"}}]},{"role":"tool","tool_call_id":"call-1","content":"result"}],"tools":[{"type":"function","function":{"name":"search","parameters":{"type":"object"}}}]})).unwrap();
         let payload = super::super::payload::build(&req).unwrap();
         let response = send(
-            http().unwrap(),
+            &HTTP_CLIENT,
             &format!("http://{address}/"),
             "secret",
             &payload,
@@ -364,8 +360,7 @@ mod tests {
         tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
-        let response = http()
-            .unwrap()
+        let response = HTTP_CLIENT
             .get(format!("http://{address}/"))
             .bearer_auth("secret")
             .send()

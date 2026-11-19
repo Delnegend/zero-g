@@ -52,7 +52,7 @@ static METADATA_CACHE: LazyLock<Mutex<MetadataCache>> = LazyLock::new(|| Mutex::
 
 /// Fetch only the `OpenCode` section, bounding request time and catalog size.
 async fn load_metadata(url: &str) -> Result<Metadata, String> {
-    let mut response = crate::util::http_redirect_client()
+    let mut response = crate::util::HTTP_REDIRECT_CLIENT
         .get(url)
         .timeout(Duration::from_secs(25))
         .send()
@@ -189,7 +189,7 @@ pub(super) async fn fetch_models(
 
 /// Fetch and filter IDs from Zen independently of optional community metadata.
 async fn fetch_official_models(url: &str, permissions: &Permissions) -> Result<Value, ProxyError> {
-    let response = crate::util::http_client()
+    let response = crate::util::HTTP_CLIENT
         .get(url)
         .timeout(Duration::from_secs(30))
         .send()

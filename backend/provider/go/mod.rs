@@ -68,7 +68,7 @@ pub(crate) async fn go_usage(
     if key.is_empty() {
         return Err("OpenCode Go requires an API key".into());
     }
-    let response = crate::util::http_client()
+    let response = crate::util::HTTP_CLIENT
         .get("https://opencode.ai/zen/go/v1/usage")
         .timeout(Duration::from_secs(15))
         .bearer_auth(key)
@@ -88,11 +88,6 @@ pub(crate) async fn go_usage(
             .await
             .map_err(|_| "Invalid OpenCode Go usage response")?,
     )
-}
-
-/// Build the authenticated `OpenCode` Go proxy routes.
-pub(crate) fn router(settings: &SettingsStore) -> Router<AppState> {
-    openai::routes::go_router(settings)
 }
 
 /// `OpenCode` Go provider backend.
@@ -125,7 +120,7 @@ impl super::common::Provider for Backend {
         default_base_url: Some(DEFAULT_BASE),
     };
     fn router(settings: &SettingsStore) -> Router<AppState> {
-        router(settings)
+        openai::routes::go_router(settings)
     }
     async fn discover(
         state: &AppState,

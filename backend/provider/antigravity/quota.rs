@@ -30,7 +30,7 @@ pub(crate) async fn fetch(
     }
 
     fetch_usage(
-        crate::util::http_client(),
+        &crate::util::HTTP_CLIENT,
         &[CLOUD_CODE_ASSIST_ENDPOINT, SANDBOX_ENDPOINT],
         &credentials.access_token,
         &credentials.project_id,

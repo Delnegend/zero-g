@@ -324,7 +324,7 @@ impl AntigravityClient {
 
         for endpoint in &endpoints {
             let url = format!("{endpoint}/v1internal:fetchAvailableModels");
-            let resp = crate::util::http_client()
+            let resp = crate::util::HTTP_CLIENT
                 .post(&url)
                 .header("Authorization", format!("Bearer {}", creds.access_token))
                 .header("Content-Type", "application/json")

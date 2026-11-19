@@ -31,10 +31,7 @@ pub(super) async fn fetch_chatjimmy(
             let url = url.clone();
             let payload = payload_bytes.clone();
             async move {
-                let client = CLIENT
-                    .as_ref()
-                    .map_err(|_| "Failed to initialize ChatJimmy client")?;
-                client
+                CLIENT
                     .post(url)
                     .header(header::CONTENT_TYPE, "application/json")
                     .header(

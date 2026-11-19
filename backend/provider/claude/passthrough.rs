@@ -285,10 +285,6 @@ async fn forward(
         }
     };
     let upstream_headers = upstream_headers(headers, !claude_code);
-    let http = match client::http() {
-        Ok(http) => http,
-        Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, &message),
-    };
     let attempt = client::first_accepted_at(
         &state.settings,
         &provider,
@@ -314,7 +310,16 @@ async fn forward(
                 }
             };
             let headers = upstream_headers.clone();
-            async move { client::forward(http, url, &creds.access_token, headers, body?).await }
+            async move {
+                client::forward(
+                    &client::HTTP_CLIENT,
+                    url,
+                    &creds.access_token,
+                    headers,
+                    body?,
+                )
+                .await
+            }
         },
     )
     .await;

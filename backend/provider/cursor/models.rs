@@ -182,7 +182,7 @@ pub(super) async fn fetch_account_models(
     if let Some(cached) = CATALOG_CACHE.get(credential_id, scope).await {
         return Ok(cached);
     }
-    match fetch_models(crate::util::http_client(), base, token).await {
+    match fetch_models(&crate::util::HTTP_CLIENT, base, token).await {
         Ok(models) => {
             CATALOG_CACHE
                 .insert(credential_id.to_owned(), scope, models.clone())

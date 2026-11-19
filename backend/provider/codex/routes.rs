@@ -321,14 +321,6 @@ mod tests {
     use std::sync::Arc;
     use tower::ServiceExt;
 
-    async fn try_credentials<C, T, F, Fut>(candidates: Vec<C>, attempt: F) -> Result<T, PoolError>
-    where
-        F: FnMut(C) -> Fut,
-        Fut: Future<Output = Result<T, PoolError>>,
-    {
-        crate::provider::common::pool::try_candidates(candidates, NOT_CONFIGURED, attempt).await
-    }
-
     #[test]
     fn cooldown_and_upstream_responses_keep_retry_hints() {
         let mut headers = axum::http::HeaderMap::new();
@@ -350,8 +342,9 @@ mod tests {
     #[tokio::test]
     async fn exhausted_pool_returns_last_upstream_status() {
         let mut attempts = Vec::new();
-        let result: Result<(), _> = try_credentials(
+        let result: Result<(), _> = crate::provider::common::pool::try_candidates(
             vec![StatusCode::UNAUTHORIZED, StatusCode::TOO_MANY_REQUESTS],
+            NOT_CONFIGURED,
             |status| {
                 attempts.push(status);
                 async move {
@@ -391,21 +384,22 @@ mod tests {
     async fn pool_retries_only_upstream_credential_statuses() {
         for status in [401, 403, 429] {
             let mut attempts = Vec::new();
-            let result = try_credentials(vec![0, 1], |id| {
-                attempts.push(id);
-                async move {
-                    if id == 0 {
-                        Err(PoolError::Upstream(UpstreamError {
-                            status: Some(StatusCode::from_u16(status).unwrap()),
-                            message: "upstream".into(),
-                            headers: Box::default(),
-                        }))
-                    } else {
-                        Ok(())
+            let result =
+                crate::provider::common::pool::try_candidates(vec![0, 1], NOT_CONFIGURED, |id| {
+                    attempts.push(id);
+                    async move {
+                        if id == 0 {
+                            Err(PoolError::Upstream(UpstreamError {
+                                status: Some(StatusCode::from_u16(status).unwrap()),
+                                message: "upstream".into(),
+                                headers: Box::default(),
+                            }))
+                        } else {
+                            Ok(())
+                        }
                     }
-                }
-            })
-            .await;
+                })
+                .await;
             assert!(result.is_ok());
             assert_eq!(attempts, [0, 1]);
         }
@@ -415,17 +409,18 @@ mod tests {
             Some(StatusCode::INTERNAL_SERVER_ERROR),
         ] {
             let mut attempts = Vec::new();
-            let result: Result<(), _> = try_credentials(vec![0, 1], |id| {
-                attempts.push(id);
-                async move {
-                    Err(PoolError::Upstream(UpstreamError {
-                        status,
-                        message: "failure".into(),
-                        headers: Box::default(),
-                    }))
-                }
-            })
-            .await;
+            let result: Result<(), _> =
+                crate::provider::common::pool::try_candidates(vec![0, 1], NOT_CONFIGURED, |id| {
+                    attempts.push(id);
+                    async move {
+                        Err(PoolError::Upstream(UpstreamError {
+                            status,
+                            message: "failure".into(),
+                            headers: Box::default(),
+                        }))
+                    }
+                })
+                .await;
             assert!(result.is_err());
             assert_eq!(attempts, [0]);
         }
@@ -441,22 +436,23 @@ mod tests {
             Some(StatusCode::BAD_REQUEST),
         ] {
             let mut attempts = Vec::new();
-            let result = try_credentials(vec![0, 1], |id| {
-                attempts.push(id);
-                async move {
-                    if id == 0 {
-                        Err(PoolError::from_credential(
-                            crate::provider::login::CredentialError {
-                                message: "refresh error".into(),
-                                upstream_status: status,
-                            },
-                        ))
-                    } else {
-                        Ok(())
+            let result =
+                crate::provider::common::pool::try_candidates(vec![0, 1], NOT_CONFIGURED, |id| {
+                    attempts.push(id);
+                    async move {
+                        if id == 0 {
+                            Err(PoolError::from_credential(
+                                crate::provider::login::CredentialError {
+                                    message: "refresh error".into(),
+                                    upstream_status: status,
+                                },
+                            ))
+                        } else {
+                            Ok(())
+                        }
                     }
-                }
-            })
-            .await;
+                })
+                .await;
             if matches!(
                 status,
                 Some(
@@ -477,29 +473,39 @@ mod tests {
     #[tokio::test]
     async fn pool_stops_on_local_failure_and_returns_last_exhausted_error() {
         let mut attempts = Vec::new();
-        let result: Result<(), _> = try_credentials(vec![0, 1], |id| {
-            attempts.push(id);
-            async move { Err(PoolError::Internal("local 401".into())) }
-        })
-        .await;
+        let result: Result<(), _> =
+            crate::provider::common::pool::try_candidates(vec![0, 1], NOT_CONFIGURED, |id| {
+                attempts.push(id);
+                async move { Err(PoolError::Internal("local 401".into())) }
+            })
+            .await;
         assert_eq!(result.err().unwrap().to_string(), "local 401");
         assert_eq!(attempts, [0]);
 
-        let result: Result<(), _> = try_credentials(vec![0, 1], |id| async move {
-            Err(PoolError::Upstream(UpstreamError {
-                status: Some(StatusCode::TOO_MANY_REQUESTS),
-                message: if id == 0 {
-                    "first failure"
-                } else {
-                    "last failure"
-                }
-                .into(),
-                headers: Box::default(),
-            }))
-        })
+        let result: Result<(), _> = crate::provider::common::pool::try_candidates(
+            vec![0, 1],
+            NOT_CONFIGURED,
+            |id| async move {
+                Err(PoolError::Upstream(UpstreamError {
+                    status: Some(StatusCode::TOO_MANY_REQUESTS),
+                    message: if id == 0 {
+                        "first failure"
+                    } else {
+                        "last failure"
+                    }
+                    .into(),
+                    headers: Box::default(),
+                }))
+            },
+        )
         .await;
         assert_eq!(result.err().unwrap().to_string(), "last failure");
-        let result: Result<(), _> = try_credentials(Vec::<u8>::new(), |_| async { Ok(()) }).await;
+        let result: Result<(), _> = crate::provider::common::pool::try_candidates(
+            Vec::<u8>::new(),
+            NOT_CONFIGURED,
+            |_| async { Ok(()) },
+        )
+        .await;
         assert!(matches!(result.err().unwrap(), PoolError::Internal(_)));
     }
 
@@ -596,7 +602,7 @@ mod tests {
         }
 
         let mut client = crate::provider::codex::CodexClient::new();
-        client.set_base_url_for_test(format!("http://{address}"));
+        client.base_url = format!("http://{address}");
         let mut providers = crate::provider::Providers::new();
         providers.codex_client = Arc::new(client);
         let state = AppState {

@@ -28,7 +28,7 @@ pub(crate) async fn send_upstream(
         url.push('?');
         url.push_str(query);
     }
-    let mut request = crate::util::http_client()
+    let mut request = crate::util::HTTP_CLIENT
         .request(method, url)
         .header(
             header::USER_AGENT,

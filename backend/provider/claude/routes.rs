@@ -423,7 +423,7 @@ mod tests {
                 .unwrap();
         let payload = payload::build(&request.into_chat_request()).unwrap();
         let result = client::send(
-            client::http().unwrap(),
+            &client::HTTP_CLIENT,
             &format!("http://{address}/messages"),
             "secret",
             &payload,

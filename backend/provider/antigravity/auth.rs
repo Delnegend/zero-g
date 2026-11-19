@@ -124,7 +124,7 @@ impl AuthManager {
             ("grant_type", "refresh_token"),
         ];
 
-        let resp = crate::util::http_client()
+        let resp = crate::util::HTTP_CLIENT
             .post(token_url)
             .timeout(std::time::Duration::from_secs(30))
             .form(&params)

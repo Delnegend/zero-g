@@ -13,7 +13,7 @@ pub(crate) async fn discover_end_session_endpoint(issuer: &str) -> Option<String
         "{}/.well-known/openid-configuration",
         issuer.trim_end_matches('/')
     );
-    let response = crate::util::http_redirect_client()
+    let response = crate::util::HTTP_REDIRECT_CLIENT
         .get(&discovery_url)
         .timeout(std::time::Duration::from_secs(5))
         .send()

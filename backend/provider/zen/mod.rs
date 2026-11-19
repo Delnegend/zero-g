@@ -175,7 +175,7 @@ pub(crate) async fn zen_balance(
         .secret_get(&SecretKind::ConsoleWorkspace.name(credential))
         .await?
         .ok_or("Connect an OpenCode Console workspace to see the balance")?;
-    let response = crate::util::http_client()
+    let response = crate::util::HTTP_CLIENT
         .get("https://opencode.ai/console/api/billing/status")
         .timeout(Duration::from_secs(15))
         .header(

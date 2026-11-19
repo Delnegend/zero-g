@@ -31,7 +31,7 @@ pub(crate) async fn send_with_headers(
         url.push('?');
         url.push_str(query);
     }
-    let mut request = crate::util::http_client().request(method, url);
+    let mut request = crate::util::HTTP_CLIENT.request(method, url);
     for (name, value) in headers {
         let allowed = name == header::ACCEPT
             || name == header::CONTENT_TYPE

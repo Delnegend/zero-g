@@ -344,7 +344,7 @@ impl common::QuotaProvider for Backend {
             .await
             .map_err(|_| "Failed to load OpenRouter management key")?
             .ok_or("Connect an OpenRouter management key to see the balance")?;
-        let response = crate::util::http_client()
+        let response = crate::util::HTTP_CLIENT
             .get(CREDITS_URL)
             .timeout(Duration::from_secs(15))
             .bearer_auth(key)

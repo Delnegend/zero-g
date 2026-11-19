@@ -111,8 +111,7 @@ pub(super) async fn exchange(
     body: serde_json::Value,
     refresh: bool,
 ) -> Result<TokenResponse, String> {
-    let client = super::upstream::http()?;
-    let mut request = client.post(url).json(&body);
+    let mut request = super::upstream::HTTP_CLIENT.post(url).json(&body);
     if refresh {
         request = request.header("anthropic-beta", "oauth-2025-04-20").header(
             "user-agent",

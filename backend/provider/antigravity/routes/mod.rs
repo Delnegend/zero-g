@@ -26,8 +26,6 @@ use model_routing::resolve_model;
 use model_routing::resolve_request_model;
 pub(crate) use model_routing::to_model_entry;
 pub(crate) use pool::fetch_models;
-#[cfg(test)]
-use pool::try_candidates;
 use pool::{all_pool_models, pool_error_response, pooled_stream, with_model_pool};
 
 /// Builds the virtual-key-protected Antigravity API routes.

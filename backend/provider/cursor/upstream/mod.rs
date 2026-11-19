@@ -122,7 +122,7 @@ pub(super) async fn start(
     token: &str,
     replay: Replay,
 ) -> Result<mpsc::Receiver<Result<Event, String>>, UpstreamError> {
-    let client = crate::util::http_client().clone();
+    let client = crate::util::HTTP_CLIENT.clone();
     let id = uuid::Uuid::new_v4().to_string();
     let mut wire = Wire {
         client,

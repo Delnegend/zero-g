@@ -59,7 +59,7 @@ async fn fetch_datasheet(input: &str) -> Result<String, String> {
 /// Download and validate a size-limited JSON object without following redirects.
 async fn fetch_datasheet_inner(input: &str) -> Result<String, String> {
     let url = validate_url(input)?;
-    let response = crate::util::http_client()
+    let response = crate::util::HTTP_CLIENT
         .get(url)
         .send()
         .await

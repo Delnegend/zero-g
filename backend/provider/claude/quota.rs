@@ -52,8 +52,7 @@ pub(super) async fn fetch(
     let credentials = auth::load(store, provider, credential)
         .await
         .map_err(|_| "Unable to load Claude credentials".to_string())?;
-    let client = upstream::http()?;
-    fetch_usage(client, USAGE_URL, &credentials.access_token).await
+    fetch_usage(&upstream::HTTP_CLIENT, USAGE_URL, &credentials.access_token).await
 }
 
 /// Fetch the native quota summary without substituting estimates on errors.

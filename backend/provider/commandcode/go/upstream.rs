@@ -10,7 +10,7 @@ pub(super) async fn send(
     thread: &str,
     body: Bytes,
 ) -> Result<reqwest::Response, &'static str> {
-    crate::util::http_client()
+    crate::util::HTTP_CLIENT
         .post(format!("{}/alpha/generate", root.trim_end_matches('/')))
         .bearer_auth(key)
         .header(header::CONTENT_TYPE, "application/json")

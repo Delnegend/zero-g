@@ -17,7 +17,7 @@ pub(crate) async fn fetch(
         .await
         .map_err(|_| "Unable to load OpenAI Codex credentials".to_string())?
         .ok_or_else(|| "OpenAI Codex is not connected".to_string())?;
-    let mut request = crate::util::http_client()
+    let mut request = crate::util::HTTP_CLIENT
         .get(format!("{CODEX_BASE_URL}/wham/usage"))
         .timeout(Duration::from_secs(15))
         .header(

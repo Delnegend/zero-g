@@ -63,7 +63,7 @@ pub(super) async fn finish_google_exchange(
     code: &str,
     verifier: &str,
 ) -> Result<Json<AntigravityFinishResponse>, (StatusCode, String)> {
-    let client = crate::util::http_client();
+    let client = &*crate::util::HTTP_CLIENT;
     let response = client
         .post(&flows.token_url)
         .timeout(Duration::from_secs(30))

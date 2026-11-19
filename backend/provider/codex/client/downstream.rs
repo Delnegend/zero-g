@@ -37,7 +37,7 @@ use stream::{
 #[derive(Clone)]
 pub(crate) struct CodexClient {
     /// Responses API base URL.
-    pub(super) base_url: String,
+    pub(in crate::provider::codex) base_url: String,
     /// Per-credential cached model catalogs.
     pub(crate) model_cache: std::sync::Arc<CatalogCache<Vec<Model>>>,
 }

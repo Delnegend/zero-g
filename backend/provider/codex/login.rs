@@ -2,9 +2,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 
-use crate::provider::codex::auth::{
-    CODEX_CLIENT_ID, CODEX_TOKEN_URL, Credentials, decode_jwt_profile,
-};
+use crate::provider::codex::auth::{CODEX_CLIENT_ID, Credentials, decode_jwt_profile};
 
 /// OAuth authorization-code exchange response.
 #[derive(Deserialize)]
@@ -17,15 +15,6 @@ struct TokenExchangeResponse {
     id_token: Option<String>,
     /// Access-token lifetime in seconds.
     expires_in: i64,
-}
-
-/// Exchanges an authorization code and PKCE verifier for Codex credentials.
-pub(super) async fn exchange_token(
-    code: &str,
-    verifier: &str,
-    redirect_uri: &str,
-) -> Result<Credentials, String> {
-    exchange_token_at(code, verifier, redirect_uri, CODEX_TOKEN_URL).await
 }
 
 /// Exchanges an authorization code at the supplied token endpoint.
@@ -43,7 +32,7 @@ pub(super) async fn exchange_token_at(
         ("redirect_uri", redirect_uri),
     ];
 
-    let token_resp = crate::util::http_client()
+    let token_resp = crate::util::HTTP_CLIENT
         .post(token_url)
         .timeout(std::time::Duration::from_secs(30))
         .form(&params)

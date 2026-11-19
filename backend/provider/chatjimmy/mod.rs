@@ -38,13 +38,14 @@ const MODELS_PATH: &str = "/api/models";
 const DEFAULT_MODEL: &str = "llama3.1-8B";
 
 /// Shared client for `ChatJimmy` requests with keepalive and connection pooling.
-static CLIENT: LazyLock<Result<reqwest::Client, reqwest::Error>> = LazyLock::new(|| {
+static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
         .tcp_keepalive(Duration::from_secs(15))
         .pool_idle_timeout(Duration::from_secs(30))
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(60))
         .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
 });
 
 /// `ChatJimmy` backend.

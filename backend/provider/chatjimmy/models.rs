@@ -30,10 +30,7 @@ pub(crate) fn catalog_info(_model: &Model) -> CatalogInfo {
 
 /// Discovers models available from the `ChatJimmy` endpoint.
 pub(super) async fn discover_models() -> Result<Vec<Model>, String> {
-    let client = CLIENT
-        .as_ref()
-        .map_err(|_| "Failed to initialize ChatJimmy client")?;
-    let resp = client
+    let resp = CLIENT
         .get(format!("{DEFAULT_BASE}{MODELS_PATH}"))
         .send()
         .await;

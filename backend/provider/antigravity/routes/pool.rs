@@ -14,21 +14,8 @@ use crate::provider::registry::Provider;
 use crate::server::AppState;
 
 /// Message returned when no Antigravity account is available.
-const NOT_CONFIGURED: &str =
+pub(super) const NOT_CONFIGURED: &str =
     "Google Antigravity is not configured. Authenticate on the dashboard Providers page.";
-
-/// Tries credentials in order, advancing on retryable upstream failures.
-#[cfg(test)]
-pub(super) async fn try_candidates<C, T, F, Fut>(
-    candidates: Vec<C>,
-    attempt: F,
-) -> Result<T, PoolError>
-where
-    F: FnMut(C) -> Fut,
-    Fut: Future<Output = Result<T, PoolError>>,
-{
-    crate::provider::common::pool::try_candidates(candidates, NOT_CONFIGURED, attempt).await
-}
 
 /// Executes an operation in the supplied weighted credential order.
 async fn with_candidates<T, F, Fut>(

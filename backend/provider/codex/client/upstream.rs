@@ -5,16 +5,6 @@ use crate::provider::codex::auth::{CODEX_CLIENT_VERSION, Credentials};
 use crate::provider::common::errors::UpstreamError;
 
 impl CodexClient {
-    /// Returns the configured Codex upstream base URL.
-    pub(in crate::provider::codex) fn base_url(&self) -> &str {
-        &self.base_url
-    }
-
-    /// Overrides the upstream base URL for integration tests.
-    #[cfg(test)]
-    pub(in crate::provider::codex) fn set_base_url_for_test(&mut self, url: String) {
-        self.base_url = url;
-    }
     /// Sends an authenticated streaming request to the Codex Responses endpoint.
     pub(in crate::provider::codex) async fn send_request(
         &self,
@@ -29,7 +19,7 @@ impl CodexClient {
             .and_then(|m| m.as_str())
             .unwrap_or("gpt-5.5");
 
-        let mut builder = crate::util::http_client()
+        let mut builder = crate::util::HTTP_CLIENT
             .post(&url)
             .header("Authorization", format!("Bearer {}", creds.access_token))
             .header("OpenAI-Beta", "responses=experimental")

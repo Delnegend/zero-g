@@ -1,9 +1,8 @@
 //! Tests for Antigravity routing, credential pooling, and model resolution.
 
-use super::pool::PoolError;
+use super::pool::{NOT_CONFIGURED, PoolError};
 use super::{
-    chat_handler, resolve_model, responses_handler, to_model_entry, try_candidates,
-    validate_request_media,
+    chat_handler, resolve_model, responses_handler, to_model_entry, validate_request_media,
 };
 use crate::provider::antigravity::{
     AntigravityClient, AntigravityModelInfo,
@@ -40,21 +39,25 @@ async fn pool_retries_only_upstream_auth_and_rate_limit_statuses() {
     ] {
         let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen = calls.clone();
-        let result = try_candidates(vec!["first", "second"], move |id| {
-            let seen = seen.clone();
-            async move {
-                seen.lock().expect("lock").push(id);
-                if id == "first" {
-                    Err(PoolError::Upstream(UpstreamError {
-                        status: Some(status),
-                        message: "upstream".into(),
-                        headers: Box::default(),
-                    }))
-                } else {
-                    Ok(())
+        let result = crate::provider::common::pool::try_candidates(
+            vec!["first", "second"],
+            NOT_CONFIGURED,
+            move |id| {
+                let seen = seen.clone();
+                async move {
+                    seen.lock().expect("lock").push(id);
+                    if id == "first" {
+                        Err(PoolError::Upstream(UpstreamError {
+                            status: Some(status),
+                            message: "upstream".into(),
+                            headers: Box::default(),
+                        }))
+                    } else {
+                        Ok(())
+                    }
                 }
-            }
-        })
+            },
+        )
         .await;
         assert!(result.is_ok());
         assert_eq!(*calls.lock().expect("lock"), vec!["first", "second"]);
@@ -70,36 +73,51 @@ async fn pool_stops_on_non_retryable_and_after_exhaustion() {
     ] {
         let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let seen = calls.clone();
-        let result: Result<(), _> = try_candidates(vec!["first", "second"], move |_| {
-            seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            async move {
-                Err(PoolError::Upstream(UpstreamError {
-                    status,
-                    message: "failed".into(),
-                    headers: Box::default(),
-                }))
-            }
-        })
+        let result: Result<(), _> = crate::provider::common::pool::try_candidates(
+            vec!["first", "second"],
+            NOT_CONFIGURED,
+            move |_| {
+                seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                async move {
+                    Err(PoolError::Upstream(UpstreamError {
+                        status,
+                        message: "failed".into(),
+                        headers: Box::default(),
+                    }))
+                }
+            },
+        )
         .await;
         assert!(result.is_err());
         assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
     }
-    let result: Result<(), _> = try_candidates(vec!["first", "second"], |_| async {
-        Err(PoolError::Upstream(UpstreamError {
-            status: Some(StatusCode::TOO_MANY_REQUESTS),
-            message: "last failure".into(),
-            headers: Box::default(),
-        }))
-    })
+    let result: Result<(), _> = crate::provider::common::pool::try_candidates(
+        vec!["first", "second"],
+        NOT_CONFIGURED,
+        |_| async {
+            Err(PoolError::Upstream(UpstreamError {
+                status: Some(StatusCode::TOO_MANY_REQUESTS),
+                message: "last failure".into(),
+                headers: Box::default(),
+            }))
+        },
+    )
     .await;
     assert!(
         matches!(result, Err(PoolError::Upstream(error)) if error.status == Some(StatusCode::TOO_MANY_REQUESTS))
     );
-    let empty: Result<(), _> = try_candidates(Vec::<&str>::new(), |_| async { Ok(()) }).await;
+    let empty: Result<(), _> = crate::provider::common::pool::try_candidates(
+        Vec::<&str>::new(),
+        NOT_CONFIGURED,
+        |_| async { Ok(()) },
+    )
+    .await;
     assert!(matches!(empty, Err(PoolError::Internal(_))));
-    let internal: Result<(), _> = try_candidates(vec!["first", "second"], |_| async {
-        Err(PoolError::Internal("credential error".into()))
-    })
+    let internal: Result<(), _> = crate::provider::common::pool::try_candidates(
+        vec!["first", "second"],
+        NOT_CONFIGURED,
+        |_| async { Err(PoolError::Internal("credential error".into())) },
+    )
     .await;
     assert!(matches!(internal, Err(PoolError::Internal(_))));
 }

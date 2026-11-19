@@ -112,7 +112,7 @@ pub(crate) struct Api;
 
 /// Requests a device code from the authorization endpoint.
 async fn request_device_code(url: &str) -> Result<DeviceStart, (StatusCode, String)> {
-    let response = crate::util::http_client()
+    let response = crate::util::HTTP_CLIENT
         .post(url)
         .timeout(Duration::from_secs(30))
         .json(&json!({"client_id": CODEX_CLIENT_ID}))
@@ -244,7 +244,7 @@ async fn codex_poll(
         credentials
     };
     let response = tokio::time::timeout(Duration::from_secs(30), async {
-        crate::util::http_client()
+        crate::util::HTTP_CLIENT
             .post(CODEX_DEVICE_TOKEN_URL)
             .json(&json!({"device_auth_id":device_id,"user_code":user_code}))
             .send()
@@ -289,10 +289,14 @@ async fn codex_poll(
     let verifier = data
         .code_verifier
         .ok_or_else(|| error("Missing code verifier"))?;
-    let creds =
-        crate::provider::codex::login::exchange_token(&code, &verifier, CODEX_DEVICE_REDIRECT_URI)
-            .await
-            .map_err(error)?;
+    let creds = crate::provider::codex::login::exchange_token_at(
+        &code,
+        &verifier,
+        CODEX_DEVICE_REDIRECT_URI,
+        crate::provider::codex::auth::CODEX_TOKEN_URL,
+    )
+    .await
+    .map_err(error)?;
     let lock = credential_lock(&credential_id).await;
     let _guard = lock.lock().await;
     CodexAuthManager::save(settings, &provider_id, &credential_id, &creds)
