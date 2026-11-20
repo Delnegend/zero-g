@@ -166,6 +166,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn omitted_upstream_finish_reason_is_synthesized_for_clients() {
+        let output = chat_from_upstream(concat!(
+            "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"answer\"}]}}],",
+            "\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":2,",
+            "\"totalTokenCount\":12}}}\n\n"
+        ))
+        .await;
+
+        assert!(output.contains("\"content\":\"answer\""), "{output}");
+        assert!(output.contains("\"finish_reason\":\"stop\""), "{output}");
+        assert!(output.contains("[DONE]"));
+        assert!(!output.contains("upstream_error"));
+    }
+
+    #[tokio::test]
+    async fn omitted_finish_reason_with_tools_maps_to_tool_calls() {
+        let output = chat_from_upstream(concat!(
+            "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[",
+            "{\"functionCall\":{\"id\":\"call_1\",\"name\":\"lookup\",\"args\":{\"q\":\"x\"}}}]}}],",
+            "\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":2,",
+            "\"totalTokenCount\":12}}}\n\n"
+        ))
+        .await;
+
+        assert!(
+            output.contains("\"finish_reason\":\"tool_calls\""),
+            "{output}"
+        );
+        assert!(output.contains("[DONE]"));
+        assert!(!output.contains("upstream_error"));
+    }
+
+    #[tokio::test]
     async fn tool_signature_and_length_are_exposed_to_clients() {
         let output = chat_from_upstream(concat!(
             "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[",

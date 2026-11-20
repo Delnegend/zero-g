@@ -215,6 +215,7 @@ where
         let mut stream = std::pin::pin!(stream);
         let mut decoder = EventDecoder::default();
         let mut finished = false;
+        let mut saw_usage = false;
 
         while let Some(chunk) = stream.next().await {
             match chunk {
@@ -223,6 +224,7 @@ where
                         if matches!(event, AntigravityEvent::Finish { .. }) {
                             finished = true;
                         }
+                        saw_usage |= matches!(event, AntigravityEvent::Usage(_));
                         if tx.send(Ok(event)).await.is_err() {
                             return;
                         }
@@ -241,11 +243,19 @@ where
         if !decoder.buffer.is_empty() {
             let _ = tx.send(Err("Truncated upstream event".to_string())).await;
         } else if !finished {
-            let _ = tx
-                .send(Err(
-                    "Upstream stream ended without a finish reason".to_string()
-                ))
-                .await;
+            // Google omits `finishReason` when it is FINISH_REASON_UNSPECIFIED (proto3
+            // `omitempty`), e.g. on thinking-only turns. `usageMetadata` is the terminal
+            // accounting frame, so a clean EOF after it is a completed generation and
+            // strict clients need a synthetic terminal reason. Streams that end without
+            // either signal are still treated as incomplete.
+            let terminal = if saw_usage {
+                Ok(AntigravityEvent::Finish {
+                    reason: "STOP".to_string(),
+                })
+            } else {
+                Err("Upstream stream ended without a finish reason".to_string())
+            };
+            let _ = tx.send(terminal).await;
         }
     });
 
@@ -407,5 +417,61 @@ mod tests {
         let events = decoder.push_chunk(b"data: {not json}\ndata: [DONE]\n");
 
         assert_eq!(events, Vec::<AntigravityEvent>::new());
+    }
+
+    /// Drains a byte stream through the decoder in small chunks.
+    async fn decoded(body: &'static str) -> Vec<Result<AntigravityEvent, String>> {
+        let stream = tokio_stream::iter(
+            body.as_bytes()
+                .chunks(7)
+                .map(|chunk| Ok::<_, std::convert::Infallible>(chunk.to_vec())),
+        );
+        let mut receiver = spawn_event_stream(stream);
+        let mut events = Vec::new();
+        while let Some(event) = receiver.recv().await {
+            events.push(event);
+        }
+        events
+    }
+
+    #[tokio::test]
+    async fn synthesizes_finish_after_usage_when_upstream_omits_it() {
+        let events = decoded(concat!(
+            "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"answer\"}]}}],",
+            "\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":2,",
+            "\"totalTokenCount\":12}}}\n\n"
+        ))
+        .await;
+
+        assert_eq!(
+            events,
+            vec![
+                Ok(AntigravityEvent::Text("answer".to_string())),
+                Ok(AntigravityEvent::Usage(Usage {
+                    prompt_tokens: 10,
+                    completion_tokens: 2,
+                    total_tokens: 12,
+                })),
+                Ok(AntigravityEvent::Finish {
+                    reason: "STOP".to_string(),
+                }),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_stream_without_usage_or_finish() {
+        let events = decoded(
+            "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"partial\"}]}}]}}\n\n",
+        )
+        .await;
+
+        assert_eq!(
+            events,
+            vec![
+                Ok(AntigravityEvent::Text("partial".to_string())),
+                Err("Upstream stream ended without a finish reason".to_string()),
+            ]
+        );
     }
 }
