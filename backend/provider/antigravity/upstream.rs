@@ -45,6 +45,11 @@ impl AntigravityClient {
                         self.model_cache
                             .invalidate_on_auth_error(credential_id, Some(status))
                             .await;
+                        // A missing entity means this account's cached roster can be
+                        // stale; refresh before the next request selects it again.
+                        if status == reqwest::StatusCode::NOT_FOUND {
+                            self.model_cache.invalidate(credential_id).await;
+                        }
                     }
                     let headers = Box::new(resp.headers().clone());
                     let body = resp.text().await.unwrap_or_default();

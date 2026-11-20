@@ -10,7 +10,7 @@ mod schema;
 #[cfg(test)]
 use media::parse_data_url;
 pub(super) use media::validate_media;
-use schema::gemini_schema;
+use schema::{claude_schema, gemini_schema};
 
 /// Per-request identifiers and model-specific metadata.
 struct RequestMeta {
@@ -66,7 +66,7 @@ impl AntigravityClient {
             && !tools.is_empty()
         {
             inner_request["tools"] = json!([{
-                "functionDeclarations": Self::tool_declarations(tools)
+                "functionDeclarations": Self::tool_declarations(tools, meta.is_claude)
             }]);
         }
 
@@ -193,7 +193,7 @@ impl AntigravityClient {
     /// Converts function tools into upstream function declarations.
     // Each declaration is constructed as a JSON object; indexing inserts optional fields.
     #[allow(clippy::indexing_slicing)]
-    fn tool_declarations(tools: &[Tool]) -> Vec<Value> {
+    fn tool_declarations(tools: &[Tool], is_claude: bool) -> Vec<Value> {
         let mut decls = Vec::new();
         for tool in tools {
             let mut decl = json!({
@@ -203,7 +203,11 @@ impl AntigravityClient {
                 decl["description"] = json!(desc);
             }
             if let Some(params) = &tool.function.parameters {
-                decl["parameters"] = gemini_schema(params);
+                decl["parameters"] = if is_claude {
+                    claude_schema(params)
+                } else {
+                    gemini_schema(params)
+                };
             }
             decls.push(decl);
         }

@@ -1,4 +1,4 @@
-//! Conversion of tool schemas to the Gemini-supported subset.
+//! Conversion of tool schemas to provider-compatible subsets.
 
 use serde_json::{Value, json};
 
@@ -106,4 +106,124 @@ pub(super) fn gemini_schema(value: &Value) -> Value {
         schema.insert("nullable".to_owned(), Value::Bool(true));
     }
     Value::Object(schema)
+}
+
+/// Rewrites a tool schema for Claude models served through Antigravity.
+///
+/// That backend translates Gemini function declarations into Anthropic
+/// `custom.input_schema`, which rejects nested multi-branch `anyOf`/`oneOf`
+/// unions. Collapse each union to its strongest branch and keep the other
+/// alternatives in the description so callers retain the intent.
+pub(super) fn claude_schema(value: &Value) -> Value {
+    ensure_required(gemini_schema(&flatten_unions(value.clone())))
+}
+
+/// Anthropic expects a `required` list wherever an object declares properties.
+fn ensure_required(value: Value) -> Value {
+    match value {
+        Value::Object(mut object) => {
+            for nested in object.values_mut() {
+                *nested = ensure_required(std::mem::take(nested));
+            }
+            if object.contains_key("properties") && !object.contains_key("required") {
+                object.insert("required".to_owned(), json!([]));
+            }
+            Value::Object(object)
+        }
+        Value::Array(items) => Value::Array(items.into_iter().map(ensure_required).collect()),
+        other => other,
+    }
+}
+
+/// Recursively replaces unions with one representative branch.
+fn flatten_unions(value: Value) -> Value {
+    match value {
+        Value::Object(mut object) => {
+            for nested in object.values_mut() {
+                *nested = flatten_unions(std::mem::take(nested));
+            }
+            let branches = object
+                .remove("anyOf")
+                .or_else(|| object.remove("oneOf"))
+                .and_then(|value| match value {
+                    Value::Array(branches) => Some(branches),
+                    _ => None,
+                })
+                .filter(|branches| !branches.is_empty());
+            let Some(branches) = branches else {
+                return Value::Object(object);
+            };
+
+            let mut best_index = 0;
+            let mut best_score = -1_i8;
+            let mut kinds: Vec<&'static str> = Vec::new();
+            for (index, branch) in branches.iter().enumerate() {
+                let (score, kind) = branch_rank(branch);
+                if !kind.is_empty() && !kinds.contains(&kind) {
+                    kinds.push(kind);
+                }
+                if score > best_score {
+                    best_score = score;
+                    best_index = index;
+                }
+            }
+            let Some(mut selected) = branches.into_iter().nth(best_index) else {
+                return Value::Object(object);
+            };
+            if let Value::Object(fields) = &mut selected {
+                if kinds.len() > 1 {
+                    let branch_description = fields
+                        .get("description")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned();
+                    let parent_description = object
+                        .get("description")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let combined = [parent_description, branch_description.as_str()]
+                        .into_iter()
+                        .filter(|text| !text.is_empty())
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    let hint = format!("Accepts: {}", kinds.join(" | "));
+                    let description = if combined.is_empty() {
+                        hint
+                    } else {
+                        format!("{combined} ({hint})")
+                    };
+                    fields.insert("description".to_owned(), Value::String(description));
+                }
+                for (key, value) in object {
+                    fields.entry(key).or_insert(value);
+                }
+            }
+            selected
+        }
+        Value::Array(items) => Value::Array(items.into_iter().map(flatten_unions).collect()),
+        other => other,
+    }
+}
+
+/// Ranks a union branch and names its JSON type for the fallback hint.
+fn branch_rank(branch: &Value) -> (i8, &'static str) {
+    let declared = branch.get("type").and_then(Value::as_str);
+    let kind = match declared {
+        Some("object") => "object",
+        Some("array") => "array",
+        Some("string") => "string",
+        Some("number" | "integer") => "number",
+        Some("boolean") => "boolean",
+        Some("null") => "null",
+        _ if branch.get("properties").is_some() => "object",
+        _ if branch.get("items").is_some() => "array",
+        _ => "",
+    };
+    let score = match kind {
+        "object" => 3,
+        "array" => 2,
+        "string" | "number" | "boolean" => 1,
+        _ => 0,
+    };
+    (score, kind)
 }

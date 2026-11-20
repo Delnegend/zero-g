@@ -66,6 +66,60 @@ fn test_build_request_payload_system_and_user() {
 }
 
 #[test]
+fn claude_tool_schemas_flatten_unions_that_gemini_preserves() {
+    let req: ChatCompletionRequest = serde_json::from_value(json!({
+        "model": "claude-sonnet-5-5-low",
+        "messages": [{"role": "user", "content": "hi"}],
+        "tools": [{
+            "type": "function",
+            "function": {
+                "name": "todo",
+                "description": "Manage tasks.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "task": {
+                            "description": "verbatim task content",
+                            "anyOf": [
+                                {"type": "string"},
+                                {"type": "array", "items": {"type": "string"}}
+                            ]
+                        },
+                        "phase": {"type": "string"}
+                    }
+                }
+            }
+        }]
+    }))
+    .unwrap();
+
+    let claude =
+        AntigravityClient::build_request_payload(&req, "p", "claude-sonnet-5-5-low", "s", None);
+    let schema = &claude["request"]["tools"][0]["functionDeclarations"][0]["parameters"];
+    let task = &schema["properties"]["task"];
+    assert!(task.get("anyOf").is_none());
+    assert_eq!(task["type"], "array");
+    assert_eq!(
+        task["description"],
+        "verbatim task content (Accepts: string | array)"
+    );
+    assert_eq!(schema["required"], json!([]));
+    assert_eq!(
+        claude["request"]["toolConfig"]["functionCallingConfig"]["mode"],
+        "VALIDATED"
+    );
+
+    let gemini = AntigravityClient::build_request_payload(&req, "p", "gemini-3.8-flash", "s", None);
+    let schema = &gemini["request"]["tools"][0]["functionDeclarations"][0]["parameters"];
+    assert_eq!(
+        schema["properties"]["task"]["anyOf"]
+            .as_array()
+            .map(Vec::len),
+        Some(2)
+    );
+}
+
+#[test]
 fn tool_results_are_objects_without_losing_values() {
     for (content, expected) in [
         (r#"{"items":[1,2]}"#, json!({"items": [1, 2]})),
