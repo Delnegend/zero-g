@@ -23,7 +23,7 @@
   "devDependencies": {
     "@happy-dom/global-registrator": "^21.0.4",
     "@tailwindcss/vite": "^4.3.5",
-    "@tanstack/router-plugin": "^1.168.48",
+    "@tanstack/router-plugin": "^1.169.0",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.8",
     "@tursodatabase/database": "0.7.2",
@@ -32,7 +32,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.2.1",
     "happy-dom": "^21.0.4",
-    "orval": "^8.46.0",
+    "orval": "^8.47.0",
     "oxc-transform-react": "^0.152.0",
     "oxlint": "^1.92.0",
     "oxlint-tailwindcss": "^1.17.1",
