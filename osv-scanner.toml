@@ -2,7 +2,7 @@
 # Remove this exception when the locked RSA dependency is fixed or removed.
 [[PackageOverrides]]
 name = "rsa"
-version = "0.10.0-rc.20"
+version = "0.10.0-rc.22"
 ecosystem = "crates.io"
 vulnerability.ignore = true
 reason = "Only present through Toasty's disabled MySQL driver; checked by just check-dependencies."
