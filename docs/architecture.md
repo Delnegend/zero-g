@@ -100,8 +100,8 @@ sequenceDiagram
 
 ## Invariants & Protocol Guarantees
 
-| Invariant                 | Scope                           | Rule                                                                                                                                                   |
-| ------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **OAuth Token Refresh**   | Codex                           | Checked before request; if expiration is within 60s, token refresh triggers automatically.                                                             |
-| **Interrupted Streams**   | Codex                           | Broken streams without terminal response raise a clean downstream error instead of a truncated success marker.                                         |
-| **Payload Size Limit**    | Unified inference POST requests | Request bodies capped at 20,000,000 bytes. Response body capture capped at 100 MiB.                                                                    |
+| Invariant               | Scope                           | Rule                                                                                                           |
+| ----------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| **OAuth Token Refresh** | Codex                           | Checked before request; if expiration is within 60s, token refresh triggers automatically.                     |
+| **Interrupted Streams** | Codex                           | Broken streams without terminal response raise a clean downstream error instead of a truncated success marker. |
+| **Payload Size Limit**  | Unified inference POST requests | Request bodies capped at 20,000,000 bytes. Response body capture capped at 100 MiB.                            |

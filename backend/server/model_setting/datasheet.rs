@@ -347,7 +347,6 @@ mod tests {
         assert!(filter_datasheet("{} trailing", &models).is_err());
     }
 
-
     /// Save both sheets atomically to the store.
     #[tokio::test]
     async fn save_datasheets_persists_both_sheets_atomically() {

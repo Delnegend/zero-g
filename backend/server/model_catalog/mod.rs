@@ -436,7 +436,6 @@ fn lookup<'a>(sheet: &'a Value, provider: &CachedProvider, id: &str) -> Option<&
     None
 }
 
-
 /// Match an exact model ID against the specified API provider's reference data.
 fn api_reference<'a>(sheet: &'a Value, owner: &str, id: &str) -> Option<&'a Value> {
     let find = |key: &str| {
@@ -476,11 +475,7 @@ fn normalize_pricing(kind: &str, price: &Value) -> CatalogPricing {
         } else {
             fields.cache_read_input_token_cost
         }),
-        source: match zen {
-            true => "models.dev",
-            false => "datasheet",
-        }
-        .to_owned(),
+        source: if zen { "models.dev" } else { "datasheet" }.to_owned(),
     }
 }
 
@@ -612,7 +607,11 @@ fn normalize_model(
     let input_modalities = info
         .input_modalities
         .or(reference.input_modalities)
-        .unwrap_or_else(|| metadata.modalities.map_or_default(|modalities| modalities.input));
+        .unwrap_or_else(|| {
+            metadata
+                .modalities
+                .map_or_default(|modalities| modalities.input)
+        });
     let reasoning_efforts = model
         .supported_reasoning_efforts
         .clone()

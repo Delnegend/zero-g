@@ -1,7 +1,4 @@
-import type {
-  DeviceFlow,
-  ProviderCredential,
-} from "@/server/api/providers";
+import type { DeviceFlow, ProviderCredential } from "@/server/api/providers";
 
 export type SignInFlow =
   | { kind: "device"; credential: ProviderCredential; data: DeviceFlow }

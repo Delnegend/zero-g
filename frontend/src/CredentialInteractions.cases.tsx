@@ -945,8 +945,6 @@ for (const [kind, label, host] of [
   });
 }
 
-
-
 test("rejects an untrusted provider authorization URL", async () => {
   globalThis.fetch = (async (url) =>
     String(url).endsWith("/credentials")

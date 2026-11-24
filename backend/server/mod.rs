@@ -1,7 +1,7 @@
-/// Dashboard authentication routes.
-pub(crate) mod dashboard_auth;
 /// Authenticated CLI observation ingestion.
 mod agy;
+/// Dashboard authentication routes.
+pub(crate) mod dashboard_auth;
 /// Dashboard authentication environment configuration.
 pub(crate) mod dashboard_auth_config;
 /// Health probe endpoint.

@@ -429,6 +429,7 @@ async fn key_configuration_update_lifecycle() {
 /// Context from unified dispatch is reused only when it matches; it never replaces
 /// the token, provider kind, or provider permission checks.
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn virtual_key_auth_reuses_only_matching_server_context() {
     let store = SettingsStore::new(Database::open(":memory:").await.unwrap(), &key(1))
         .await
@@ -496,17 +497,25 @@ async fn virtual_key_auth_reuses_only_matching_server_context() {
     );
     // A provider of the wrong kind is rejected whether reused or loaded.
     assert_eq!(
-        send("/codex/models/m", Some("t"), Some(provider("codex", "claude")))
-            .await
-            .unwrap()
-            .status(),
+        send(
+            "/codex/models/m",
+            Some("t"),
+            Some(provider("codex", "claude"))
+        )
+        .await
+        .unwrap()
+        .status(),
         StatusCode::NOT_FOUND
     );
     assert_eq!(
-        send("/claude/models/m", Some("t"), Some(provider("codex", "codex")))
-            .await
-            .unwrap()
-            .status(),
+        send(
+            "/claude/models/m",
+            Some("t"),
+            Some(provider("codex", "codex"))
+        )
+        .await
+        .unwrap()
+        .status(),
         StatusCode::NOT_FOUND
     );
     // Restricted permissions are still enforced for the routed provider.

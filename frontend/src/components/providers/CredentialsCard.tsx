@@ -167,9 +167,7 @@ export function CredentialsCard({
                   />
                 )}
                 {kind?.oauth &&
-                  ["codex", "claude", "cursor"].includes(
-                    provider.kind,
-                  ) && (
+                  ["codex", "claude", "cursor"].includes(provider.kind) && (
                     <Button
                       disabled={loginBusy || !credential.enabled}
                       onClick={() => onLogin(credential)}

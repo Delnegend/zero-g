@@ -61,7 +61,8 @@ export function CallbackSignIn({
         >
           Claude authorization
         </a>{" "}
-        and sign in. Paste the authorization code or redirected callback URL below.
+        and sign in. Paste the authorization code or redirected callback URL
+        below.
       </p>
       <form.Field name="callback">
         {(field) => (

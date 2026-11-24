@@ -322,7 +322,6 @@ impl From<ResponseTaggedItem> for ChatMessage {
     }
 }
 
-
 /// Responses request conversion coverage.
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]

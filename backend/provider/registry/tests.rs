@@ -374,7 +374,8 @@ async fn fixed_provider_identity_is_enforced() {
         .0,
         StatusCode::BAD_REQUEST
     );
-    let (status, provider) = request(&router, "POST", "/api/providers", r#"{"kind":"codex"}"#).await;
+    let (status, provider) =
+        request(&router, "POST", "/api/providers", r#"{"kind":"codex"}"#).await;
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(provider["id"], "codex");
     assert_eq!(provider["name"], "OpenAI Codex");
@@ -390,7 +391,9 @@ async fn fixed_provider_identity_is_enforced() {
         StatusCode::BAD_REQUEST
     );
     assert_eq!(
-        request(&router, "PUT", "/api/providers/codex", "{}").await.0,
+        request(&router, "PUT", "/api/providers/codex", "{}")
+            .await
+            .0,
         StatusCode::OK
     );
 }
@@ -451,7 +454,9 @@ async fn provider_recreation_respects_virtual_keys() {
         StatusCode::CREATED
     );
     assert_eq!(
-        request(&router, "DELETE", "/api/providers/codex", "").await.0,
+        request(&router, "DELETE", "/api/providers/codex", "")
+            .await
+            .0,
         StatusCode::NO_CONTENT
     );
     let mut db = (*store.database.db).clone();
@@ -492,7 +497,9 @@ async fn provider_recreation_respects_virtual_keys() {
         StatusCode::CREATED
     );
     assert_eq!(
-        request(&router, "DELETE", "/api/providers/codex", "").await.0,
+        request(&router, "DELETE", "/api/providers/codex", "")
+            .await
+            .0,
         StatusCode::NO_CONTENT
     );
     toasty::create!(VirtualKey {

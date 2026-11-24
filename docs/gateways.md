@@ -125,22 +125,22 @@ curl http://127.0.0.1:8080/v1/decisions \
 | `supports_tools`                                                       | `false` means no end-to-end OpenAI-compatible tool support       |
 | `reasoning`, `supported_reasoning_efforts`, `default_reasoning_effort` | Efforts the route accepts; the default only when known           |
 
-| Provider                            | What discovery reports                                                                                                                                                                                    |
-| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Codex                               | No output limit (no verified cap; client output limits are not forwarded) and tool support unknown. Effort strings, even unknown ones, go to upstream; none is set when omitted.                          |
-| Claude                              | `max_input_tokens` is input-only, so no combined `context_window`. Text and image input (no PDF parts), text output.                                                                                      |
-| Zen, Go, OpenRouter                 | Only route-relevant metadata from their model lists                                                                                                                                                       |
-| ChatJimmy                           | No tools; requests with tool definitions, calls or results are rejected, not stripped                                                                                                                     |
-| Custom OpenAI and other passthrough | Upstream fields kept as is; missing ones are not filled in                                                                                                                                                |
+| Provider                            | What discovery reports                                                                                                                                                           |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Codex                               | No output limit (no verified cap; client output limits are not forwarded) and tool support unknown. Effort strings, even unknown ones, go to upstream; none is set when omitted. |
+| Claude                              | `max_input_tokens` is input-only, so no combined `context_window`. Text and image input (no PDF parts), text output.                                                             |
+| Zen, Go, OpenRouter                 | Only route-relevant metadata from their model lists                                                                                                                              |
+| ChatJimmy                           | No tools; requests with tool definitions, calls or results are rejected, not stripped                                                                                            |
+| Custom OpenAI and other passthrough | Upstream fields kept as is; missing ones are not filled in                                                                                                                       |
 
 ---
 
 ## Error Handling & Wire Invariants
 
-| Behavior                | Provider Scope                     | Upstream Handling                                                                                                                                            |
-| ----------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Usage Chunks**        | Codex, Cursor                      | Emits final usage chunk when `stream_options.include_usage: true` is requested.                                                                              |
-| **Stream Termination**  | Codex                              | Emits `data: [DONE]` on clean close. Interrupted streams yield an error event instead of a silent finish.                                                    |
-| **Unsupported Limits**  | Codex                              | Accepts but does not forward `max_tokens` and `max_completion_tokens`; an effective output cap is unknown.                                                   |
-| **Strict Wire Options** | Codex, Claude, Cursor              | Reject unsupported options (e.g. unknown structured formats, stop sequences, unsupported choice counts) with clear errors instead of dropping them silently. |
-| **Claude Billing**      | Claude subscription                | Reports Anthropic's known third-party extra-usage restriction when returned; other upstream error bodies remain private.                                     |
+| Behavior                | Provider Scope        | Upstream Handling                                                                                                                                            |
+| ----------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Usage Chunks**        | Codex, Cursor         | Emits final usage chunk when `stream_options.include_usage: true` is requested.                                                                              |
+| **Stream Termination**  | Codex                 | Emits `data: [DONE]` on clean close. Interrupted streams yield an error event instead of a silent finish.                                                    |
+| **Unsupported Limits**  | Codex                 | Accepts but does not forward `max_tokens` and `max_completion_tokens`; an effective output cap is unknown.                                                   |
+| **Strict Wire Options** | Codex, Claude, Cursor | Reject unsupported options (e.g. unknown structured formats, stop sequences, unsupported choice counts) with clear errors instead of dropping them silently. |
+| **Claude Billing**      | Claude subscription   | Reports Anthropic's known third-party extra-usage restriction when returned; other upstream error bodies remain private.                                     |

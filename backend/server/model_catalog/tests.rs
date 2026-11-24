@@ -141,7 +141,6 @@ fn provider_lookup_precedence_and_owner_restrictions() {
     assert_eq!(lookup(&sheet, &provider, "m").unwrap()["value"], 2);
 }
 
-
 #[test]
 fn pricing_selection_units_and_unknown_values() {
     let model: Model = serde_json::from_value(json!({"id":"gemini-x"})).unwrap();
@@ -307,7 +306,6 @@ async fn catalog_keeps_models_when_datasheet_is_invalid() {
     assert_eq!(response.providers[0].models[0].model.id, "m");
     assert!(response.providers[0].models[0].pricing.is_none());
 }
-
 
 /// Create an in-memory settings store.
 async fn store() -> SettingsStore {
