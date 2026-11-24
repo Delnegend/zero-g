@@ -1,10 +1,10 @@
-FROM oven/bun:1.4.4 AS frontend
+FROM docker.io/oven/bun:1.4.4 AS frontend
 WORKDIR /app/frontend
 COPY frontend ./
 RUN bun install --frozen-lockfile && bun run tsc -b && bun run --bun vite build
 
 # Build stage
-FROM lukemathwalker/cargo-chef:latest-rust-alpine AS chef
+FROM docker.io/lukemathwalker/cargo-chef:latest-rust-alpine AS chef
 RUN apk add --no-cache git musl-dev clang-dev cmake make
 WORKDIR /app
 
