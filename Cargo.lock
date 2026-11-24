@@ -5067,7 +5067,7 @@ dependencies = [
 
 [[package]]
 name = "zero-g"
-version = "1.4.2"
+version = "1.5.0"
 dependencies = [
  "axum",
  "axum-auth-gate",
