@@ -1,7 +1,8 @@
 FROM debian:13-slim
 
 # Use the official, versioned Bun image instead of executing a remote installer.
-COPY --from=oven/bun:1.4.4 /usr/local/bin/bun /usr/local/bin/bun
+# Qualified with docker.io/ so Podman/Buildah resolves COPY --from without a local image.
+COPY --from=docker.io/oven/bun:1.4.4 /usr/local/bin/bun /usr/local/bin/bun
 
 ARG MOLD_VERSION=2.42.0
 
