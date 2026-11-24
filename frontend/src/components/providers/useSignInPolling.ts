@@ -19,14 +19,8 @@ export function useSignInPolling({
   useEffect(() => {
     if (!flow) return;
     const controller = new AbortController();
-    const kind =
-      flow.kind === "google"
-        ? "agy"
-        : flow.kind === "cursor"
-          ? "cursor"
-          : "codex";
-    const delay =
-      flow.kind === "google" ? 2000 : Math.max(1, flow.data.interval) * 1000;
+    const kind = flow.kind === "cursor" ? "cursor" : "codex";
+    const delay = Math.max(1, flow.data.interval) * 1000;
     const timer = { id: 0 };
     const poll = async () => {
       try {
@@ -42,13 +36,6 @@ export function useSignInPolling({
           onComplete();
         } else if (result.status === "pending") {
           timer.id = window.setTimeout(() => void poll(), delay);
-        } else {
-          onFailure(
-            ("error" in result &&
-              typeof result.error === "string" &&
-              result.error) ||
-              "Sign-in failed.",
-          );
         }
       } catch (err) {
         if (!controller.signal.aborted) onFailure(message(err));

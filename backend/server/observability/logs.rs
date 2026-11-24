@@ -283,7 +283,7 @@ pub(super) async fn detail(database: &Database, id: i64) -> Result<Option<LogEnt
 }
 
 /// Captured bodies compressed once, outside the write transaction and its retries.
-pub(super) struct CompressedBodies {
+pub(in crate::server) struct CompressedBodies {
     /// zstd-compressed request body.
     request: Vec<u8>,
     /// zstd-compressed response body.
@@ -292,7 +292,7 @@ pub(super) struct CompressedBodies {
 
 impl CompressedBodies {
     /// Compress a log's bodies; an absent body is stored as empty.
-    pub(super) fn new(log: &LogEntry) -> std::io::Result<Self> {
+    pub(in crate::server) fn new(log: &LogEntry) -> std::io::Result<Self> {
         Ok(Self {
             request: zstd::bulk::compress(
                 log.request_body.as_deref().unwrap_or_default().as_bytes(),
@@ -307,7 +307,7 @@ impl CompressedBodies {
 }
 
 /// Store a captured log, its compressed bodies, and its filter snapshots atomically.
-pub(super) async fn insert(
+pub(in crate::server) async fn insert(
     tx: &mut toasty::Transaction<'_>,
     log: &LogEntry,
     bodies: &CompressedBodies,
@@ -452,45 +452,45 @@ impl From<RequestLog> for LogSummary {
 
 /// One stored request log including its captured bodies.
 #[derive(Serialize, utoipa::ToSchema)]
-pub(super) struct LogEntry {
+pub(in crate::server) struct LogEntry {
     /// Database record identifier.
-    pub(super) id: i64,
+    pub(in crate::server) id: i64,
     /// Completion time in Unix seconds.
-    pub(super) created_at: i64,
+    pub(in crate::server) created_at: i64,
     /// Provider extracted from the request path.
-    pub(super) provider: String,
+    pub(in crate::server) provider: String,
     /// Model named in the request body.
-    pub(super) model: String,
+    pub(in crate::server) model: String,
     /// Request URI path.
-    pub(super) path: String,
+    pub(in crate::server) path: String,
     /// HTTP status, or 499 for an incomplete response stream.
-    pub(super) status: i64,
+    pub(in crate::server) status: i64,
     /// Elapsed request time in milliseconds.
-    pub(super) latency_ms: i64,
+    pub(in crate::server) latency_ms: i64,
     /// Reported input token count, when available.
     #[schema(required = true)]
-    pub(super) input_tokens: Option<i64>,
+    pub(in crate::server) input_tokens: Option<i64>,
     /// Reported output token count, when available.
     #[schema(required = true)]
-    pub(super) output_tokens: Option<i64>,
+    pub(in crate::server) output_tokens: Option<i64>,
     /// Captured request body, or null once body retention has removed it.
     #[schema(required = true)]
-    pub(super) request_body: Option<String>,
+    pub(in crate::server) request_body: Option<String>,
     /// Captured response body, or null once body retention has removed it.
     #[schema(required = true)]
-    pub(super) response_body: Option<String>,
+    pub(in crate::server) response_body: Option<String>,
     /// Authenticated virtual key ID and name snapshot, if known.
     #[schema(required = true)]
-    pub(super) virtual_key_id: Option<String>,
+    pub(in crate::server) virtual_key_id: Option<String>,
     /// Authenticated virtual key name snapshot.
     #[schema(required = true)]
-    pub(super) virtual_key_name: Option<String>,
+    pub(in crate::server) virtual_key_name: Option<String>,
     /// Successfully selected provider credential ID, if any.
     #[schema(required = true)]
-    pub(super) credential_id: Option<String>,
+    pub(in crate::server) credential_id: Option<String>,
     /// Successfully selected provider credential name snapshot.
     #[schema(required = true)]
-    pub(super) credential_name: Option<String>,
+    pub(in crate::server) credential_name: Option<String>,
 }
 
 impl LogEntry {

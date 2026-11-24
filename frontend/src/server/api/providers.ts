@@ -1,7 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import * as api from "./generated/client";
 import type {
-  AntigravityStartResponse,
   CodexStartResponse,
   CreateProvider,
   Credential,
@@ -18,7 +17,6 @@ export type Provider = ProviderContract;
 export type ProviderCredential = Credential;
 export type QuotaWindow = QuotaWindowContract;
 export type CredentialUsage = QuotaSnapshot;
-export type GoogleFlow = AntigravityStartResponse;
 export type DeviceFlow = CodexStartResponse;
 export type CredentialUpdate = CredentialInput;
 
@@ -52,17 +50,6 @@ export function deleteCredential(providerId: string, credentialId: string) {
   return api.deleteCredential(providerId, credentialId);
 }
 
-export async function finishGoogleSignIn(
-  providerId: string,
-  credentialId: string | undefined,
-  callbackUrl: string,
-) {
-  if (!credentialId) throw new Error("Credential is required");
-  return api.finishAntigravityLogin(providerId, credentialId, {
-    callback_url: callbackUrl,
-  });
-}
-
 export function finishClaudeSignIn(
   providerId: string,
   credentialId: string,
@@ -83,19 +70,12 @@ export function startCursorSignIn(providerId: string, credentialId: string) {
 export async function pollSignIn(
   providerId: string,
   credentialId: string | undefined,
-  kind: "agy" | "codex" | "claude" | "cursor",
+  kind: "codex" | "claude" | "cursor",
   id: string,
   signal: AbortSignal,
 ) {
   if (!credentialId) throw new Error("Credential is required");
   switch (kind) {
-    case "agy":
-      return api.pollAntigravityLogin(
-        providerId,
-        credentialId,
-        { id },
-        { signal },
-      );
     case "codex":
       return api.pollCodexLogin(providerId, credentialId, { id }, { signal });
     case "claude":
@@ -103,10 +83,6 @@ export async function pollSignIn(
     case "cursor":
       return api.pollCursorLogin(providerId, credentialId, { id }, { signal });
   }
-}
-
-export function startGoogleSignIn(providerId: string, credentialId: string) {
-  return api.startAntigravityLogin(providerId, credentialId);
 }
 
 export function startCodexSignIn(providerId: string, credentialId: string) {

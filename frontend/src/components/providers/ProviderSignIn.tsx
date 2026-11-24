@@ -6,7 +6,6 @@ import {
   credentialsOptions,
   credentialUsageKey,
   startCodexSignIn,
-  startGoogleSignIn,
   startClaudeSignIn,
   startCursorSignIn,
   type Provider,
@@ -58,17 +57,7 @@ export function ProviderSignIn({
     setNotice("");
     setFlow(null);
     try {
-      if (provider.kind === "agy") {
-        const result = await startGoogleSignIn(provider.id, credential.id);
-        const url = new URL(result.url);
-        if (url.protocol !== "https:" || url.hostname !== "accounts.google.com")
-          throw new Error("Invalid Google authorization URL.");
-        setFlow({
-          kind: "google",
-          credential,
-          data: { ...result, url: url.href },
-        });
-      } else if (provider.kind === "codex") {
+      if (provider.kind === "codex") {
         const result = await startCodexSignIn(provider.id, credential.id);
         const url = new URL(result.url);
         if (url.protocol !== "https:" || url.hostname !== "auth.openai.com")
@@ -138,14 +127,13 @@ export function ProviderSignIn({
       {flow && (
         <p className="mt-4 text-sm">Signing in: {flow.credential.name}</p>
       )}
-      {flow && (flow.kind === "google" || flow.kind === "claude") && (
+      {flow?.kind === "claude" && (
         <CallbackSignIn
           providerId={provider.id}
           flow={flow}
           busy={busy}
           setBusy={setBusy}
           onError={setError}
-          onFailure={onFailure}
           onComplete={onComplete}
           onCancel={() => setFlow(null)}
         />

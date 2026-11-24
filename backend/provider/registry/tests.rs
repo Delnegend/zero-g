@@ -225,7 +225,7 @@ async fn credential_creation_and_provider_deletion_are_serialized() {
     .unwrap();
     let router = router(store.clone());
     assert_eq!(
-        request(&router, "POST", "/api/providers", r#"{"kind":"agy"}"#)
+        request(&router, "POST", "/api/providers", r#"{"kind":"codex"}"#)
             .await
             .0,
         StatusCode::CREATED
@@ -234,16 +234,16 @@ async fn credential_creation_and_provider_deletion_are_serialized() {
         request(
             &router,
             "POST",
-            "/api/providers/agy/credentials",
+            "/api/providers/codex/credentials",
             r#"{"name":"A","weight":1,"enabled":false}"#
         ),
-        request(&router, "DELETE", "/api/providers/agy", "")
+        request(&router, "DELETE", "/api/providers/codex", "")
     );
     match (create.0, delete.0) {
         (StatusCode::CREATED, StatusCode::CONFLICT) => {
-            assert!(get(&store.database, "agy").await.unwrap().is_some());
+            assert!(get(&store.database, "codex").await.unwrap().is_some());
             assert_eq!(
-                ProviderCredential::filter_by_provider_id("agy")
+                ProviderCredential::filter_by_provider_id("codex")
                     .exec(&mut (*store.database.db).clone())
                     .await
                     .unwrap()
@@ -252,7 +252,7 @@ async fn credential_creation_and_provider_deletion_are_serialized() {
             );
         }
         (StatusCode::NOT_FOUND, StatusCode::NO_CONTENT) => {
-            assert!(get(&store.database, "agy").await.unwrap().is_none());
+            assert!(get(&store.database, "codex").await.unwrap().is_none());
         }
         result => panic!("Unexpected create/delete result: {result:?}"),
     }
@@ -269,13 +269,13 @@ async fn provider_uniqueness_and_credential_validation() {
     .unwrap();
     let router = router(store);
     assert_eq!(
-        request(&router, "POST", "/api/providers", r#"{"kind":"agy"}"#)
+        request(&router, "POST", "/api/providers", r#"{"kind":"codex"}"#)
             .await
             .0,
         StatusCode::CREATED
     );
     assert_eq!(
-        request(&router, "POST", "/api/providers", r#"{"kind":"agy"}"#)
+        request(&router, "POST", "/api/providers", r#"{"kind":"codex"}"#)
             .await
             .0,
         StatusCode::CONFLICT
@@ -284,7 +284,7 @@ async fn provider_uniqueness_and_credential_validation() {
         request(
             &router,
             "POST",
-            "/api/providers/agy/credentials",
+            "/api/providers/codex/credentials",
             r#"{"name":"A","weight":0,"enabled":true}"#
         )
         .await
@@ -295,7 +295,7 @@ async fn provider_uniqueness_and_credential_validation() {
         request(
             &router,
             "POST",
-            "/api/providers/agy/credentials",
+            "/api/providers/codex/credentials",
             r#"{"name":"A","weight":1,"enabled":true,"api_key":"key"}"#
         )
         .await
@@ -341,9 +341,9 @@ async fn fixed_provider_identity_is_enforced() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|kind| kind["value"] == "agy"
-                && kind["fixed_id"] == "agy"
-                && kind["fixed_name"] == "Google Antigravity")
+            .any(|kind| kind["value"] == "codex"
+                && kind["fixed_id"] == "codex"
+                && kind["fixed_name"] == "OpenAI Codex")
     );
     for kind in kinds["kinds"].as_array().unwrap() {
         if kind["fixed_name"].is_string() {
@@ -357,7 +357,7 @@ async fn fixed_provider_identity_is_enforced() {
             &router,
             "POST",
             "/api/providers",
-            r#"{"id":"agy","name":"custom","kind":"openai","base_url":"https://example.com"}"#
+            r#"{"id":"codex","name":"custom","kind":"openai","base_url":"https://example.com"}"#
         )
         .await
         .0,
@@ -368,21 +368,21 @@ async fn fixed_provider_identity_is_enforced() {
             &router,
             "POST",
             "/api/providers",
-            r#"{"id":"wrong","name":"wrong","kind":"agy"}"#
+            r#"{"id":"wrong","name":"wrong","kind":"codex"}"#
         )
         .await
         .0,
         StatusCode::BAD_REQUEST
     );
-    let (status, provider) = request(&router, "POST", "/api/providers", r#"{"kind":"agy"}"#).await;
+    let (status, provider) = request(&router, "POST", "/api/providers", r#"{"kind":"codex"}"#).await;
     assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(provider["id"], "agy");
-    assert_eq!(provider["name"], "Google Antigravity");
+    assert_eq!(provider["id"], "codex");
+    assert_eq!(provider["name"], "OpenAI Codex");
     assert_eq!(
         request(
             &router,
             "PUT",
-            "/api/providers/agy",
+            "/api/providers/codex",
             r#"{"name":"renamed"}"#
         )
         .await
@@ -390,7 +390,7 @@ async fn fixed_provider_identity_is_enforced() {
         StatusCode::BAD_REQUEST
     );
     assert_eq!(
-        request(&router, "PUT", "/api/providers/agy", "{}").await.0,
+        request(&router, "PUT", "/api/providers/codex", "{}").await.0,
         StatusCode::OK
     );
 }
@@ -445,13 +445,13 @@ async fn provider_recreation_respects_virtual_keys() {
     .unwrap();
     let router = router(store.clone());
     assert_eq!(
-        request(&router, "POST", "/api/providers", r#"{"kind":"agy"}"#)
+        request(&router, "POST", "/api/providers", r#"{"kind":"codex"}"#)
             .await
             .0,
         StatusCode::CREATED
     );
     assert_eq!(
-        request(&router, "DELETE", "/api/providers/agy", "").await.0,
+        request(&router, "DELETE", "/api/providers/codex", "").await.0,
         StatusCode::NO_CONTENT
     );
     let mut db = (*store.database.db).clone();
@@ -459,7 +459,7 @@ async fn provider_recreation_respects_virtual_keys() {
         id: "key".to_string(),
         name: "restricted".to_string(),
         key_hash: vec![1],
-        providers: "[\"agy\"]".to_string(),
+        providers: "[\"codex\"]".to_string(),
         models: "[]".to_string(),
         created_at: 0,
         expires_at: Some(1),
@@ -469,7 +469,7 @@ async fn provider_recreation_respects_virtual_keys() {
     .await
     .unwrap();
     assert_eq!(
-        request(&router, "POST", "/api/providers", r#"{"kind":"agy"}"#)
+        request(&router, "POST", "/api/providers", r#"{"kind":"codex"}"#)
             .await
             .0,
         StatusCode::CONFLICT
@@ -477,7 +477,7 @@ async fn provider_recreation_respects_virtual_keys() {
     VirtualKey::upsert_by_id("key")
         .name("restricted")
         .key_hash(vec![1])
-        .providers("[\"agy\"]")
+        .providers("[\"codex\"]")
         .models("[]")
         .created_at(0)
         .expires_at(Some(1))
@@ -486,13 +486,13 @@ async fn provider_recreation_respects_virtual_keys() {
         .await
         .unwrap();
     assert_eq!(
-        request(&router, "POST", "/api/providers", r#"{"kind":"agy"}"#)
+        request(&router, "POST", "/api/providers", r#"{"kind":"codex"}"#)
             .await
             .0,
         StatusCode::CREATED
     );
     assert_eq!(
-        request(&router, "DELETE", "/api/providers/agy", "").await.0,
+        request(&router, "DELETE", "/api/providers/codex", "").await.0,
         StatusCode::NO_CONTENT
     );
     toasty::create!(VirtualKey {
@@ -509,7 +509,7 @@ async fn provider_recreation_respects_virtual_keys() {
     .await
     .unwrap();
     assert_eq!(
-        request(&router, "POST", "/api/providers", r#"{"kind":"agy"}"#)
+        request(&router, "POST", "/api/providers", r#"{"kind":"codex"}"#)
             .await
             .0,
         StatusCode::CREATED

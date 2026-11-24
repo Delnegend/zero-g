@@ -436,31 +436,6 @@ fn lookup<'a>(sheet: &'a Value, provider: &CachedProvider, id: &str) -> Option<&
     None
 }
 
-/// Match only explicit reference prices and declared Gemini preview aliases.
-fn reference_price<'a>(sheet: &'a Value, id: &str) -> Option<&'a Value> {
-    let candidates: Vec<(String, &str, bool)> = if id.starts_with("gemini-") {
-        vec![
-            (format!("gemini/{id}"), "gemini", false),
-            (format!("vertex_ai/{id}"), "vertex_ai", false),
-            (format!("gemini/{id}-preview"), "gemini", true),
-            (format!("vertex_ai/{id}-preview"), "vertex_ai", true),
-        ]
-    } else if id.starts_with("claude-") {
-        let base = id.strip_suffix("-thinking").unwrap_or(id);
-        vec![
-            (base.to_owned(), "anthropic", false),
-            (format!("anthropic/{base}"), "anthropic", false),
-        ]
-    } else {
-        Vec::new()
-    };
-    candidates.into_iter().find_map(|(key, owner, alias)| {
-        let entry = sheet.get(&key).filter(|entry| entry.is_object())?;
-        (entry.get("provider").and_then(Value::as_str) == Some(owner)
-            && (!alias || entry.get("base_model").and_then(Value::as_str) == Some(id)))
-        .then_some(entry)
-    })
-}
 
 /// Match an exact model ID against the specified API provider's reference data.
 fn api_reference<'a>(sheet: &'a Value, owner: &str, id: &str) -> Option<&'a Value> {
@@ -503,7 +478,6 @@ fn normalize_pricing(kind: &str, price: &Value) -> CatalogPricing {
         }),
         source: match zen {
             true => "models.dev",
-            false if kind == "agy" => "antigravity-reference",
             false => "datasheet",
         }
         .to_owned(),
@@ -540,8 +514,6 @@ fn catalog_pricing(
         )
     } else if let Some(price) = lookup(&data.pricing, provider, &model.id) {
         (Some(price), false)
-    } else if provider.kind == "agy" {
-        (reference_price(&data.pricing, &model.id), false)
     } else if provider.kind == "claude" {
         (api_reference(&data.pricing, "anthropic", &model.id), true)
     } else if provider.kind == "codex" {
@@ -640,15 +612,7 @@ fn normalize_model(
     let input_modalities = info
         .input_modalities
         .or(reference.input_modalities)
-        .unwrap_or_else(|| {
-            if provider.kind == "agy" {
-                crate::provider::antigravity::models::input_modalities(&model.extra)
-            } else {
-                metadata
-                    .modalities
-                    .map_or_default(|modalities| modalities.input)
-            }
-        });
+        .unwrap_or_else(|| metadata.modalities.map_or_default(|modalities| modalities.input));
     let reasoning_efforts = model
         .supported_reasoning_efforts
         .clone()

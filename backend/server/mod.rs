@@ -1,5 +1,7 @@
 /// Dashboard authentication routes.
 pub(crate) mod dashboard_auth;
+/// Authenticated CLI observation ingestion.
+mod agy;
 /// Dashboard authentication environment configuration.
 pub(crate) mod dashboard_auth_config;
 /// Health probe endpoint.
@@ -133,6 +135,7 @@ pub(crate) fn create_router(state: AppState) -> Router {
             state.clone(),
             inference::authenticate_post,
         ))
+        .merge(agy::router(&state))
         .layer(cors)
         .with_state(state)
         .merge(dashboard)

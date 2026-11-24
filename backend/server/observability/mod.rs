@@ -20,6 +20,8 @@ use dashboard::{
 use filter::{FilterOptions, IdentityOption};
 use logs::{__path_log_detail, __path_logs, LogEntry, LogSummary, LogsResponse};
 pub(super) use logs::{log_detail, logs};
+pub(super) use logs::{CompressedBodies, insert};
+pub(super) use logs::LogEntry as ObservationLogEntry;
 pub(crate) use retention::prune_expired;
 
 /// Request observability dashboard operation.
@@ -44,7 +46,7 @@ pub(crate) use retention::prune_expired;
 pub(crate) struct Api;
 
 /// Return the current Unix timestamp in seconds.
-fn now() -> i64 {
+pub(super) fn now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))

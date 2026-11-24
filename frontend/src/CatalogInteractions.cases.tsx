@@ -96,7 +96,7 @@ test("model cards label supported input icons and retain unknown modalities", as
         {
           id: "example",
           name: "Example",
-          kind: "agy",
+          kind: "codex",
           base_url: "",
           error: null,
           models: [
@@ -127,14 +127,13 @@ test("model cards label supported input icons and retain unknown modalities", as
         {
           id: "empty",
           name: "Empty provider",
-          kind: "agy",
+          kind: "codex",
           base_url: "",
           error: null,
           models: [],
         },
       ],
     })) as typeof fetch;
-  const user = userEvent.setup();
   mount(
     <TooltipProvider>
       <ModelCatalogPage />
@@ -147,12 +146,6 @@ test("model cards label supported input icons and retain unknown modalities", as
   }
   assert.ok(screen.getByText("geometry"));
   assert.ok(screen.getByText("toString"));
-  await user.click(
-    screen.getByRole("button", { name: "About Antigravity input support" }),
-  );
-  assert.ok(
-    await screen.findByText(/forwards inline audio, video, and PDF data/i),
-  );
 });
 
 test("catalog explains subscription reference pricing and Claude PDF limitations", async () => {

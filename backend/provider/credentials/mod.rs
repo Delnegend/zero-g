@@ -131,7 +131,7 @@ async fn include_profiles(
     kind: &str,
     credentials: &mut [Credential],
 ) -> Result<(), String> {
-    if !matches!(kind, "agy" | "codex" | "claude") {
+    if !matches!(kind, "codex" | "claude") {
         return Ok(());
     }
     for credential in credentials

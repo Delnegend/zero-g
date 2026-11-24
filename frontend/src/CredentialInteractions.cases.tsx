@@ -661,7 +661,7 @@ test("quota resets show a countdown and reveal the exact time", async () => {
   assert.ok(await screen.findByText(new Date(reset * 1000).toLocaleString()));
 });
 
-test("Antigravity quotas show each pool with its own windows", async () => {
+test("grouped quotas show each pool with its own windows", async () => {
   globalThis.fetch = (async () =>
     Response.json({
       kind: "grouped_quota",
@@ -686,8 +686,8 @@ test("Antigravity quotas show each pool with its own windows", async () => {
     })) as typeof fetch;
   mount(
     <CredentialUsage
-      providerId="agy"
-      providerKind="agy"
+      providerId="claude"
+      providerKind="claude"
       credentialId="account"
       credentialName="Account"
       connected
@@ -945,200 +945,7 @@ for (const [kind, label, host] of [
   });
 }
 
-test("Google callback failure keeps the flow available for retry", async () => {
-  let attempts = 0;
-  globalThis.fetch = (async (url) => {
-    const path = String(url);
-    if (path.endsWith("/credentials"))
-      return Response.json({
-        credentials: [
-          {
-            id: "one",
-            name: "Account",
-            weight: 1,
-            enabled: true,
-            connected: false,
-          },
-        ],
-      });
-    if (path.endsWith("/agy/start"))
-      return Response.json({
-        id: "flow",
-        url: "https://accounts.google.com/authorize",
-        local_callback: false,
-      });
-    if (path.endsWith("/agy/finish")) {
-      attempts++;
-      return attempts === 1
-        ? new Response("Invalid callback", { status: 400 })
-        : Response.json({ status: "complete" });
-    }
-    throw new Error(`Unexpected request: ${path}`);
-  }) as typeof fetch;
-  const user = userEvent.setup();
-  mount(
-    <ProviderCard
-      provider={{
-        id: "agy",
-        name: "Google",
-        kind: "agy",
-        base_url: "",
-        keyless: false,
-      }}
-      kind={{
-        value: "agy",
-        label: "Google",
-        api_key: false,
-        oauth: true,
-        fixed_id: "agy",
-        fixed_name: "Google",
-      }}
-      onEdit={() => {}}
-      onDelete={() => {}}
-      deleting={false}
-    />,
-  );
-  await user.click(
-    await screen.findByRole("button", { name: "Sign in Google" }),
-  );
-  await user.type(
-    await screen.findByLabelText("Redirected callback URL"),
-    "http://localhost/callback?code=example",
-  );
-  await user.click(
-    screen.getByRole("button", { name: "Finish Google sign-in" }),
-  );
-  assert.ok(await screen.findByRole("alert"));
-  assert.ok(screen.getByLabelText("Redirected callback URL"));
-  await user.click(
-    screen.getByRole("button", { name: "Finish Google sign-in" }),
-  );
-  await screen.findByText("Sign-in complete.");
-  assert.equal(attempts, 2);
-});
 
-test("cancelling Google sign-in aborts polling and ignores a late completion", async () => {
-  let pollSignal: AbortSignal | null = null;
-  let release!: (response: Response) => void;
-  globalThis.fetch = (async (url, options) => {
-    const path = String(url);
-    if (path.endsWith("/credentials"))
-      return Response.json({
-        credentials: [
-          {
-            id: "one",
-            name: "Account",
-            weight: 1,
-            enabled: true,
-            connected: false,
-          },
-        ],
-      });
-    if (path.endsWith("/agy/start"))
-      return Response.json({
-        id: "flow",
-        url: "https://accounts.google.com/authorize",
-        local_callback: true,
-      });
-    if (path.endsWith("/agy/poll")) {
-      pollSignal = options?.signal as AbortSignal;
-      return new Promise<Response>((resolve) => {
-        release = resolve;
-      });
-    }
-    throw new Error(`Unexpected request: ${path}`);
-  }) as typeof fetch;
-  const user = userEvent.setup();
-  mount(
-    <ProviderCard
-      provider={{
-        id: "agy",
-        name: "Google",
-        kind: "agy",
-        base_url: "",
-        keyless: false,
-      }}
-      kind={{
-        value: "agy",
-        label: "Google",
-        api_key: false,
-        oauth: true,
-        fixed_id: "agy",
-        fixed_name: "Google",
-      }}
-      onEdit={() => {}}
-      onDelete={() => {}}
-      deleting={false}
-    />,
-  );
-  await user.click(
-    await screen.findByRole("button", { name: "Sign in Google" }),
-  );
-  await waitFor(() => assert.ok(pollSignal), { timeout: 3000 });
-  await user.click(screen.getByRole("button", { name: "Cancel" }));
-  assert.ok((pollSignal as unknown as AbortSignal).aborted);
-  await act(async () => {
-    release(Response.json({ status: "complete" }));
-  });
-  assert.equal(screen.queryByText("Sign-in complete."), null);
-  assert.ok(screen.getByRole("button", { name: "Sign in Google" }));
-});
-
-test("Google sign-in completes through polling", async () => {
-  globalThis.fetch = (async (url) => {
-    const path = String(url);
-    if (path.endsWith("/credentials"))
-      return Response.json({
-        credentials: [
-          {
-            id: "one",
-            name: "Account",
-            weight: 1,
-            enabled: true,
-            connected: false,
-          },
-        ],
-      });
-    if (path.endsWith("/agy/start"))
-      return Response.json({
-        id: "flow",
-        url: "https://accounts.google.com/authorize",
-        local_callback: true,
-      });
-    if (path.endsWith("/agy/poll"))
-      return Response.json({ status: "complete" });
-    throw new Error(`Unexpected request: ${path}`);
-  }) as typeof fetch;
-  const user = userEvent.setup();
-  mount(
-    <ProviderCard
-      provider={{
-        id: "agy",
-        name: "Google",
-        kind: "agy",
-        base_url: "",
-        keyless: false,
-      }}
-      kind={{
-        value: "agy",
-        label: "Google",
-        api_key: false,
-        oauth: true,
-        fixed_id: "agy",
-        fixed_name: "Google",
-      }}
-      onEdit={() => {}}
-      onDelete={() => {}}
-      deleting={false}
-    />,
-  );
-  await user.click(
-    await screen.findByRole("button", { name: "Sign in Google" }),
-  );
-  await screen.findByText("Sign-in complete.", {}, { timeout: 3000 });
-  assert.equal(screen.queryByLabelText("Redirected callback URL"), null);
-  assert.ok(screen.getByRole("button", { name: "Sign in Google" }));
-});
 
 test("rejects an untrusted provider authorization URL", async () => {
   globalThis.fetch = (async (url) =>

@@ -141,33 +141,11 @@ fn provider_lookup_precedence_and_owner_restrictions() {
     assert_eq!(lookup(&sheet, &provider, "m").unwrap()["value"], 2);
 }
 
-#[test]
-fn reference_aliases_require_matching_owner_and_base() {
-    let sheet = json!({
-        "gemini/gemini-x-preview":{"provider":"gemini","base_model":"other"},
-        "vertex_ai/gemini-x-preview":{"provider":"vertex_ai","base_model":"gemini-x","value":2},
-        "claude-x":{"provider":"anthropic","value":3},
-        "anthropic/claude-x":{"provider":"wrong","value":4}
-    });
-    assert_eq!(reference_price(&sheet, "gemini-x").unwrap()["value"], 2);
-    assert_eq!(
-        reference_price(&sheet, "claude-x-thinking").unwrap()["value"],
-        3
-    );
-    assert!(reference_price(&sheet, "gemini-y").is_none());
-    assert!(
-        reference_price(
-            &json!({"gemini/gemini-x-preview":{"provider":"wrong","base_model":"gemini-x"}}),
-            "gemini-x"
-        )
-        .is_none()
-    );
-}
 
 #[test]
 fn pricing_selection_units_and_unknown_values() {
     let model: Model = serde_json::from_value(json!({"id":"gemini-x"})).unwrap();
-    let agy = sample_provider("agy", "custom");
+    let provider = sample_provider("openai", "custom");
     let data = sample_data(
         json!({
             "custom/gemini-x":{"provider":"custom","input_cost_per_token":0.000_002,"output_cost_per_token":"invalid"},
@@ -175,12 +153,12 @@ fn pricing_selection_units_and_unknown_values() {
         }),
         json!({}),
     );
-    let result = normalize_model(&agy, model, &data);
+    let result = normalize_model(&provider, model, &data);
     let price = result.pricing.unwrap();
     assert_eq!(price.input, Some(2.0));
     assert_eq!(price.output, None);
     assert_eq!(price.cache_read, None);
-    assert_eq!(price.source, "antigravity-reference");
+    assert_eq!(price.source, "datasheet");
     let zen = sample_provider("zen", "zen");
     let model: Model = serde_json::from_value(json!({
         "id":"m", "reasoning":true, "zen_metadata":{
@@ -330,59 +308,6 @@ async fn catalog_keeps_models_when_datasheet_is_invalid() {
     assert!(response.providers[0].models[0].pricing.is_none());
 }
 
-/// Antigravity's cached capability flags and enabled MIME types are shown in the catalog.
-#[tokio::test]
-async fn catalog_reports_antigravity_input_modalities() {
-    let store = store().await;
-    assert_eq!(
-        registry_request(&store, "POST", "/api/providers", json!({"kind":"agy"})).await,
-        StatusCode::CREATED
-    );
-    let mut catalog = load(&store).await.unwrap();
-    catalog.providers[0].models = [
-        json!({"id":"vision","supportsImages":true,"supportedMimeTypes":{"image/png":true,"video/jpeg2000":true,"video/videoframe/jpeg2000":true,"audio/wav":false,"application/pdf":false}}),
-        json!({"id":"multimodal","supportsImages":true,"supportsVideo":true,"supportedMimeTypes":{"audio/mpeg":true,"application/pdf":true,"video/mp4":true}}),
-        json!({"id":"disabled","supportsImages":false,"supportsVideo":false,"supportedMimeTypes":{"image/png":true,"video/mp4":true,"audio/mpeg":false,"application/pdf":false}}),
-        json!({"id":"mime-only","supportedMimeTypes":{"image/webp":true,"video/webm":true}}),
-        json!({"id":"plain"}),
-    ].into_iter().map(|model| serde_json::from_value(model).unwrap()).collect();
-    save(&store, &catalog).await.unwrap();
-    let state = AppState {
-        providers: crate::provider::Providers::new(),
-        database: store.database.clone(),
-        dashboard_auth: crate::server::dashboard_auth_config::test_auth().await,
-        settings: store,
-    };
-    let response = router(state)
-        .oneshot(
-            Request::builder()
-                .uri("/api/model-catalog")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let document: Value = serde_json::from_slice(&bytes).unwrap();
-    let models = document["providers"][0]["models"].as_array().unwrap();
-    let inputs = |id: &str| {
-        &models
-            .iter()
-            .find(|model| model["model"]["id"] == id)
-            .unwrap()["input_modalities"]
-    };
-    assert_eq!(inputs("vision"), &json!(["text", "image"]));
-    assert_eq!(
-        inputs("multimodal"),
-        &json!(["text", "image", "audio", "video", "pdf"])
-    );
-    assert_eq!(inputs("disabled"), &json!(["text"]));
-    assert_eq!(inputs("mime-only"), &json!(["text", "image", "video"]));
-    assert_eq!(inputs("plain"), &json!(["text"]));
-}
 
 /// Create an in-memory settings store.
 async fn store() -> SettingsStore {

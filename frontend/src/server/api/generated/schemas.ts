@@ -7,88 +7,6 @@
  */
 import * as zod from "zod";
 
-export const AntigravityFinishInput = zod
-  .object({
-    callback_url: zod
-      .string()
-      .describe(
-        "Full callback URL containing the OAuth state and authorization code.",
-      ),
-  })
-  .describe("Dashboard request containing the Google redirect URL.");
-
-export type AntigravityFinishInput = zod.input<typeof AntigravityFinishInput>;
-export type AntigravityFinishInputOutput = zod.output<
-  typeof AntigravityFinishInput
->;
-
-export const AntigravityFinishResponse = zod
-  .object({
-    status: zod.enum(["complete"]),
-  })
-  .describe("Google OAuth flow completion response.");
-
-export type AntigravityFinishResponse = zod.input<
-  typeof AntigravityFinishResponse
->;
-export type AntigravityFinishResponseOutput = zod.output<
-  typeof AntigravityFinishResponse
->;
-
-export const AntigravityPollInput = zod
-  .object({
-    id: zod.string().describe("OAuth state identifying the flow."),
-  })
-  .describe("Dashboard request to poll a Google OAuth flow.");
-
-export type AntigravityPollInput = zod.input<typeof AntigravityPollInput>;
-export type AntigravityPollInputOutput = zod.output<
-  typeof AntigravityPollInput
->;
-
-export const AntigravityPollResponse = zod
-  .union([
-    zod
-      .object({
-        status: zod.enum(["pending"]),
-      })
-      .describe("Authorization has not completed."),
-    zod
-      .object({
-        status: zod.enum(["complete"]),
-      })
-      .describe("Credentials were saved."),
-    zod
-      .object({
-        error: zod.string().describe("Error reported by the flow."),
-        status: zod.enum(["failed"]),
-      })
-      .describe("Authorization failed."),
-  ])
-  .describe("Google OAuth polling result.");
-
-export type AntigravityPollResponse = zod.input<typeof AntigravityPollResponse>;
-export type AntigravityPollResponseOutput = zod.output<
-  typeof AntigravityPollResponse
->;
-
-export const AntigravityStartResponse = zod
-  .object({
-    id: zod.string().describe("OAuth flow identifier."),
-    local_callback: zod
-      .boolean()
-      .describe("Whether the local callback listener is active."),
-    url: zod.string().describe("Authorization URL."),
-  })
-  .describe("Successful Google OAuth flow creation.");
-
-export type AntigravityStartResponse = zod.input<
-  typeof AntigravityStartResponse
->;
-export type AntigravityStartResponseOutput = zod.output<
-  typeof AntigravityStartResponse
->;
-
 export const breakdownEntryRequestsMin = 0;
 
 export const BreakdownEntry = zod
@@ -2233,36 +2151,6 @@ export const UpdateCredentialBody = zod
 export type UpdateCredentialBody = zod.input<typeof UpdateCredentialBody>;
 export type UpdateCredentialBodyOutput = zod.output<
   typeof UpdateCredentialBody
->;
-
-export const FinishAntigravityLoginBody = zod
-  .object({
-    callback_url: zod
-      .string()
-      .describe(
-        "Full callback URL containing the OAuth state and authorization code.",
-      ),
-  })
-  .describe("Dashboard request containing the Google redirect URL.");
-
-export type FinishAntigravityLoginBody = zod.input<
-  typeof FinishAntigravityLoginBody
->;
-export type FinishAntigravityLoginBodyOutput = zod.output<
-  typeof FinishAntigravityLoginBody
->;
-
-export const PollAntigravityLoginBody = zod
-  .object({
-    id: zod.string().describe("OAuth state identifying the flow."),
-  })
-  .describe("Dashboard request to poll a Google OAuth flow.");
-
-export type PollAntigravityLoginBody = zod.input<
-  typeof PollAntigravityLoginBody
->;
-export type PollAntigravityLoginBodyOutput = zod.output<
-  typeof PollAntigravityLoginBody
 >;
 
 export const FinishClaudeLoginBody = zod

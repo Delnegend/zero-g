@@ -146,8 +146,6 @@ function ModelCard({
   const description = model.description;
   const pricingNote = (() => {
     switch (model.pricing?.source) {
-      case "antigravity-reference":
-        return "These reference API prices come from the configured pricing datasheet and are informational only. They are not Antigravity charges; actual costs depend on your plan and any credit overages.";
       case "claude-reference":
         return "These are Anthropic API reference prices from the configured datasheet, not Claude subscription charges. Actual costs depend on your plan.";
       case "codex-reference":
@@ -239,11 +237,7 @@ function ModelCard({
               {pricingNote && label === "Input price / 1M tokens" && (
                 <Popover>
                   <PopoverTrigger
-                    aria-label={
-                      model.pricing?.source === "antigravity-reference"
-                        ? "About Antigravity reference pricing"
-                        : "About model pricing"
-                    }
+                    aria-label="About model pricing"
                     className="rounded-sm hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2"
                   >
                     <Info className="size-3.5" />
@@ -265,24 +259,6 @@ function ModelCard({
           <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 py-2">
             <dt className="flex min-w-0 items-center gap-1 text-muted-foreground">
               Input modalities
-              {provider.kind === "agy" &&
-                model.input_modalities.some((value) =>
-                  ["audio", "video", "pdf"].includes(value),
-                ) && (
-                  <Popover>
-                    <PopoverTrigger
-                      aria-label="About Antigravity input support"
-                      className="rounded-sm hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2"
-                    >
-                      <Info className="size-3.5" />
-                    </PopoverTrigger>
-                    <PopoverContent>
-                      These types are advertised by Antigravity. Zero-G forwards
-                      inline audio, video, and PDF data to compatible models;
-                      external URLs and uploaded file IDs are not supported.
-                    </PopoverContent>
-                  </Popover>
-                )}
               {provider.kind === "claude" &&
                 model.input_modalities.includes("pdf") && (
                   <Popover>

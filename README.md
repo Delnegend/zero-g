@@ -28,7 +28,7 @@ docker compose pull && docker compose up -d
 curl --fail http://127.0.0.1:8080/health
 ```
 
-Open `http://127.0.0.1:8080/` and sign in. Create the Antigravity provider under **Providers**, add a credential, and sign in. Under **Virtual keys**, create a key and copy it immediately; it is shown only once. Set `ZERO_G_VIRTUAL_KEY` to the copied value and use it as the bearer token for every inference request, including model discovery:
+Open `http://127.0.0.1:8080/` and sign in. Create the Codex provider under **Providers**, add a credential, and sign in. Under **Virtual keys**, create a key and copy it immediately; it is shown only once. Set `ZERO_G_VIRTUAL_KEY` to the copied value and use it as the bearer token for every inference request, including model discovery:
 
 ```bash
 curl -H "Authorization: Bearer $ZERO_G_VIRTUAL_KEY" http://127.0.0.1:8080/v1/models
@@ -37,9 +37,9 @@ curl -H "Authorization: Bearer $ZERO_G_VIRTUAL_KEY" http://127.0.0.1:8080/v1/mod
 ## Highlights
 
 - **Unified API**: All providers share `/v1`; model IDs include the provider ID. OpenRouter Decisions models use `/v1/decisions`.
-- **Multi-Provider Backends**: Connect Antigravity, Codex, Claude Code, Cursor, OpenCode Zen and Go, OpenRouter, Command Code and Command Code Go, ChatJimmy, and OpenAI-compatible upstreams.
+- **Multi-Provider Backends**: Connect Codex, Claude Code, Cursor, OpenCode Zen and Go, OpenRouter, Command Code and Command Code Go, ChatJimmy, and OpenAI-compatible upstreams.
 - **OAuth Refresh**: Refreshes supported access tokens on demand when they approach expiration.
-- **Claude and Gemini Support**: Formats Anthropic thinking beta headers, system instructions, and tool calling signatures automatically.
+- **Claude Support**: Formats Anthropic thinking beta headers, system instructions, and tool calling signatures automatically.
 - **Multi-Turn Tool Calling**: End-to-end function declaration, execution, and tool response turn merging.
 
 ## Documentation

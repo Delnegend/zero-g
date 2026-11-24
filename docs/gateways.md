@@ -12,7 +12,6 @@ flowchart LR
     Agents[Claude Code / omp] -->|Anthropic /v1/messages + virtual key| ZeroG
 
     subgraph Upstreams [Upstream Providers]
-        ZeroG --> AGY[Google Cloud Code Assist]
         ZeroG --> Codex[ChatGPT Backend]
         ZeroG --> Claude[Anthropic API]
         ZeroG --> Others[Zen / OpenRouter / Command Code]
@@ -34,7 +33,7 @@ flowchart LR
 **Reasoning replay on translated providers:**
 
 - Resend the full conversation; `previous_response_id` is not supported.
-- Codex replays encrypted reasoning, including items without an ID; Antigravity and Claude use signed parts. Keep them for the same provider and model.
+- Codex replays encrypted reasoning, including items without an ID; Claude uses signed parts. Keep them for the same provider and model.
 - Non-Codex translated routes reject generic reasoning input.
 - Keep Chat Completions available for ChatJimmy and upstreams without Responses support.
 
@@ -66,6 +65,41 @@ providers:
     api: anthropic-messages
 ```
 
+### Interactive Antigravity CLI observations
+
+The opt-in `PostInvocation` hook records interactive `agy` activity without routing model traffic through Zero-G or sharing Google credentials. It requires Python 3 and a Zero-G virtual key. Export these variables in the environment that launches `agy` (use HTTPS when the gateway is remote):
+
+The former `agy` inference provider and its model routes have been retired. Existing saved provider entries do not restore those routes; the observations endpoint and hook remain available independently.
+The collector requires a virtual key without a provider allowlist; model restrictions still apply. Provider-scoped keys cannot submit observations.
+
+```bash
+export ZERO_G_URL=http://127.0.0.1:8080  # gateway root, without /v1
+export ZERO_G_VIRTUAL_KEY='<virtual key>'
+agy
+```
+
+Merge this entry into `.agents/hooks.json` in the workspace, or `~/.gemini/config/hooks.json` for all workspaces. Replace the path with the absolute path to this checkout; keep existing hooks. The global hook file is shared with other Antigravity products. See the [official hooks documentation](https://antigravity.google/docs/hooks/) and use `/hooks` in `agy` to inspect loaded hooks.
+
+```json
+{
+  "zero-g-observations": {
+    "PostInvocation": [
+      {
+        "type": "command",
+        "command": "python3 /absolute/path/to/zero-g/scripts/agy-observe.py",
+        "timeout": 5
+      }
+    ]
+  }
+}
+```
+
+The hook sends the completed model response transcript record matching `initialNumSteps` and the hook's `lastUserInput` to `POST /v1/agy/observations`, authenticated with the virtual key. These are **not full wire-level request logs**: the request contains only the last user input, and the response is the transcript record, potentially including thinking, tool arguments, cached-token counts and truncated content. Prompts and responses can contain secrets or sensitive code; they are sent to and stored by Zero-G. Only enable this for a gateway and virtual key you trust. Remove or disable the hook to stop collection.
+
+Collection is best effort: missing or incomplete records, transcript format changes, a response outside the final 2 MiB, network errors and timeouts can cause observations to be skipped without interrupting `agy`. Missing token counts are sent as null, not estimated. Observed `input_tokens` exclude cached input; `cache_read_tokens`, if supplied, remains in the response record rather than being added. No live `agy` verification is claimed.
+
+These imported records have no measured request duration; the dashboard currently displays their latency as 0 ms. The hook is independent of model traffic, but Google's terms do not explicitly address exporting transcript data to Zero-G. Check the terms for your account before enabling it.
+
 ### OpenRouter Decisions API Example
 
 ```bash
@@ -94,13 +128,10 @@ curl http://127.0.0.1:8080/v1/decisions \
 | Provider                            | What discovery reports                                                                                                                                                                                    |
 | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Codex                               | No output limit (no verified cap; client output limits are not forwarded) and tool support unknown. Effort strings, even unknown ones, go to upstream; none is set when omitted.                          |
-| Antigravity                         | Tool support unknown. Grouped aliases report capabilities shared by all permitted variants, the smallest known limits, and reject unknown effort levels. Standalone IDs ignore effort and advertise none. |
 | Claude                              | `max_input_tokens` is input-only, so no combined `context_window`. Text and image input (no PDF parts), text output.                                                                                      |
 | Zen, Go, OpenRouter                 | Only route-relevant metadata from their model lists                                                                                                                                                       |
 | ChatJimmy                           | No tools; requests with tool definitions, calls or results are rejected, not stripped                                                                                                                     |
 | Custom OpenAI and other passthrough | Upstream fields kept as is; missing ones are not filled in                                                                                                                                                |
-
-Antigravity selects accounts advertising the resolved model when available. Accounts can have different model access; a model listed by one account is not necessarily available on another.
 
 ---
 
@@ -108,10 +139,8 @@ Antigravity selects accounts advertising the resolved model when available. Acco
 
 | Behavior                | Provider Scope                     | Upstream Handling                                                                                                                                            |
 | ----------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Usage Chunks**        | Codex, Cursor, Antigravity         | Emits final usage chunk when `stream_options.include_usage: true` is requested.                                                                              |
-| **Stream Termination**  | Codex, Antigravity                 | Emits `data: [DONE]` on clean close. Interrupted streams yield an error event instead of a silent finish.                                                    |
+| **Usage Chunks**        | Codex, Cursor                      | Emits final usage chunk when `stream_options.include_usage: true` is requested.                                                                              |
+| **Stream Termination**  | Codex                              | Emits `data: [DONE]` on clean close. Interrupted streams yield an error event instead of a silent finish.                                                    |
 | **Unsupported Limits**  | Codex                              | Accepts but does not forward `max_tokens` and `max_completion_tokens`; an effective output cap is unknown.                                                   |
-| **Strict Wire Options** | Antigravity, Codex, Claude, Cursor | Reject unsupported options (e.g. unknown structured formats, stop sequences, unsupported choice counts) with clear errors instead of dropping them silently. |
+| **Strict Wire Options** | Codex, Claude, Cursor              | Reject unsupported options (e.g. unknown structured formats, stop sequences, unsupported choice counts) with clear errors instead of dropping them silently. |
 | **Claude Billing**      | Claude subscription                | Reports Anthropic's known third-party extra-usage restriction when returned; other upstream error bodies remain private.                                     |
-
-Antigravity stream errors include the upstream error or stream failure detail. These details are visible to the client and stored in request logs.

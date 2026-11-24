@@ -1,5 +1,3 @@
-/// Antigravity provider integration.
-pub(crate) mod antigravity;
 /// Model catalog aggregation.
 pub(crate) mod catalog;
 /// `ChatJimmy` provider integration.
@@ -40,8 +38,6 @@ use std::sync::Arc;
 /// Shared clients for providers that maintain client state.
 #[derive(Clone)]
 pub(crate) struct Providers {
-    /// Antigravity API client.
-    pub(crate) client: Arc<antigravity::AntigravityClient>,
     /// Codex API client.
     pub(crate) codex_client: Arc<codex::CodexClient>,
 }
@@ -50,7 +46,6 @@ impl Providers {
     /// Creates the shared provider clients.
     pub(crate) fn new() -> Self {
         Self {
-            client: Arc::new(antigravity::AntigravityClient::new()),
             codex_client: Arc::new(codex::CodexClient::new()),
         }
     }
@@ -85,8 +80,6 @@ macro_rules! providers {
 }
 
 providers! {
-    /// Google Antigravity backend.
-    Antigravity => antigravity::Backend,
     /// `OpenAI` Codex backend.
     Codex => codex::Backend,
     /// Claude Code backend.
@@ -142,7 +135,6 @@ impl ProviderKind {
         provider: &registry::Provider,
     ) -> Result<Vec<Model>, String> {
         match self {
-            Self::Antigravity => antigravity::Backend::discover(state, provider).await,
             Self::Codex => codex::Backend::discover(state, provider).await,
             Self::Claude => claude::Backend::discover(state, provider).await,
             Self::Cursor => cursor::Backend::discover(state, provider).await,
@@ -164,9 +156,6 @@ impl ProviderKind {
         permissions: &crate::server::settings::Permissions,
     ) -> Result<Vec<Model>, String> {
         match self {
-            Self::Antigravity => {
-                antigravity::Backend::discover_permitted(state, provider, permissions).await
-            }
             Self::Codex => codex::Backend::discover_permitted(state, provider, permissions).await,
             Self::Claude => claude::Backend::discover_permitted(state, provider, permissions).await,
             Self::Cursor => cursor::Backend::discover_permitted(state, provider, permissions).await,
@@ -191,7 +180,6 @@ impl ProviderKind {
     /// Returns the backend's quota capability, if supported.
     pub(crate) const fn quota(self) -> Option<QuotaCapability> {
         match self {
-            Self::Antigravity => Some(QuotaCapability::Antigravity),
             Self::Codex => Some(QuotaCapability::Codex),
             Self::Zen => Some(QuotaCapability::Zen),
             Self::Go => Some(QuotaCapability::Go),
@@ -208,7 +196,6 @@ impl ProviderKind {
     /// Builds the request router for this backend.
     fn router(self, settings: &SettingsStore) -> Router<AppState> {
         match self {
-            Self::Antigravity => antigravity::Backend::router(settings),
             Self::Codex => codex::Backend::router(settings),
             Self::Claude => claude::Backend::router(settings),
             Self::Cursor => cursor::Backend::router(settings),
@@ -225,8 +212,6 @@ impl ProviderKind {
 
 /// Backends that can retrieve credential quota.
 pub(crate) enum QuotaCapability {
-    /// Antigravity quota.
-    Antigravity,
     /// Codex quota.
     Codex,
     /// Claude subscription quota.
@@ -247,7 +232,6 @@ impl QuotaCapability {
         credential: &str,
     ) -> Result<quota::QuotaSnapshot, String> {
         match self {
-            Self::Antigravity => antigravity::Backend::quota(store, provider, credential).await,
             Self::Codex => codex::Backend::quota(store, provider, credential).await,
             Self::Claude => claude::Backend::quota(store, provider, credential).await,
             Self::Zen => zen::Backend::quota(store, provider, credential).await,
@@ -277,9 +261,6 @@ pub(crate) fn dashboard_router(state: &AppState) -> Router {
     ALL.iter()
         .copied()
         .fold(Router::new(), |router, kind| match kind {
-            ProviderKind::Antigravity => {
-                router.merge(antigravity::Backend::dashboard_router(state.clone()))
-            }
             ProviderKind::Codex => router.merge(codex::Backend::dashboard_router(state.clone())),
             ProviderKind::Claude => router.merge(claude::Backend::dashboard_router(state.clone())),
             ProviderKind::Cursor => router.merge(cursor::Backend::dashboard_router(state.clone())),
@@ -307,7 +288,6 @@ mod tests {
         assert_eq!(
             values,
             [
-                "agy",
                 "codex",
                 "claude",
                 "cursor",

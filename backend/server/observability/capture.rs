@@ -421,7 +421,7 @@ mod tests {
             complete_body
         );
 
-        let stream_request = r#"{"model":"antigravity/model-b","input":"stream"}"#;
+        let stream_request = r#"{"model":"claude/model-b","input":"stream"}"#;
         let response = app
             .clone()
             .oneshot(request("/stream", stream_request))
@@ -469,7 +469,7 @@ mod tests {
             ),
             (
                 stream_request,
-                "antigravity",
+                "claude",
                 "model-b",
                 "/stream",
                 499,

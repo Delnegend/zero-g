@@ -49,7 +49,6 @@ xxhash-rust = { version = "0.8.19", features = ["xxh64"] }
 zstd = "0.14.3"
 
 [build-dependencies]
-base64 = "0.22.1"
 toml = "1.1.8"
 prost-build = "0.14.4"
 protoc-bin-vendored = "3.3.0"

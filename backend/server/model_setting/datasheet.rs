@@ -147,22 +147,6 @@ impl CatalogModels {
         let mut result = Self::default();
         for (provider_id, kind, id) in entries {
             result.ids.insert(id.to_owned());
-            if kind == "agy" {
-                if id.starts_with("gemini-") {
-                    for owner in ["gemini", "vertex_ai"] {
-                        result.reference_keys.insert(format!("{owner}/{id}"), owner);
-                        result
-                            .reference_keys
-                            .insert(format!("{owner}/{id}-preview"), owner);
-                    }
-                } else if id.starts_with("claude-") {
-                    let base = id.strip_suffix("-thinking").unwrap_or(id);
-                    result.reference_keys.insert(base.to_owned(), "anthropic");
-                    result
-                        .reference_keys
-                        .insert(format!("anthropic/{base}"), "anthropic");
-                }
-            }
             if kind == "claude" {
                 result.reference_keys.insert(id.to_owned(), "anthropic");
                 result
@@ -363,27 +347,6 @@ mod tests {
         assert!(filter_datasheet("{} trailing", &models).is_err());
     }
 
-    /// Antigravity reference prices survive filtering without admitting unrelated models.
-    #[test]
-    fn retains_antigravity_reference_prices() {
-        let models = CatalogModels::from_entries([
-            ("agy", "agy", "gemini-3-pro"),
-            ("agy", "agy", "claude-sonnet-4-6-thinking"),
-        ]);
-        let sheet = r#"{
-            "gemini/gemini-3-pro-preview": {"provider":"gemini","base_model":"gemini-3-pro","input_cost_per_token":0.000002},
-            "vertex_ai/gemini-3-pro-preview": {"provider":"vertex_ai","base_model":"gemini-3-pro"},
-            "claude-sonnet-4-6": {"provider":"anthropic","input_cost_per_token":0.000003},
-            "gemini/gemini-3-flash-preview": {"provider":"gemini","base_model":"gemini-3-flash"},
-            "vertex_ai/gemini-3-pro": {"provider":"other"}
-        }"#;
-        let filtered = filter_datasheet(sheet, &models).unwrap();
-        assert!(filtered.get("gemini/gemini-3-pro-preview").is_some());
-        assert!(filtered.get("vertex_ai/gemini-3-pro-preview").is_some());
-        assert!(filtered.get("claude-sonnet-4-6").is_some());
-        assert!(filtered.get("gemini/gemini-3-flash-preview").is_none());
-        assert!(filtered.get("vertex_ai/gemini-3-pro").is_none());
-    }
 
     /// Save both sheets atomically to the store.
     #[tokio::test]

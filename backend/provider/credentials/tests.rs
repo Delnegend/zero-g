@@ -62,7 +62,7 @@ async fn oauth_load_revalidates_and_reads_current_secret() {
             .is_err()
     );
     assert!(
-        load_oauth::<serde_json::Value>(&store, "owner", "account", "agy", "Antigravity")
+        load_oauth::<serde_json::Value>(&store, "owner", "account", "claude", "Claude")
             .await
             .is_err()
     );
@@ -88,7 +88,7 @@ async fn dashboard_lists_stored_account_profiles_without_tokens() {
     .await
     .unwrap();
     let mut db = (*store.database.db).clone();
-    for kind in ["agy", "codex", "claude"] {
+    for kind in ["codex", "claude"] {
         toasty::create!(ProviderRecord {
             id: kind.to_string(),
             name: kind.to_string(),

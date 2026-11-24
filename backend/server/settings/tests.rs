@@ -433,7 +433,7 @@ async fn virtual_key_auth_reuses_only_matching_server_context() {
     let store = SettingsStore::new(Database::open(":memory:").await.unwrap(), &key(1))
         .await
         .unwrap();
-    for (id, kind) in [("codex", "codex"), ("agy", "agy")] {
+    for (id, kind) in [("codex", "codex"), ("claude", "claude")] {
         toasty::create!(ProviderRecord {
             id: id.to_string(),
             name: id.to_string(),
@@ -496,14 +496,14 @@ async fn virtual_key_auth_reuses_only_matching_server_context() {
     );
     // A provider of the wrong kind is rejected whether reused or loaded.
     assert_eq!(
-        send("/codex/models/m", Some("t"), Some(provider("codex", "agy")))
+        send("/codex/models/m", Some("t"), Some(provider("codex", "claude")))
             .await
             .unwrap()
             .status(),
         StatusCode::NOT_FOUND
     );
     assert_eq!(
-        send("/agy/models/m", Some("t"), Some(provider("codex", "codex")))
+        send("/claude/models/m", Some("t"), Some(provider("codex", "codex")))
             .await
             .unwrap()
             .status(),
@@ -516,7 +516,7 @@ async fn virtual_key_auth_reuses_only_matching_server_context() {
         .body(Body::empty())
         .unwrap();
     request.extensions_mut().insert(Permissions {
-        providers: vec!["agy".into()],
+        providers: vec!["claude".into()],
         models: vec![],
     });
     request.extensions_mut().insert(provider("codex", "codex"));
@@ -595,7 +595,7 @@ async fn virtual_keys_persist_enforce_permissions_and_revoke() {
     for (id, kind) in [
         ("account-a", "codex"),
         ("account-b", "codex"),
-        ("google", "agy"),
+        ("google", "claude"),
     ] {
         toasty::create!(ProviderRecord {
             id: id.to_string(),

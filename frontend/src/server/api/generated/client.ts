@@ -6,9 +6,6 @@
  * OpenAPI spec version: 1.4.2
  */
 import {
-  AntigravityFinishResponse,
-  AntigravityPollResponse,
-  AntigravityStartResponse,
   ClaudePollResponse,
   ClaudeStartResponse,
   CodexPollResponse,
@@ -31,8 +28,6 @@ import {
   SettingsResponse,
 } from "./schemas";
 import type {
-  AntigravityFinishInput,
-  AntigravityPollInput,
   ClaudeFinishInput,
   ClaudePollInput,
   CodexPollInput,
@@ -600,135 +595,6 @@ export const deleteCredential = async (
     ...options,
     method: "DELETE",
   });
-};
-
-export const getFinishAntigravityLoginUrl = (
-  id: string,
-  credentialId: string,
-) => {
-  return `/api/providers/${encodeURIComponent(String(id))}/credentials/${encodeURIComponent(String(credentialId))}/agy/finish`;
-};
-
-/**
- * @summary Validates and completes a pending Google OAuth callback.
- */
-export const finishAntigravityLogin = async (
-  id: string,
-  credentialId: string,
-  antigravityFinishInput: AntigravityFinishInput,
-  options?: Parameters<typeof request>[1],
-): Promise<AntigravityFinishResponse> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(
-          h as Iterable<Iterable<string>>,
-          (entry) => Array.from(entry) as [string, string],
-        ),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<
-      string | readonly string[] | undefined
-    >(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-  return request<AntigravityFinishResponse>(
-    getFinishAntigravityLoginUrl(id, credentialId),
-    {
-      ...options,
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(antigravityFinishInput),
-      schema: AntigravityFinishResponse,
-    },
-  );
-};
-
-export const getPollAntigravityLoginUrl = (
-  id: string,
-  credentialId: string,
-) => {
-  return `/api/providers/${encodeURIComponent(String(id))}/credentials/${encodeURIComponent(String(credentialId))}/agy/poll`;
-};
-
-/**
- * @summary Returns pending status or consumes the completed result for a flow.
- */
-export const pollAntigravityLogin = async (
-  id: string,
-  credentialId: string,
-  antigravityPollInput: AntigravityPollInput,
-  options?: Parameters<typeof request>[1],
-): Promise<AntigravityPollResponse> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(
-          h as Iterable<Iterable<string>>,
-          (entry) => Array.from(entry) as [string, string],
-        ),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<
-      string | readonly string[] | undefined
-    >(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-  return request<AntigravityPollResponse>(
-    getPollAntigravityLoginUrl(id, credentialId),
-    {
-      ...options,
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...getHeaders(options?.headers),
-      },
-      body: JSON.stringify(antigravityPollInput),
-      schema: AntigravityPollResponse,
-    },
-  );
-};
-
-export const getStartAntigravityLoginUrl = (
-  id: string,
-  credentialId: string,
-) => {
-  return `/api/providers/${encodeURIComponent(String(id))}/credentials/${encodeURIComponent(String(credentialId))}/agy/start`;
-};
-
-/**
- * @summary Starts a Google OAuth flow and optionally serves its local callback.
- */
-export const startAntigravityLogin = async (
-  id: string,
-  credentialId: string,
-  options?: Parameters<typeof request>[1],
-): Promise<AntigravityStartResponse> => {
-  return request<AntigravityStartResponse>(
-    getStartAntigravityLoginUrl(id, credentialId),
-    {
-      ...options,
-      method: "POST",
-      schema: AntigravityStartResponse,
-    },
-  );
 };
 
 export const getFinishClaudeLoginUrl = (id: string, credentialId: string) => {

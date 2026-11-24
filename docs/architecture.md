@@ -18,7 +18,6 @@ flowchart TD
     Dispatch -->|Load Active Credentials| DB
 
     subgraph Translation ["Translated Providers"]
-        Dispatch --> AGY[Antigravity]
         Dispatch --> Codex[Codex]
         Dispatch --> Claude[Claude Code]
         Dispatch --> Cursor[Cursor]
@@ -34,7 +33,6 @@ flowchart TD
         Dispatch --> Custom[Custom OpenAI-Compatible]
     end
 
-    AGY -->|HTTP SSE| Google[Google Cloud Code Assist]
     Codex -->|ChatGPT Backend| OpenAI[ChatGPT Backend]
     Claude -->|Interleaved Thinking| Anthropic[Anthropic API]
     
@@ -71,7 +69,7 @@ sequenceDiagram
     participant Engine as Provider Engine
     participant Upstream as Upstream Service
 
-    Client->>V1: POST /v1/chat/completions (model: "agy/claude-sonnet-4")
+    Client->>V1: POST /v1/chat/completions (model: "claude/claude-sonnet-4-6")
     V1->>Auth: Verify Virtual Key & Model Permissions
     Auth-->>V1: Authorized
     V1->>Pool: Select credential when required
@@ -104,10 +102,6 @@ sequenceDiagram
 
 | Invariant                 | Scope                           | Rule                                                                                                                                                   |
 | ------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **OAuth Token Refresh**   | Antigravity, Codex              | Checked before request; if expiration is within 60s, token refresh triggers automatically.                                                             |
-| **Endpoint Failover**     | Antigravity                     | Tries `daily-cloudcode-pa.googleapis.com` first; falls back to sandbox endpoint on network failure or 5xx.                                             |
-| **Thought Signatures**    | Antigravity                     | Preserves reasoning signatures via `provider_parts` and `thought_signature`. Missing first-tool signature triggers `skip_thought_signature_validator`. |
-| **Contiguous Tool Turns** | Cloud Code Assist               | Successive tool output turns are merged into a single contiguous `user` role turn.                                                                     |
-| **Interrupted Streams**   | Antigravity, Codex              | Broken streams without terminal response raise a clean downstream error instead of a truncated success marker.                                         |
-| **Claude Wire Handling**  | Claude (via AGY)                | Includes `anthropic-beta: interleaved-thinking-2025-05-14`; tool mode defaults to `VALIDATED`; output tokens capped to catalog limit.                  |
+| **OAuth Token Refresh**   | Codex                           | Checked before request; if expiration is within 60s, token refresh triggers automatically.                                                             |
+| **Interrupted Streams**   | Codex                           | Broken streams without terminal response raise a clean downstream error instead of a truncated success marker.                                         |
 | **Payload Size Limit**    | Unified inference POST requests | Request bodies capped at 20,000,000 bytes. Response body capture capped at 100 MiB.                                                                    |

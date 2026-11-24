@@ -167,7 +167,7 @@ export function CredentialsCard({
                   />
                 )}
                 {kind?.oauth &&
-                  ["agy", "codex", "claude", "cursor"].includes(
+                  ["codex", "claude", "cursor"].includes(
                     provider.kind,
                   ) && (
                     <Button
@@ -179,7 +179,6 @@ export function CredentialsCard({
                       {
                         (
                           {
-                            agy: "Google",
                             codex: "Codex",
                             claude: "Claude Code",
                             cursor: "Cursor",
