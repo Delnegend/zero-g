@@ -88,7 +88,7 @@ test("edits made during a delayed settings save survive the response", async () 
   await user.type(retention, "40");
   release(Response.json({ ...settings, log_retention_days: 35 }));
   await screen.findByText("Settings saved.");
-  assert.equal((retention as HTMLInputElement).value, "40");
+  assert.equal((retention as HTMLInputElement).valueAsNumber, 40);
   await user.click(screen.getByRole("button", { name: "Save settings" }));
   await waitFor(() => assert.equal(bodies.length, 2));
   assert.deepEqual(bodies, [
