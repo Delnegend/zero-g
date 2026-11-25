@@ -7,6 +7,12 @@
 	"containerUser": "dev",
 	"remoteUser": "dev",
 	"forwardPorts": [8080],
+	"mounts": [
+		"source=${localEnv:SSH_AUTH_SOCK},target=/ssh-agent,type=bind"
+	],
+	"containerEnv": {
+		"SSH_AUTH_SOCK": "/ssh-agent"
+	},
 	"runArgs": [
 		"--hostname=zero-g",
 		"--security-opt",

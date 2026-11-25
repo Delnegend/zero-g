@@ -58,7 +58,7 @@ def collect():
             continue
         if (isinstance(record, dict) and record.get("source") == "MODEL"
                 and record.get("status") == "DONE"
-                and type(record.get("step_index")) is int and record["step_index"] == start):
+                and type(record.get("step_index")) is int and record["step_index"] >= start):
             matches.append(record)
     if not matches:
         return
