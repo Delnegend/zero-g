@@ -28,12 +28,12 @@ flowchart LR
 | `/v1/responses`                             | All providers except ChatJimmy | Responses API format; passthrough providers depend on upstream support.                                                    |
 | `/v1/models`                                | All providers                  | Aggregated discovery returning `<provider-id>/<model-id>`.                                                                 |
 | `/v1/decisions`                             | `openrouter` only              | Native OpenRouter multimodal Decisions API.                                                                                |
-| `/v1/messages`, `/v1/messages/count_tokens` | `claude` only                  | Native Anthropic Messages pass-through for Claude Code and other Anthropic clients; plain model names.                     |
+| `/v1/messages`, `/v1/messages/count_tokens` | `claude` only                  | Native Anthropic Messages pass-through for Claude Code and omp; plain model names. Claude has no OpenAI-format routes.     |
 
 **Reasoning replay on translated providers:**
 
 - Resend the full conversation; `previous_response_id` is not supported.
-- Codex replays encrypted reasoning, including items without an ID; Claude uses signed parts. Keep them for the same provider and model.
+- Codex replays encrypted reasoning, including items without an ID; Claude has no translated routes. Keep them for the same provider and model.
 - Non-Codex translated routes reject generic reasoning input.
 - Keep Chat Completions available for ChatJimmy and upstreams without Responses support.
 
@@ -41,14 +41,14 @@ flowchart LR
 
 `/v1/messages` forwards Anthropic Messages requests to the `claude` provider's subscription accounts.
 
-| Topic              | Behavior                                                                                       |
-| ------------------ | ---------------------------------------------------------------------------------------------- |
-| Auth               | Virtual key as `x-api-key` or `Authorization: Bearer`; its provider and model allowlists apply |
-| Model names        | Plain, e.g. `claude-sonnet-4-6`                                                                |
-| Claude Code bodies | Recognized by their billing block; forwarded byte for byte with only the token swapped         |
-| Other clients      | Get Claude Code's billing block, identity line and `metadata.user_id`; the body is re-attested |
-| Replies            | Stream back unchanged; logs record input (incl. cache reads/writes) and output tokens          |
-| Errors             | Anthropic's `{"type":"error"}` shape                                                           |
+| Topic       | Behavior                                                                                                                                                  |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Auth        | Virtual key as `x-api-key` or `Authorization: Bearer`; its provider and model allowlists apply                                                            |
+| Model list  | `GET /v1/models` with an `anthropic-version` header returns only Claude models, plain ids, in Anthropic's list shape; the OpenAI-format list omits Claude |
+| Model names | Plain, e.g. `claude-sonnet-4-6`                                                                                                                           |
+| Bodies      | Forwarded byte for byte with only the token swapped; the client must send its own Claude Code identity (Claude Code and omp do)                           |
+| Replies     | Stream back unchanged; logs record input (incl. cache reads/writes) and output tokens                                                                     |
+| Errors      | Anthropic's `{"type":"error"}` shape                                                                                                                      |
 
 ```bash
 # Claude Code: do not sign in to Claude Code itself.
@@ -137,10 +137,9 @@ curl http://127.0.0.1:8080/v1/decisions \
 
 ## Error Handling & Wire Invariants
 
-| Behavior                | Provider Scope        | Upstream Handling                                                                                                                                            |
-| ----------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Usage Chunks**        | Codex, Cursor         | Emits final usage chunk when `stream_options.include_usage: true` is requested.                                                                              |
-| **Stream Termination**  | Codex                 | Emits `data: [DONE]` on clean close. Interrupted streams yield an error event instead of a silent finish.                                                    |
-| **Unsupported Limits**  | Codex                 | Accepts but does not forward `max_tokens` and `max_completion_tokens`; an effective output cap is unknown.                                                   |
-| **Strict Wire Options** | Codex, Claude, Cursor | Reject unsupported options (e.g. unknown structured formats, stop sequences, unsupported choice counts) with clear errors instead of dropping them silently. |
-| **Claude Billing**      | Claude subscription   | Reports Anthropic's known third-party extra-usage restriction when returned; other upstream error bodies remain private.                                     |
+| Behavior                | Provider Scope | Upstream Handling                                                                                                                                            |
+| ----------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Usage Chunks**        | Codex, Cursor  | Emits final usage chunk when `stream_options.include_usage: true` is requested.                                                                              |
+| **Stream Termination**  | Codex          | Emits `data: [DONE]` on clean close. Interrupted streams yield an error event instead of a silent finish.                                                    |
+| **Unsupported Limits**  | Codex          | Accepts but does not forward `max_tokens` and `max_completion_tokens`; an effective output cap is unknown.                                                   |
+| **Strict Wire Options** | Codex, Cursor  | Reject unsupported options (e.g. unknown structured formats, stop sequences, unsupported choice counts) with clear errors instead of dropping them silently. |

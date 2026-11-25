@@ -39,13 +39,14 @@ curl -H "Authorization: Bearer $ZERO_G_VIRTUAL_KEY" http://127.0.0.1:8080/v1/mod
 - **Unified API**: All providers share `/v1`; model IDs include the provider ID. OpenRouter Decisions models use `/v1/decisions`.
 - **Multi-Provider Backends**: Connect Codex, Claude Code, Cursor, OpenCode Zen and Go, OpenRouter, Command Code and Command Code Go, ChatJimmy, and OpenAI-compatible upstreams.
 - **OAuth Refresh**: Refreshes supported access tokens on demand when they approach expiration.
-- **Claude Support**: Formats Anthropic thinking beta headers, system instructions, and tool calling signatures automatically.
+- **Claude Support**: Forwards Anthropic Messages requests from Claude Code and omp to your Claude subscription, with usage and logs tracked.
 - **Multi-Turn Tool Calling**: End-to-end function declaration, execution, and tool response turn merging.
 
 ## Documentation
 
 - **[Architecture](docs/architecture.md)**: Request envelopes, streaming translation, and system invariants.
 - **[Development](docs/development.md)**: Prerequisites, `just check` gate, and test suite.
+- **[Claude Code and omp](docs/claude-and-omp.md)**: Route both through Zero-G to track usage and logs.
 - **[Deployment](docs/deployment.md)**: Container setup, [configuration](docs/configuration.md), [gateways](docs/gateways.md), updates, and backups.
 
 ## License

@@ -19,13 +19,13 @@ flowchart TD
 
     subgraph Translation ["Translated Providers"]
         Dispatch --> Codex[Codex]
-        Dispatch --> Claude[Claude Code]
         Dispatch --> Cursor[Cursor]
         Dispatch --> ChatJimmy[ChatJimmy]
         Dispatch --> CommandCodeGo[Command Code Go]
     end
 
     subgraph Passthrough ["Passthrough / Forwarded"]
+        Dispatch --> Claude[Claude Code /v1/messages]
         Dispatch --> Zen[OpenCode Zen]
         Dispatch --> Go[OpenCode Go]
         Dispatch --> OpenRouter[OpenRouter + Decisions API]
@@ -34,7 +34,7 @@ flowchart TD
     end
 
     Codex -->|ChatGPT Backend| OpenAI[ChatGPT Backend]
-    Claude -->|Interleaved Thinking| Anthropic[Anthropic API]
+    Claude --> Anthropic[Anthropic API]
     
     V1 -.->|Log Request / Response| Logs[Observability Engine]
     Logs -.-> DB
@@ -69,7 +69,7 @@ sequenceDiagram
     participant Engine as Provider Engine
     participant Upstream as Upstream Service
 
-    Client->>V1: POST /v1/chat/completions (model: "claude/claude-sonnet-4-6")
+    Client->>V1: POST /v1/chat/completions (model: "codex/gpt-5.5")
     V1->>Auth: Verify Virtual Key & Model Permissions
     Auth-->>V1: Authorized
     V1->>Pool: Select credential when required
