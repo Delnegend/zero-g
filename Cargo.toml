@@ -3,7 +3,7 @@ members = ["agy-integration"]
 
 # One version for every crate, so the collector always matches the backend release.
 [workspace.package]
-version = "1.8.0"
+version = "1.9.0"
 
 [package]
 name = "zero-g"
