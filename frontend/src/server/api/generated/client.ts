@@ -3,7 +3,7 @@
  * Do not edit manually.
  * zero-g
  * OpenAI-compatible AI gateway for multiple providers
- * OpenAPI spec version: 1.7.0
+ * OpenAPI spec version: 1.8.0
  */
 import {
   ClaudePollResponse,
