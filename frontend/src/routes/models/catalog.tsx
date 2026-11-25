@@ -347,6 +347,11 @@ function ProviderModels({
           </>
         )}
       </h2>
+      {provider.kind === "agy" && (
+        <p className="mt-1 text-sm text-muted-foreground">
+          Listed for reference only. Zero-G does not route Antigravity requests.
+        </p>
+      )}
       {provider.error && (
         <Alert variant="destructive" className="mt-3">
           <AlertDescription>{provider.error}</AlertDescription>

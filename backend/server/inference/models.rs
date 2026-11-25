@@ -84,8 +84,9 @@ pub(super) async fn models(State(state): State<AppState>, request: Request) -> R
     };
     let providers: Vec<_> = providers
         .into_iter()
-        // Claude is reachable only through `/v1/messages`, so it has no place in this list.
-        .filter(|p| p.kind != "claude")
+        // Claude is reachable only through `/v1/messages` and Antigravity serves no requests,
+        // so neither has a place in this list.
+        .filter(|p| !matches!(p.kind.as_str(), "claude" | "agy"))
         .filter(|p| permissions.providers.is_empty() || permissions.providers.contains(&p.id))
         .collect();
     let results = join_all(providers.iter().map(|provider| async {

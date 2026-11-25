@@ -88,6 +88,48 @@ test("catalog distinguishes Decisions models without guessing missing metadata",
   assert.equal(screen.queryByRole("heading", { name: "ordinary-chat" }), null);
 });
 
+test("Antigravity models are listed for reference only", async () => {
+  globalThis.fetch = (async () =>
+    Response.json({
+      datasheets_error: null,
+      providers: [
+        {
+          id: "agy",
+          name: "Google Antigravity",
+          kind: "agy",
+          base_url: "",
+          error: null,
+          models: [
+            {
+              model: { id: "gemini-4-neon-high" },
+              display_name: "Gemini 4 Neon (High)",
+              description: null,
+              reasoning_efforts: [],
+              reasoning: null,
+              tool_call: null,
+              input_modalities: [],
+              pricing: null,
+              raw_pricing: null,
+              parameters: null,
+              provider_metadata: null,
+            },
+          ],
+        },
+      ],
+    })) as typeof fetch;
+  mount(
+    <TooltipProvider>
+      <ModelCatalogPage />
+    </TooltipProvider>,
+  );
+  assert.ok(await screen.findByText("Gemini 4 Neon (High)"));
+  assert.ok(
+    screen.getByText(
+      "Listed for reference only. Zero-G does not route Antigravity requests.",
+    ),
+  );
+});
+
 test("model cards label supported input icons and retain unknown modalities", async () => {
   globalThis.fetch = (async () =>
     Response.json({

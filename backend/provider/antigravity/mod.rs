@@ -1,6 +1,9 @@
 //! Google Antigravity quota display. Zero-G never calls Google for this: the official `agy`
-//! CLI reports its own quota and `zero-g-agy-integration` pushes it to `/v1/agy/quota`.
+//! CLI reports its own quota and model list, and `zero-g-agy-integration` pushes them to
+//! `/v1/agy/quota`.
 
+/// Models the CLI lists, shown in the catalog for reference.
+pub(crate) mod models;
 /// Pushed quota snapshots: parsing, storage and display.
 pub(crate) mod quota;
 
@@ -24,12 +27,18 @@ impl super::common::Provider for Backend {
         axum::Router::new()
     }
 
-    #[allow(clippy::unused_async_trait_impl)]
     async fn discover(
-        _state: &crate::server::AppState,
-        _provider: &super::registry::Provider,
+        state: &crate::server::AppState,
+        provider: &super::registry::Provider,
     ) -> Result<Vec<crate::openai::Model>, String> {
-        Ok(Vec::new())
+        let credentials = crate::storage::ProviderCredential::filter_by_provider_id(&provider.id)
+            .exec(&mut (*state.database.db).clone())
+            .await
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|credential| credential.id)
+            .collect::<Vec<_>>();
+        Ok(models::catalog(&state.settings, &credentials).await)
     }
 }
 

@@ -217,6 +217,9 @@ struct QuotaPush {
     /// Subscription tier from the CLI, when it could be read.
     #[serde(default)]
     tier: Option<crate::provider::antigravity::quota::Tier>,
+    /// Models from `agy models`, when they could be read. Absent keeps the stored list.
+    #[serde(default)]
+    models: Option<Vec<crate::provider::antigravity::models::ModelEntry>>,
 }
 
 /// Store the latest quota snapshot for the named `agy` credential.
@@ -234,6 +237,12 @@ async fn push_quota(State(state): State<AppState>, request: Request) -> Response
         return StatusCode::BAD_REQUEST.into_response();
     };
     if push.tier.as_ref().is_some_and(|tier| !tier.is_valid()) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    if push.models.as_ref().is_some_and(|models| {
+        models.len() > crate::provider::antigravity::models::MAX_MODELS
+            || models.iter().any(|model| !model.is_valid())
+    }) {
         return StatusCode::BAD_REQUEST.into_response();
     }
     let Ok(stored) = crate::provider::antigravity::quota::convert(report, push.tier, now()) else {
@@ -263,10 +272,24 @@ async fn push_quota(State(state): State<AppState>, request: Request) -> Response
     .value(stored)
     .exec(&mut db)
     .await;
-    match result {
-        Ok(_) => (StatusCode::OK, Json(serde_json::json!({"ok": true}))).into_response(),
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    if result.is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
+    if let Some(models) = push.models.filter(|models| !models.is_empty()) {
+        let Ok(list) = serde_json::to_string(&models) else {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        };
+        let saved = crate::storage::Setting::upsert_by_name(
+            crate::provider::antigravity::models::setting_name(&credential.id).as_str(),
+        )
+        .value(list)
+        .exec(&mut db)
+        .await;
+        if saved.is_err() {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    }
+    (StatusCode::OK, Json(serde_json::json!({"ok": true}))).into_response()
 }
 
 /// Observation route is outside inference capture and authenticates before reading the body.
@@ -568,5 +591,54 @@ mod tests {
         assert_eq!(value["groups"][0]["label"], "Gemini Models");
         assert_eq!(value["groups"][0]["windows"][0]["label"], "5 hours");
         assert_eq!(value["groups"][0]["windows"][0]["remaining_percent"], 50.0);
+        check_models(&app, &key, &settings, &report).await;
+    }
+
+    /// Models arrive with the report, are validated, and survive a report without them.
+    async fn check_models(
+        app: &Router,
+        key: &str,
+        settings: &super::super::settings::SettingsStore,
+        report: &Value,
+    ) {
+        use crate::provider::antigravity::models::catalog;
+        let push = |models: Value| {
+            let request = Request::builder()
+                .method("POST")
+                .uri("/v1/agy/quota")
+                .header(header::AUTHORIZATION, format!("Bearer {key}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"account": "Kien", "report": report, "models": models}).to_string(),
+                ))
+                .unwrap();
+            app.clone().oneshot(request)
+        };
+        let credentials = ["cred-1".to_owned()];
+        assert!(catalog(settings, &credentials).await.is_empty());
+        for bad in [
+            json!([{"id": "", "name": "No id"}]),
+            json!([{"id": "m", "name": "bad\nname"}]),
+        ] {
+            assert_eq!(push(bad).await.unwrap().status(), StatusCode::BAD_REQUEST);
+        }
+        let list = json!([
+            {"id": "gemini-4-neon-high", "name": "Gemini 4 Neon (High)"},
+            {"id": "claude-opus-5-5-low", "name": "Claude Opus 5.5 (Low)"},
+        ]);
+        assert_eq!(push(list).await.unwrap().status(), StatusCode::OK);
+        let models = catalog(settings, &credentials).await;
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].id, "gemini-4-neon-high");
+        assert_eq!(
+            models[0].display_name.as_deref(),
+            Some("Gemini 4 Neon (High)")
+        );
+        // An empty list or a report without one keeps what is stored.
+        assert_eq!(push(json!([])).await.unwrap().status(), StatusCode::OK);
+        assert_eq!(catalog(settings, &credentials).await.len(), 2);
+        // Two credentials reporting the same model list it once.
+        let twice = ["cred-1".to_owned(), "cred-1".to_owned()];
+        assert_eq!(catalog(settings, &twice).await.len(), 2);
     }
 }
