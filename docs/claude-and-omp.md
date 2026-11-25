@@ -102,9 +102,9 @@ Prompts and responses are stored in full, so treat the dashboard as sensitive.
 | `403 Virtual key does not permit...`                                       | The key is limited to other providers or models. Edit the key or make a new one.                                                                   |
 | `404 Claude provider is not configured`                                    | Connect a Claude account under **Models → Providers**.                                                                                             |
 | `429` with a `Retry-After` header                                          | Every connected Claude account is rate limited for that model. Wait for the delay, or connect another account.                                     |
-| omp lists Codex or other non-Claude models                                 | The server is running an older build. Deploy the current version, or limit the virtual key to the `claude` provider.                               |
+| omp lists Codex or other non-Claude models                                 | Update Zero-G on the server, or limit the virtual key to the `claude` provider.                                                                    |
 | Requests work but nothing shows in logs                                    | Check that the client really uses the Zero-G address, and that the log filters or date range in the dashboard are not hiding the request.          |
 | `400 Claude is available only through the Anthropic /v1/messages endpoint` | An OpenAI-format client (`/v1/chat/completions` or `/v1/responses`) is calling a Claude model. Use an Anthropic client such as Claude Code or omp. |
-| Model name rejected                                                        | Use plain names such as `claude-sonnet-4-6`. A `claude/` prefix is no longer accepted.                                                             |
+| Model name rejected                                                        | Use plain names such as `claude-sonnet-4-6`. A `claude/` prefix is not accepted.                                                                   |
 
 See [Gateways](gateways.md) for every endpoint Zero-G serves and [Configuration](configuration.md) for providers, virtual keys and retention.
