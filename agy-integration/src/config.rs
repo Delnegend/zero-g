@@ -1,7 +1,8 @@
 //! Settings from the environment and an optional `KEY=value` file.
 //!
-//! Environment variables win over the file. The file exists so a background service, which has
-//! no shell profile, can still be configured: it defaults to `~/.config/zero-g/agy-quota.env`.
+//! Environment variables win over the file. The file exists so a background service or an agy
+//! hook, which has no shell profile, can still be configured: it defaults to
+//! `~/.config/zero-g/agy-integration.env`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -10,14 +11,14 @@ use std::time::Duration;
 /// Hours between reads of the subscription tier unless configured otherwise.
 const DEFAULT_TIER_REFRESH_HOURS: f64 = 24.0;
 
-/// Everything one collection run needs.
+/// Everything one run needs.
 pub(crate) struct Settings {
     /// Gateway root, without `/v1`.
     pub(crate) url: String,
     /// Virtual key without a provider allowlist.
     pub(crate) key: String,
-    /// Name of the Google Antigravity credential in Zero-G for this login.
-    pub(crate) account: String,
+    /// Name of the Google Antigravity credential in Zero-G for this login (`quota` only).
+    pub(crate) account: Option<String>,
     /// The agy executable.
     pub(crate) agy: String,
     /// How long a cached subscription tier stays valid.
@@ -64,14 +65,14 @@ fn base_dir(variable: &str, fallback: &str) -> Option<PathBuf> {
 
 /// Where the settings file is looked for when none is named.
 pub(crate) fn default_config_path() -> Option<PathBuf> {
-    base_dir("XDG_CONFIG_HOME", ".config").map(|dir| dir.join("zero-g").join("agy-quota.env"))
+    base_dir("XDG_CONFIG_HOME", ".config").map(|dir| dir.join("zero-g").join("agy-integration.env"))
 }
 
 /// Read the settings file: required when named, optional at the default path.
 fn read_file(explicit: Option<&Path>) -> Result<HashMap<String, String>, String> {
     let named = explicit
         .map(Path::to_path_buf)
-        .or_else(|| std::env::var_os("ZERO_G_AGY_QUOTA_CONFIG").map(PathBuf::from));
+        .or_else(|| std::env::var_os("ZERO_G_AGY_INTEGRATION_CONFIG").map(PathBuf::from));
     if let Some(path) = named {
         let text = std::fs::read_to_string(&path)
             .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
@@ -82,7 +83,8 @@ fn read_file(explicit: Option<&Path>) -> Result<HashMap<String, String>, String>
         .map_or_default(|text| parse_file(&text)))
 }
 
-/// Resolve every setting, naming the missing ones together.
+/// Resolve every setting. The gateway URL and key are required; the account is only checked by
+/// the commands that need it.
 pub(crate) fn load(explicit: Option<&Path>) -> Result<Settings, String> {
     let file = read_file(explicit)?;
     let get = |name: &str| {
@@ -92,13 +94,8 @@ pub(crate) fn load(explicit: Option<&Path>) -> Result<Settings, String> {
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty())
     };
-    let (url, key, account) = (
-        get("ZERO_G_URL"),
-        get("ZERO_G_VIRTUAL_KEY"),
-        get("ZERO_G_AGY_ACCOUNT"),
-    );
-    let (Some(url), Some(key), Some(account)) = (url, key, account) else {
-        return Err("set ZERO_G_URL, ZERO_G_VIRTUAL_KEY and ZERO_G_AGY_ACCOUNT (environment or settings file)".into());
+    let (Some(url), Some(key)) = (get("ZERO_G_URL"), get("ZERO_G_VIRTUAL_KEY")) else {
+        return Err("set ZERO_G_URL and ZERO_G_VIRTUAL_KEY (environment or settings file)".into());
     };
     let hours = get("AGY_TIER_REFRESH_HOURS")
         .and_then(|hours| hours.parse::<f64>().ok())
@@ -111,7 +108,7 @@ pub(crate) fn load(explicit: Option<&Path>) -> Result<Settings, String> {
     Ok(Settings {
         url: url.trim_end_matches('/').to_owned(),
         key,
-        account,
+        account: get("ZERO_G_AGY_ACCOUNT"),
         agy: get("AGY_BIN").unwrap_or_else(|| "agy".to_owned()),
         tier_refresh: Duration::try_from_secs_f64(hours * 3600.0).unwrap_or(Duration::MAX),
         cache_dir,

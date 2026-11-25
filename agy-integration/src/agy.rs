@@ -159,8 +159,8 @@ fn cache_path(dir: &Path, account: &str) -> PathBuf {
 ///
 /// Each read leaves a small throwaway conversation file in agy's own storage, so the result is
 /// cached and the cached value is sent with every push. A failed read falls back to the cache.
-pub(crate) async fn cached_tier(settings: &Settings) -> Option<Value> {
-    let path = cache_path(&settings.cache_dir, &settings.account);
+pub(crate) async fn cached_tier(settings: &Settings, account: &str) -> Option<Value> {
+    let path = cache_path(&settings.cache_dir, account);
     let cached: Option<Value> = std::fs::read_to_string(&path)
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok());

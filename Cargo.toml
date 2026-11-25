@@ -1,5 +1,5 @@
 [workspace]
-members = ["agy-quota"]
+members = ["agy-integration"]
 
 # One version for every crate, so the collector always matches the backend release.
 [workspace.package]

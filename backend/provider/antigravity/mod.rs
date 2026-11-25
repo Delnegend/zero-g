@@ -1,5 +1,5 @@
 //! Google Antigravity quota display. Zero-G never calls Google for this: the official `agy`
-//! CLI reports its own quota and `zero-g-agy-quota` pushes it to `/v1/agy/quota`.
+//! CLI reports its own quota and `zero-g-agy-integration` pushes it to `/v1/agy/quota`.
 
 /// Pushed quota snapshots: parsing, storage and display.
 pub(crate) mod quota;

@@ -179,17 +179,16 @@ pub(crate) async fn stored(
     store: &SettingsStore,
     credential: &str,
 ) -> Result<QuotaSnapshot, String> {
-    let raw = store
-        .setting_get(&setting_name(credential))
-        .await?
-        .ok_or("No quota has been reported yet; run zero-g-agy-quota on the machine with agy")?;
+    let raw = store.setting_get(&setting_name(credential)).await?.ok_or(
+        "No quota has been reported yet; run zero-g-agy-integration on the machine with agy",
+    )?;
     let snapshot: Stored =
         serde_json::from_str(&raw).map_err(|_| "Stored quota snapshot is invalid".to_string())?;
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     let age = now.saturating_sub(snapshot.updated_at);
     if age > STALE_AFTER_SECS {
         return Err(format!(
-            "Quota was last reported {} hours ago; check that the zero-g-agy-quota service is still running",
+            "Quota was last reported {} hours ago; check that the zero-g-agy-integration service is still running",
             age / 3600
         ));
     }

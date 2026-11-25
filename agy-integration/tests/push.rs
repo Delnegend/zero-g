@@ -5,13 +5,12 @@
     clippy::arithmetic_side_effects
 )]
 
-use std::io::{Read, Write};
-use std::net::TcpListener;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Output};
-use std::sync::{Arc, Mutex};
-use std::thread;
+
+mod common;
+use common::gateway;
 
 /// A fake `agy`: `/usage` prints `$FAKE_USAGE`, `acp` answers the three ACP calls.
 const FAKE_AGY: &str = r#"#!/bin/sh
@@ -33,71 +32,6 @@ fi
 /// A valid `/usage` output.
 const USAGE: &str = r#"{"command":{"name":"usage","data":{"groups":[{"name":"Gemini Models","buckets":[{"id":"gemini-5h","window":"5h","remaining_fraction":0.5,"reset_time":"2026-11-25T10:30:13Z"}]}]}}}"#;
 
-/// One request the gateway received.
-struct Received {
-    /// Request path.
-    path: String,
-    /// The `Authorization` header.
-    authorization: String,
-    /// The JSON body.
-    body: serde_json::Value,
-}
-
-/// A gateway stand-in that answers every request with `status` and records it.
-fn gateway(status: u16) -> (String, Arc<Mutex<Vec<Received>>>) {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let seen = Arc::new(Mutex::new(Vec::new()));
-    let log = Arc::clone(&seen);
-    thread::spawn(move || {
-        for stream in listener.incoming() {
-            let Ok(mut stream) = stream else { return };
-            let mut data = Vec::new();
-            let mut buffer = [0u8; 4096];
-            let (head, body) = loop {
-                let read = stream.read(&mut buffer).unwrap_or(0);
-                data.extend_from_slice(&buffer[..read]);
-                let text = String::from_utf8_lossy(&data).into_owned();
-                if let Some((head, rest)) = text.split_once("\r\n\r\n") {
-                    let length = head
-                        .lines()
-                        .find_map(|line| {
-                            line.to_ascii_lowercase()
-                                .strip_prefix("content-length:")
-                                .map(|v| v.trim().parse::<usize>().unwrap())
-                        })
-                        .unwrap_or(0);
-                    if rest.len() >= length || read == 0 {
-                        break (head.to_owned(), rest.to_owned());
-                    }
-                } else if read == 0 {
-                    return;
-                }
-            };
-            let path = head
-                .split_whitespace()
-                .nth(1)
-                .unwrap_or_default()
-                .to_owned();
-            let authorization = head
-                .lines()
-                .find_map(|line| line.strip_prefix("authorization: "))
-                .unwrap_or_default()
-                .to_owned();
-            log.lock().unwrap().push(Received {
-                path,
-                authorization,
-                body: serde_json::from_str(&body).unwrap_or_default(),
-            });
-            let _ = stream.write_all(
-                format!("HTTP/1.1 {status} X\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-                    .as_bytes(),
-            );
-        }
-    });
-    (url, seen)
-}
-
 /// Write the fake agy into `dir` and return its path.
 fn install_agy(dir: &Path) -> std::path::PathBuf {
     let path = dir.join("agy");
@@ -106,10 +40,10 @@ fn install_agy(dir: &Path) -> std::path::PathBuf {
     path
 }
 
-/// Run the collector once with the fake agy and gateway.
+/// Run `quota` once with the fake agy and gateway.
 fn run(dir: &Path, url: &str, usage: &str, acp: &str) -> Output {
     let agy = install_agy(dir);
-    Command::new(env!("CARGO_BIN_EXE_zero-g-agy-quota"))
+    Command::new(env!("CARGO_BIN_EXE_zero-g-agy-integration"))
         .env_clear()
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .env("AGY_BIN", agy)
@@ -120,6 +54,7 @@ fn run(dir: &Path, url: &str, usage: &str, acp: &str) -> Output {
         .env("ZERO_G_URL", url)
         .env("ZERO_G_VIRTUAL_KEY", "zg-test")
         .env("ZERO_G_AGY_ACCOUNT", "Kien")
+        .arg("quota")
         .output()
         .unwrap()
 }
@@ -199,7 +134,7 @@ fn settings_can_come_from_a_file_and_missing_ones_fail() {
     let dir = tempfile::tempdir().unwrap();
     let (url, seen) = gateway(200);
     let agy = install_agy(dir.path());
-    let settings = dir.path().join("agy-quota.env");
+    let settings = dir.path().join("agy-integration.env");
     std::fs::write(
         &settings,
         format!(
@@ -210,12 +145,13 @@ fn settings_can_come_from_a_file_and_missing_ones_fail() {
     )
     .unwrap();
     let command = |extra: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_zero-g-agy-quota"))
+        Command::new(env!("CARGO_BIN_EXE_zero-g-agy-integration"))
             .env_clear()
             .env("PATH", std::env::var("PATH").unwrap_or_default())
             .env("FAKE_AGY_LOG", dir.path().join("agy.log"))
             .env("FAKE_USAGE", USAGE)
             .env("FAKE_ACP", "ok")
+            .arg("quota")
             .args(extra)
             .output()
             .unwrap()
@@ -236,19 +172,31 @@ fn settings_can_come_from_a_file_and_missing_ones_fail() {
 
 #[test]
 fn version_and_help_print_without_settings() {
-    let version = Command::new(env!("CARGO_BIN_EXE_zero-g-agy-quota"))
+    let version = Command::new(env!("CARGO_BIN_EXE_zero-g-agy-integration"))
         .arg("--version")
         .env_clear()
         .output()
         .unwrap();
     assert_eq!(
         String::from_utf8_lossy(&version.stdout).trim(),
-        format!("zero-g-agy-quota {}", env!("CARGO_PKG_VERSION"))
+        format!("zero-g-agy-integration {}", env!("CARGO_PKG_VERSION"))
     );
-    let help = Command::new(env!("CARGO_BIN_EXE_zero-g-agy-quota"))
+    let help = Command::new(env!("CARGO_BIN_EXE_zero-g-agy-integration"))
         .arg("--help")
         .env_clear()
         .output()
         .unwrap();
     assert!(String::from_utf8_lossy(&help.stdout).contains("ZERO_G_AGY_ACCOUNT"));
+}
+
+#[test]
+fn a_missing_or_unknown_command_is_a_usage_error() {
+    for args in [&[][..], &["bogus"][..], &["quota", "observe"][..]] {
+        let output = Command::new(env!("CARGO_BIN_EXE_zero-g-agy-integration"))
+            .args(args)
+            .env_clear()
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+    }
 }

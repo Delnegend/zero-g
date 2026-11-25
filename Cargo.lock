@@ -5100,9 +5100,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "zero-g-agy-quota"
+name = "zero-g-agy-integration"
 version = "1.7.0"
 dependencies = [
+ "libc",
  "reqwest",
  "serde_json",
  "tempfile",

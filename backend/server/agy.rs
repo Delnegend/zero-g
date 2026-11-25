@@ -206,7 +206,7 @@ async fn observe(State(state): State<AppState>, request: Request) -> Response {
     }
 }
 
-/// Quota snapshot pushed by `zero-g-agy-quota` from the official `agy` CLI.
+/// Quota snapshot pushed by `zero-g-agy-integration` from the official `agy` CLI.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct QuotaPush {
