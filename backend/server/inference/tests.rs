@@ -584,6 +584,37 @@ async fn unified_api_authenticates_before_discovery_or_inference() {
     second_task.abort();
 }
 
+/// Anthropic clients listing models get Anthropic-shaped, Claude-only answers.
+#[tokio::test]
+async fn anthropic_model_listing_is_claude_only_and_anthropic_shaped() {
+    let (app, all, restricted, first_task, second_task, _) = fixture().await;
+    let list = |key: &str| {
+        app.clone().oneshot(
+            Request::builder()
+                .uri("/v1/models")
+                .header("x-api-key", key)
+                .header("anthropic-version", "2023-06-01")
+                .body(Body::empty())
+                .unwrap(),
+        )
+    };
+    // No Claude provider is configured in this fixture.
+    let response = list(&all).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(json_body(response).await["type"], "error");
+    // A key limited to another provider may not list Claude models.
+    let response = list(&restricted).await.unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        json_body(response).await["error"]["type"],
+        "permission_error"
+    );
+    let response = list("zg-invalid").await.unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    first_task.abort();
+    second_task.abort();
+}
+
 /// Anthropic clients authenticate with `x-api-key` and receive Anthropic-shaped errors.
 #[tokio::test]
 async fn anthropic_messages_accept_x_api_key_and_answer_in_anthropic_shape() {

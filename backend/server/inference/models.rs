@@ -14,12 +14,48 @@ use serde_json::json;
 fn normalize_model(kind: &str, model: &mut crate::openai::Model) {
     let info = match kind {
         "zen" | "go" => crate::provider::zen::catalog::catalog_info(model, kind),
-        "claude" => crate::provider::claude::catalog_info(model),
         "openrouter" => crate::provider::openrouter::catalog_info(model),
         "chatjimmy" => crate::provider::chatjimmy::catalog_info(model),
         _ => return,
     };
-    info.apply_to_route(model, kind == "claude");
+    info.apply_to_route(model);
+}
+
+/// List Claude models for an Anthropic client, in Anthropic's list shape with plain ids.
+async fn anthropic_models(state: &AppState, request: Request) -> Response {
+    use crate::provider::claude::passthrough::error as anthropic_error;
+    let permissions = match permissions(state, request.headers(), request.extensions().get()).await
+    {
+        Ok(p) => p,
+        Err(e) => return anthropic_error(e.status(), e.message()),
+    };
+    if !permissions.providers.is_empty() && !permissions.providers.iter().any(|p| p == "claude") {
+        return anthropic_error(
+            StatusCode::FORBIDDEN,
+            "Virtual key does not permit this provider",
+        );
+    }
+    let provider = match registry::get(&state.settings.database, "claude").await {
+        Ok(Some(provider)) if provider.kind == "claude" => provider,
+        Ok(_) => {
+            return anthropic_error(StatusCode::NOT_FOUND, "Claude provider is not configured");
+        }
+        Err(_) => {
+            return anthropic_error(StatusCode::INTERNAL_SERVER_ERROR, "Failed to load provider");
+        }
+    };
+    catalog::discover_permitted(state, &provider, &permissions)
+        .await
+        .map_or_else(
+            |_| anthropic_error(StatusCode::BAD_GATEWAY, "Model discovery failed"),
+            |mut models| {
+                models.retain(|model| permissions.allows_model(&model.id));
+                let first = models.first().map(|model| model.id.clone());
+                let last = models.last().map(|model| model.id.clone());
+                Json(json!({"data": models, "has_more": false, "first_id": first, "last_id": last}))
+                    .into_response()
+            },
+        )
 }
 
 /// Aggregate permitted model records, without exposing upstream errors.
@@ -30,6 +66,9 @@ fn normalize_model(kind: &str, model: &mut crate::openai::Model) {
         (status = 500, description = "Registry or permissions error", body = Value),
         (status = 502, description = "All provider discoveries failed", body = Value)))]
 pub(super) async fn models(State(state): State<AppState>, request: Request) -> Response {
+    if request.headers().contains_key("anthropic-version") {
+        return anthropic_models(&state, request).await;
+    }
     let permissions = match permissions(&state, request.headers(), request.extensions().get()).await
     {
         Ok(p) => p,
@@ -45,6 +84,8 @@ pub(super) async fn models(State(state): State<AppState>, request: Request) -> R
     };
     let providers: Vec<_> = providers
         .into_iter()
+        // Claude is reachable only through `/v1/messages`, so it has no place in this list.
+        .filter(|p| p.kind != "claude")
         .filter(|p| permissions.providers.is_empty() || permissions.providers.contains(&p.id))
         .collect();
     let results = join_all(providers.iter().map(|provider| async {
@@ -138,21 +179,6 @@ mod tests {
         assert_eq!(value["supports_tools"], false);
         assert!(value.get("input_modalities").is_none());
         assert!(value.get("context_window").is_none());
-    }
-
-    #[test]
-    fn claude_reports_only_gateway_supported_modalities_and_no_input_only_context() {
-        let mut model: Model = serde_json::from_value(json!({
-            "id": "fixture", "max_input_tokens": 100_000, "max_tokens": 0,
-            "capabilities": {"image_input": {"supported": true}, "pdf_input": {"supported": true}}
-        }))
-        .unwrap();
-        normalize_model("claude", &mut model);
-        let value = serde_json::to_value(model).unwrap();
-        assert!(value.get("context_window").is_none());
-        assert!(value.get("max_output_tokens").is_none());
-        assert_eq!(value["input_modalities"], json!(["text", "image"]));
-        assert_eq!(value["output_modalities"], json!(["text"]));
     }
 
     #[test]
