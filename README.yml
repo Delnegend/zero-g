@@ -38,7 +38,7 @@ highlights:
   - "**Multi-Turn Tool Calling**: End-to-end function declaration, execution, and tool response turn merging."
 
 documentation:
-  architecture: "Request envelopes, streaming translation, and system invariants."
+  architecture: "Components, request flow, and provider dispatch."
   development: "Prerequisites, `just check` gate, and test suite."
   deployment: "Container setup, [configuration](docs/configuration.md), [gateways](docs/gateways.md), [Claude Code and omp](docs/claude-and-omp.md), updates, and backups."
 

@@ -44,16 +44,18 @@ flowchart TD
 
 ## Core Components
 
-| Component                | Path / Location                                                | Responsibility                                                                                                                                                                                            |
-| ------------------------ | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **HTTP Layer**           | `backend/server/`                                              | Axum web server exposing `/v1` inference and dashboard endpoints.                                                                                                                                         |
-| **Dashboard Auth**       | `backend/server/dashboard_auth_config.rs`                      | Maps configuration to `axum-auth-gate` (Basic and OIDC + PKCE).                                                                                                                                           |
-| **Protocol Types**       | `backend/openai.rs`, `backend/responses.rs`                    | Strongly typed Serde models for Chat Completions and Responses API.                                                                                                                                       |
-| **Auth Managers**        | `backend/provider/*/auth.rs`                                   | Token lifecycle, credential locking, and provider-specific refreshes.                                                                                                                                     |
-| **Provider System**      | `backend/provider/common/`, `backend/provider/*/`              | Provider traits for routing and model discovery.                                                                                                                                                          |
-| **Credential Pools**     | `backend/provider/credentials/`                                | Encrypted credential storage and weighted selection; rate-limited credentials enter an in-memory cooldown and are skipped until retry. Cooldowns are local to each running instance and reset on restart. |
-| **Catalog & Datasheets** | `backend/provider/catalog.rs`, `backend/server/model_setting/` | Model metadata, pricing synchronization, and background discovery polling.                                                                                                                                |
-| **Storage & Migrations** | `backend/database.rs`, `backend/storage.rs`                    | Toasty ORM over SQLite/Turso with retry-aware transactions and startup migrations.                                                                                                                        |
+Where each part lives is in the code map in [Development](development.md#architecture--code-map).
+
+| Component                | Responsibility                                                                                                                                            |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **HTTP Layer**           | Axum web server exposing `/v1` inference and dashboard endpoints.                                                                                         |
+| **Dashboard Auth**       | Maps configuration to `axum-auth-gate` (Basic and OIDC + PKCE).                                                                                           |
+| **Protocol Types**       | Strongly typed Serde models for Chat Completions and Responses API.                                                                                       |
+| **Auth Managers**        | Token lifecycle, credential locking, and provider-specific refreshes. OAuth providers keep their stored credential fields private in their own `auth.rs`. |
+| **Provider System**      | Provider traits for routing and model discovery.                                                                                                          |
+| **Credential Pools**     | Encrypted credential storage and failover selection; see [Credential Pool & Failover Logic](configuration.md#credential-pool--failover-logic).            |
+| **Catalog & Datasheets** | Model metadata, pricing synchronization, and background discovery polling.                                                                                |
+| **Storage & Migrations** | Toasty ORM over SQLite/Turso with retry-aware transactions and startup migrations.                                                                        |
 
 ---
 
@@ -93,15 +95,7 @@ sequenceDiagram
     Upstream-->>Engine: Stream chunks (SSE)
     Engine-->>V1: Translate to OpenAI stream chunks
     V1-->>Client: Stream SSE chunks
-    V1-)Auth: Async logging (response body capture capped at 100 MiB)
+    V1-)Auth: Async logging
 ```
 
----
-
-## Invariants & Protocol Guarantees
-
-| Invariant               | Scope                           | Rule                                                                                                           |
-| ----------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| **OAuth Token Refresh** | Codex                           | Checked before request; if expiration is within 60s, token refresh triggers automatically.                     |
-| **Interrupted Streams** | Codex                           | Broken streams without terminal response raise a clean downstream error instead of a truncated success marker. |
-| **Payload Size Limit**  | Unified inference POST requests | Request bodies capped at 20,000,000 bytes. Response body capture capped at 100 MiB.                            |
+Per-provider wire guarantees (streaming, usage chunks, strict options) are in [Gateways](gateways.md#error-handling--wire-invariants); size and retention limits are in [Configuration](configuration.md#request--quota-limits).

@@ -44,7 +44,7 @@ curl -H "Authorization: Bearer $ZERO_G_VIRTUAL_KEY" http://127.0.0.1:8080/v1/mod
 
 ## Documentation
 
-- **[Architecture](docs/architecture.md)**: Request envelopes, streaming translation, and system invariants.
+- **[Architecture](docs/architecture.md)**: Components, request flow, and provider dispatch.
 - **[Development](docs/development.md)**: Prerequisites, `just check` gate, and test suite.
 - **[Deployment](docs/deployment.md)**: Container setup, [configuration](docs/configuration.md), [gateways](docs/gateways.md), [Claude Code and omp](docs/claude-and-omp.md), updates, and backups.
 

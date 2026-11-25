@@ -43,10 +43,16 @@ zero-g/
 ├── backend/
 │   ├── database.rs          # Turso / SQLite connection
 │   ├── storage.rs           # Toasty models
+│   ├── openai/, responses.rs  # Chat Completions and Responses API types
 │   ├── server/              # Axum handlers and dashboard APIs
+│   │   ├── dashboard_auth_config.rs  # Basic and OIDC via axum-auth-gate
+│   │   ├── model_setting/   # Pricing datasheets
 │   │   └── observability/   # Request capture, retention, dashboard, logs
 │   └── provider/            # One directory per provider
-│       └── common/          # Shared traits, retry, SSE framing
+│       ├── common/          # Shared traits, retry, SSE framing
+│       ├── credentials/     # Encrypted credential storage and weighted selection
+│       ├── catalog.rs       # Model metadata and background discovery polling
+│       └── */auth.rs        # Token lifecycle and refresh; stored fields stay private
 ├── frontend/src/
 │   ├── routes/              # TanStack Router pages (__root.tsx: shared layout)
 │   ├── components/          # UI widgets, charts, log views and their tests
@@ -56,7 +62,6 @@ zero-g/
 ```
 
 - Rust modules with tests live in named directories with `mod.rs` as entry.
-- OAuth providers keep their stored credential fields private in their own `auth.rs`.
 - Provider integrations separate external calls (`upstream`) from client-facing response processing (`downstream`) where practical. Routes connect request validation, provider calls, and response handling; compatible providers may share these modules. Cursor keeps its two-way provider conversation together in `upstream/`.
 
 ### Observability
@@ -69,16 +74,16 @@ zero-g/
 
 All three need dashboard auth and share one filter (`filter.rs`): range, dimensions, statuses, choices.
 
-| Topic         | Rule                                                                                                                                 |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Search        | Provider, model or path text (ASCII case-insensitive); a whole number also matches log ID, status or timestamp                       |
-| Token totals  | Missing counts stay unreported, never zero, so a provider total can be partial                                                       |
-| Charts        | Span the whole range, including periods with no requests                                                                             |
-| Storage       | Bodies live in `request_log_payloads`, zstd level 3 (~2.7x smaller), apart from `request_logs`; list and chart scans never read them |
-| Capture       | Log row, bodies and filter snapshots commit in one transaction; bodies capped at 100 MiB, so the readable view can be incomplete     |
-| Stream errors | A failure after HTTP headers are sent is logged as 502; the HTTP status already sent to the client cannot be changed                 |
-| Retention     | Bodies after `body_retention_days` (7), rows after `log_retention_days` (90)                                                         |
-| Queries       | Built with Toasty; no hand-written SQL                                                                                               |
+| Topic         | Rule                                                                                                                                                                                    |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Search        | Provider, model or path text (ASCII case-insensitive); a whole number also matches log ID, status or timestamp                                                                          |
+| Token totals  | Missing counts stay unreported, never zero, so a provider total can be partial                                                                                                          |
+| Charts        | Span the whole range, including periods with no requests                                                                                                                                |
+| Storage       | Bodies live in `request_log_payloads`, zstd level 3 (~2.7x smaller), apart from `request_logs`; list and chart scans never read them                                                    |
+| Capture       | Log row, bodies and filter snapshots commit in one transaction; bodies are capped (see [Configuration](configuration.md#request--quota-limits)), so the readable view can be incomplete |
+| Stream errors | A failure after HTTP headers are sent is logged as 502; the HTTP status already sent to the client cannot be changed                                                                    |
+| Retention     | Bodies and rows expire on the schedule in [Configuration](configuration.md#request--quota-limits)                                                                                       |
+| Queries       | Built with Toasty; no hand-written SQL                                                                                                                                                  |
 
 The response body Copy button copies the selected readable or raw view and briefly shows a green check when copying succeeds.
 

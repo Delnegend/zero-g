@@ -16,11 +16,11 @@ Zero-G does not rewrite these requests. It checks the virtual key, swaps in the 
 
 1. Open the dashboard and go to **Models → Providers**.
 2. On the **Claude Code** card, start the login. Open the link, approve access, and paste the returned code back into Zero-G.
-3. Several accounts can be connected. Zero-G tries them in order and moves to the next one when an account is rate limited.
+3. Several accounts can be connected. When one is rate limited or refused, Zero-G falls back to another (see [Credential Pool & Failover Logic](configuration.md#credential-pool--failover-logic)).
 
 ## 2. Create a virtual key
 
-A virtual key is the password your tools use to talk to Zero-G. It is separate from your Claude login.
+A virtual key is the password your tools use to talk to Zero-G. It is separate from your Claude login. Tools send it as `x-api-key` or `Authorization: Bearer`; its limits are described under [Virtual Keys & Security](configuration.md#virtual-keys--security).
 
 1. Go to **Virtual keys** and create a key.
 2. Restrict it to the `claude` provider (recommended), and optionally to specific models or an expiry date.
@@ -74,6 +74,14 @@ From the command line, a quick test with omp:
 omp -p --no-session --no-tools --model anthropic/claude-haiku-4-5-20251001 "Reply with exactly one word: pong"
 ```
 
+## How requests are handled
+
+| Topic      | Behavior                                                                                                                                                  |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Endpoints  | `POST /v1/messages` and `POST /v1/messages/count_tokens`, for the `claude` provider only                                                                  |
+| Model list | `GET /v1/models` with an `anthropic-version` header returns only Claude models, plain ids, in Anthropic's list shape; the OpenAI-format list omits Claude |
+| Errors     | Anthropic's `{"type":"error"}` shape                                                                                                                      |
+
 ## What gets tracked
 
 | Where                | What you see                                                                                                                      |
@@ -82,20 +90,21 @@ omp -p --no-session --no-tools --model anthropic/claude-haiku-4-5-20251001 "Repl
 | **LLM Logs**         | One row per request: time, provider and model, status, latency, tokens. Open a row for the full prompt and response.              |
 | **Filters**          | Narrow logs and charts by status, model, provider, virtual key, or provider credential (which Claude account served the request). |
 | **Token counts**     | Input (including cache reads and writes) and output tokens, read from Anthropic's reply.                                          |
-| **Account activity** | The provider's credential card shows quota windows for each connected Claude account.                                             |
+| **Account activity** | The provider's credential card shows each connected Claude account's plan (for example Max 5x) and its quota windows.             |
 
 Prompts and responses are stored in full, so treat the dashboard as sensitive.
 
 ## Troubleshooting
 
-| Symptom                                    | Meaning and fix                                                                                                                           |
-| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `401 Invalid virtual key`                  | The key is wrong, revoked or expired. Create a new one under **Virtual keys**.                                                            |
-| `403 Virtual key does not permit...`       | The key is limited to other providers or models. Edit the key or make a new one.                                                          |
-| `404 Claude provider is not configured`    | Connect a Claude account under **Models → Providers**.                                                                                    |
-| `429` with a `Retry-After` header          | Every connected Claude account is rate limited for that model. Wait for the delay, or connect another account.                            |
-| omp lists Codex or other non-Claude models | The server is running an older build. Deploy the current version, or limit the virtual key to the `claude` provider.                      |
-| Requests work but nothing shows in logs    | Check that the client really uses the Zero-G address, and that the log filters or date range in the dashboard are not hiding the request. |
-| Model name rejected                        | Use plain names such as `claude-sonnet-4-6`. A `claude/` prefix is no longer accepted.                                                    |
+| Symptom                                                                    | Meaning and fix                                                                                                                                    |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `401 Invalid virtual key`                                                  | The key is wrong, revoked or expired. Create a new one under **Virtual keys**.                                                                     |
+| `403 Virtual key does not permit...`                                       | The key is limited to other providers or models. Edit the key or make a new one.                                                                   |
+| `404 Claude provider is not configured`                                    | Connect a Claude account under **Models → Providers**.                                                                                             |
+| `429` with a `Retry-After` header                                          | Every connected Claude account is rate limited for that model. Wait for the delay, or connect another account.                                     |
+| omp lists Codex or other non-Claude models                                 | The server is running an older build. Deploy the current version, or limit the virtual key to the `claude` provider.                               |
+| Requests work but nothing shows in logs                                    | Check that the client really uses the Zero-G address, and that the log filters or date range in the dashboard are not hiding the request.          |
+| `400 Claude is available only through the Anthropic /v1/messages endpoint` | An OpenAI-format client (`/v1/chat/completions` or `/v1/responses`) is calling a Claude model. Use an Anthropic client such as Claude Code or omp. |
+| Model name rejected                                                        | Use plain names such as `claude-sonnet-4-6`. A `claude/` prefix is no longer accepted.                                                             |
 
-See [Gateways](gateways.md) for the full `/v1/messages` behavior and [Configuration](configuration.md) for providers, virtual keys and retention.
+See [Gateways](gateways.md) for every endpoint Zero-G serves and [Configuration](configuration.md) for providers, virtual keys and retention.

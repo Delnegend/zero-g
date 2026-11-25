@@ -79,6 +79,7 @@ Built-in provider cards show their name without a separate type label. Custom Op
 - Weight 3 is picked first about three times as often as weight 1.
 - An upstream 401, 403 or 429 before streaming moves on to the next credential, so actual traffic can differ from the weights.
 - Keyless providers skip the pool.
+- A rate-limited credential enters an in-memory cooldown and is skipped until its retry time. Cooldowns are local to each running instance and reset on restart.
 
 ---
 

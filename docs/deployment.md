@@ -69,40 +69,22 @@ volumes:
 
 ## Upgrade & Migration Workflow
 
-Migrations are automatically applied on startup by the embedded Toasty ORM engine.
-
-```mermaid
-flowchart TD
-    Stop[1. Stop Container: docker compose stop zero-g] --> Backup[2. Backup DB Volume + ZERO_G_ENCRYPTION_KEY]
-    Backup --> Pull[3. Pull New Image: docker compose pull]
-    Pull --> Start[4. Start Container: docker compose up -d]
-    Start --> Migrate[5. Auto-Apply Embedded Migrations on Startup]
-    Migrate --> Check{6. Health Check}
-    Check -->|Pass| Ready[Upgrade Complete]
-    Check -->|Fail| Rollback[Restore DB backup + Previous Tag]
-```
+Migrations are applied automatically on startup by the embedded Toasty ORM engine.
 
 ### Upgrade Checklist
 
-| Task                   | Action                                                                                    | Command                                                                                                             |
-| ---------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| **1. Stop container**  | Prevent write operations                                                                  | `docker compose stop zero-g`                                                                                        |
-| **2. Backup database** | Archive the stopped container's database and any journal sidecars to a protected location | `docker run --rm -v zero-g-data:/data:ro -v "$(pwd)":/backup alpine tar -C /data -czf /backup/zero-g-data.tar.gz .` |
-| **3. Backup key**      | Securely back up `.env` separately from the database; do not print the key                | Store an encrypted copy in your secret manager.                                                                     |
-| **4. Pull & Restart**  | Run new version                                                                           | `docker compose pull && docker compose up -d`                                                                       |
-| **5. Verify status**   | Confirm the server responds                                                               | `curl -f http://127.0.0.1:8080/health`                                                                              |
+| Task                      | Action                                                                                                                                                                                          | Command                                                                                                             |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **1. Stop container**     | Prevent write operations                                                                                                                                                                        | `docker compose stop zero-g`                                                                                        |
+| **2. Backup database**    | Archive the stopped container's `zero-g.db` and any `-wal` / `-shm` sidecars to a protected location. It holds credentials, provider definitions, virtual keys and request telemetry.           | `docker run --rm -v zero-g-data:/data:ro -v "$(pwd)":/backup alpine tar -C /data -czf /backup/zero-g-data.tar.gz .` |
+| **3. Backup key**         | Securely back up `.env` separately from the database; do not print the key. Without `ZERO_G_ENCRYPTION_KEY`, stored credentials **cannot be decrypted**. `.env` also holds the dashboard login. | Store an encrypted copy in your secret manager.                                                                     |
+| **4. Pull & Restart**     | Run new version; migrations apply on startup                                                                                                                                                    | `docker compose pull && docker compose up -d`                                                                       |
+| **5. Verify status**      | Confirm the server responds                                                                                                                                                                     | `curl -f http://127.0.0.1:8080/health`                                                                              |
+| **If verification fails** | Restore the database backup and start the previous image tag                                                                                                                                    | Restore `zero-g-data.tar.gz` into the volume, then pin the earlier tag in `compose.yml`.                            |
 
 ---
 
-## Backup & Recovery
-
-| Item                                 | What to Backup                                         | Why it's Critical                                                                  |
-| ------------------------------------ | ------------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| **Database File**                    | `/app/data/zero-g.db` (+ any `-wal` / `-shm` sidecars) | Contains credentials, provider definitions, virtual keys, and request telemetry.   |
-| **Encryption Key**                   | `ZERO_G_ENCRYPTION_KEY`                                | Without this key, existing stored credentials and secrets **cannot be decrypted**. |
-| **Dashboard Password / OIDC Config** | `.env` file                                            | Needed for dashboard administrative access.                                        |
-
-### Reclaiming disk space
+## Reclaiming disk space
 
 Pruning frees pages that new logs reuse, but the file never shrinks. Turso has
 no `VACUUM`, so shrink it offline after a large cleanup:
