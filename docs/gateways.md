@@ -43,7 +43,7 @@ flowchart LR
 
 ### Antigravity CLI
 
-Antigravity is not a model route: it only reports quota and plan. Setup for the observation hook and the quota collector is in [Antigravity](antigravity.md).
+Antigravity is not a model route: it only reports quota and plan. Setup for the quota service and the observation hook is in [Antigravity](antigravity.md).
 
 ### OpenRouter Decisions API Example
 
@@ -62,6 +62,6 @@ curl http://127.0.0.1:8080/v1/decisions \
 | Page                                                   | What it covers                                               |
 | ------------------------------------------------------ | ------------------------------------------------------------ |
 | [Claude Code and omp](claude-and-omp.md)               | Connecting Anthropic clients through `/v1/messages`          |
-| [Antigravity](antigravity.md)                          | The observation hook and the quota collector                 |
+| [Antigravity](antigravity.md)                          | The quota service and the observation hook                   |
 | [Model capability metadata](model-metadata.md)         | What `GET /v1/models` reports per provider                   |
 | [Error handling & wire invariants](wire-invariants.md) | Streaming, usage chunks and strict-option rules per provider |

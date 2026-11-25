@@ -53,7 +53,7 @@ zero-g/
 │       ├── credentials/     # Encrypted credential storage and weighted selection
 │       ├── catalog.rs       # Model metadata and background discovery polling
 │       └── */auth.rs        # Token lifecycle and refresh; stored fields stay private
-├── agy-quota/               # zero-g-agy-quota: pushes agy's quota and plan to a gateway
+├── agy-integration/               # zero-g-agy-integration: reports agy's quota, plan and usage to a gateway
 ├── frontend/src/
 │   ├── routes/              # TanStack Router pages (__root.tsx: shared layout)
 │   ├── components/          # UI widgets, charts, log views and their tests
