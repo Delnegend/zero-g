@@ -40,7 +40,7 @@ highlights:
 documentation:
   architecture: "Components, request flow, and provider dispatch."
   development: "Prerequisites, `just check` gate, and test suite."
-  deployment: "Container setup, [configuration](docs/configuration.md), [gateways](docs/gateways.md), [Claude Code and omp](docs/claude-and-omp.md), updates, and backups."
+  deployment: "Container setup, [configuration](docs/configuration.md), [gateways](docs/gateways.md), [Claude Code and omp](docs/claude-and-omp.md), [Antigravity](docs/antigravity.md), updates, and backups."
 
 license:
   type:

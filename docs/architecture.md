@@ -98,4 +98,4 @@ sequenceDiagram
     V1-)Auth: Async logging
 ```
 
-Per-provider wire guarantees (streaming, usage chunks, strict options) are in [Gateways](gateways.md#error-handling--wire-invariants); size and retention limits are in [Configuration](configuration.md#request--quota-limits).
+Per-provider wire guarantees (streaming, usage chunks, strict options) are in [Wire invariants](wire-invariants.md); size and retention limits are in [Configuration](configuration.md#request--quota-limits).
