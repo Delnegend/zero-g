@@ -3,6 +3,7 @@ use crate::database::Database;
 use crate::server::settings::SettingsStore;
 use crate::storage::{ProviderCredential, ProviderRecord, Secret};
 use axum::{Router, body::to_bytes, routing::post};
+use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
 /// Requests seen by the fake Anthropic upstream.
@@ -122,7 +123,6 @@ async fn send(
         state,
         permissions,
         Some(identity),
-        "session",
         &headers,
         &format!("{root}/v1/messages?beta=true"),
         Bytes::from(body.to_owned()),
@@ -130,7 +130,7 @@ async fn send(
     .await
 }
 
-/// Claude Code bodies arrive upstream byte for byte; only the credential and betas change.
+/// Bodies arrive upstream byte for byte; only the credential and betas change.
 #[tokio::test]
 async fn claude_code_body_is_forwarded_byte_for_byte() {
     let (root, seen) = upstream(&[]).await;
@@ -166,48 +166,6 @@ async fn claude_code_body_is_forwarded_byte_for_byte() {
         "fine-grained-tool-streaming-2025-05-14,claude-code-20250219,oauth-2025-04-20"
     );
     assert_eq!(identity.snapshot().credential_id.as_deref(), Some("a"));
-}
-
-/// Other Anthropic clients get the Claude Code identity and a valid attestation.
-#[tokio::test]
-async fn other_clients_are_normalized_and_attested() {
-    let (root, seen) = upstream(&[]).await;
-    let state = state().await;
-    let body = json!({
-        "model": "claude/claude-sonnet-4-6",
-        "system": "Be brief.",
-        "messages": [{"role": "user", "content": [{"type": "text", "text": "hello there world"}]}],
-        "max_tokens": 10
-    });
-    let response = send(
-        &state,
-        &unrestricted(),
-        &RequestIdentity::default(),
-        &root,
-        HeaderMap::new(),
-        &body.to_string(),
-    )
-    .await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let (headers, received) = seen.lock().unwrap()[0].clone();
-    let sent: Value = serde_json::from_slice(&received).unwrap();
-    assert_eq!(sent["model"], "claude-sonnet-4-6");
-    let billing = sent["system"][0]["text"].as_str().unwrap();
-    assert!(billing.starts_with(BILLING_PREFIX) && !billing.contains("cch=00000"));
-    assert_eq!(sent["system"][1]["text"], payload::IDENTITY);
-    assert_eq!(sent["system"][2]["text"], "Be brief.");
-    let user: Value = serde_json::from_str(sent["metadata"]["user_id"].as_str().unwrap()).unwrap();
-    assert_eq!(user["session_id"], "session");
-    assert_eq!(user["account_uuid"], "acct");
-    // Recomputing the attestation over the same body reproduces the bytes sent.
-    let mut unsigned = sent.clone();
-    unsigned["system"][0]["text"] = json!(reset_attestation(billing));
-    assert_eq!(
-        client::attest(&unsigned).unwrap(),
-        String::from_utf8(received.to_vec()).unwrap()
-    );
-    assert_eq!(headers[header::USER_AGENT], client::user_agent());
-    assert_eq!(headers["x-app"], "cli");
 }
 
 /// A refused account falls through to the next; when all refuse, the refusal is returned.

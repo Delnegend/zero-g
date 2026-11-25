@@ -1,6 +1,9 @@
 use serde::Deserialize;
 
 use super::{auth, upstream};
+
+/// Claude Code release whose user agent the undocumented usage endpoint expects.
+const CLAUDE_VERSION: &str = "2.1.280";
 use crate::provider::quota::{QuotaGroup, QuotaSnapshot, QuotaWindow};
 use crate::server::settings::SettingsStore;
 
@@ -68,10 +71,7 @@ async fn fetch_usage(
         .header(reqwest::header::ACCEPT, "application/json")
         .header(
             reqwest::header::USER_AGENT,
-            format!(
-                "claude-cli/{} (external, cli)",
-                super::payload::CLAUDE_VERSION
-            ),
+            format!("claude-cli/{CLAUDE_VERSION} (external, cli)"),
         )
         .timeout(std::time::Duration::from_secs(15))
         .send()

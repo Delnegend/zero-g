@@ -5,18 +5,6 @@ use crate::provider::common::cooldown;
 use crate::provider::common::pool::{PoolError, eligible_by, rank_accounts};
 use crate::provider::credentials::Credential;
 use axum::http::StatusCode;
-use serde_json::Value;
-use sha2::Digest;
-/// Encode bytes as lowercase hexadecimal without intermediate allocations.
-pub(super) fn hex(bytes: &[u8]) -> String {
-    let mut encoded = String::with_capacity(bytes.len().saturating_mul(2));
-    for byte in bytes {
-        encoded.push(char::from_digit(u32::from(byte >> 4), 16).unwrap_or('0'));
-        encoded.push(char::from_digit(u32::from(byte & 0x0f), 16).unwrap_or('0'));
-    }
-    encoded
-}
-
 /// Shared bounded client that never forwards credentials through redirects.
 pub(super) static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
@@ -26,63 +14,11 @@ pub(super) static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
         .build()
         .unwrap_or_else(|_| reqwest::Client::new())
 });
-/// Serialize and attest the exact request bytes sent to Claude Code's API.
-pub(super) fn attest(payload: &Value) -> Result<String, String> {
-    let mut body = serde_json::to_string(payload).map_err(|e| e.to_string())?;
-    let marker = "\"system\":[{\"text\":\"x-anthropic-billing-header:";
-    let start = body.find(marker).ok_or("Missing Claude billing header")?;
-    let relative = body
-        .get(start..)
-        .and_then(|s| s.find("cch=00000"))
-        .ok_or("Missing Claude attestation placeholder")?;
-    let offset = start
-        .checked_add(relative)
-        .ok_or("Invalid attestation offset")?;
-    let end = offset.checked_add(9).ok_or("Invalid attestation offset")?;
-    let hash = xxhash_rust::xxh64::xxh64(body.as_bytes(), 0x4d65_9218_e32a_3268) & 0x000f_ffff;
-    body.replace_range(offset..end, &format!("cch={hash:05x}"));
-    Ok(body)
-}
-
 /// Anthropic API origin used with subscription tokens.
 pub(super) const API_ROOT: &str = "https://api.anthropic.com";
 
 /// Beta flags a subscription token needs to be accepted as Claude Code.
 pub(super) const REQUIRED_BETAS: [&str; 2] = ["claude-code-20250219", "oauth-2025-04-20"];
-/// Beta flags sent by translated requests.
-const TRANSLATED_BETAS: &str =
-    "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,effort-2025-11-24";
-
-/// User agent of the Claude Code release the wire format follows.
-pub(super) fn user_agent() -> String {
-    format!(
-        "claude-cli/{} (external, cli)",
-        super::payload::CLAUDE_VERSION
-    )
-}
-
-/// Send an attested request with Claude Code OAuth transport headers.
-pub(super) async fn send(
-    client: &reqwest::Client,
-    url: &str,
-    token: &str,
-    payload: &Value,
-) -> Result<reqwest::Response, String> {
-    let body = attest(payload)?;
-    client
-        .post(url)
-        .bearer_auth(token)
-        .header("content-type", "application/json")
-        .header("anthropic-version", "2023-06-01")
-        .header("anthropic-beta", TRANSLATED_BETAS)
-        .header("user-agent", user_agent())
-        .header("x-app", "cli")
-        .body(body)
-        .send()
-        .await
-        .map_err(|e| format!("Claude request failed: {e}"))
-}
-
 /// Send a prepared body and caller-chosen headers with a subscription token.
 pub(super) async fn forward(
     client: &reqwest::Client,
@@ -99,18 +35,6 @@ pub(super) async fn forward(
         .send()
         .await
         .map_err(|e| format!("Claude request failed: {e}"))
-}
-
-/// Claude Code's `metadata.user_id`: a stable device per credential plus the session.
-pub(super) fn user_id(credential: &str, session: &str, account: Option<&str>) -> String {
-    let digest = sha2::Sha256::digest(format!("zero-g-claude-device:{credential}").as_bytes());
-    let mut identity = serde_json::json!({"device_id": hex(&digest), "session_id": session});
-    if let Some(account) = account
-        && let Some(object) = identity.as_object_mut()
-    {
-        object.insert("account_uuid".into(), serde_json::json!(account));
-    }
-    identity.to_string()
 }
 
 /// Why no credential produced a usable response.
@@ -222,128 +146,37 @@ where
     ))
 }
 
-/// Send a translated request using the first available credential.
-pub(super) async fn inference(
-    store: &crate::server::settings::SettingsStore,
-    provider: &crate::provider::registry::Provider,
-    model: &str,
-    session: &str,
-    payload: &Value,
-) -> Result<(reqwest::Response, Credential), Refusal> {
-    inference_at(store, provider, API_ROOT, model, session, payload).await
-}
-
-/// Send a translated request against a configurable Anthropic root.
-pub(super) async fn inference_at(
-    store: &crate::server::settings::SettingsStore,
-    provider: &crate::provider::registry::Provider,
-    base: &str,
-    model: &str,
-    session: &str,
-    payload: &Value,
-) -> Result<(reqwest::Response, Credential), Refusal> {
-    let base = base.trim_end_matches('/');
-    let url = format!("{base}/v1/messages?beta=true");
-    first_accepted_at(store, provider, base, model, |creds, credential| {
-        let mut payload = payload.clone();
-        if let Some(object) = payload.as_object_mut() {
-            let user_id = user_id(&credential.id, session, creds.account_id.as_deref());
-            object.insert("metadata".into(), serde_json::json!({ "user_id": user_id }));
-        }
-        let url = &url;
-        async move { send(&HTTP_CLIENT, url, &creds.access_token, &payload).await }
-    })
-    .await
-}
-
-/// HTTP transport and stream tests.
+/// HTTP transport and credential routing tests.
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use super::super::{downstream::consume, stream::Decoder};
     use super::*;
     use axum::{Router, routing::get};
+    use serde_json::Value;
 
-    /// Send a signed replay and tool history to a mock upstream.
-    #[tokio::test]
-    async fn sends_attested_oauth_request_with_tool_history() {
-        use axum::{body::Bytes, http::HeaderMap, routing::post};
-        let app = Router::new().route(
-            "/",
-            post(|headers: HeaderMap, body: Bytes| async move {
-                assert_eq!(headers.get("authorization").unwrap(), "Bearer secret");
-                assert!(
-                    headers
-                        .get("anthropic-beta")
-                        .unwrap()
-                        .to_str()
-                        .unwrap()
-                        .contains("oauth-2025-04-20")
-                );
-                assert_eq!(headers.get("x-app").unwrap(), "cli");
-                let body = String::from_utf8(body.to_vec()).unwrap();
-                assert!(body.contains("_search"));
-                assert!(!body.contains("cch=00000"));
-                let value: Value = serde_json::from_str(&body).unwrap();
-                assert_eq!(
-                    value
-                        .pointer("/messages/0/content/0/text")
-                        .and_then(Value::as_str),
-                    Some("hello")
-                );
-                assert_eq!(
-                    value.pointer("/tools/0/name").and_then(Value::as_str),
-                    Some("_search")
-                );
-                assert_eq!(
-                    value
-                        .pointer("/messages/1/content/0/type")
-                        .and_then(Value::as_str),
-                    Some("text")
-                );
-                assert_eq!(
-                    value
-                        .pointer("/messages/1/content/1/type")
-                        .and_then(Value::as_str),
-                    Some("tool_use")
-                );
-                assert_eq!(
-                    value
-                        .pointer("/messages/1/content/2/signature")
-                        .and_then(Value::as_str),
-                    Some("signed")
-                );
-                assert_eq!(
-                    value
-                        .pointer("/messages/1/content/3/type")
-                        .and_then(Value::as_str),
-                    Some("text")
-                );
-                assert_eq!(
-                    value
-                        .pointer("/messages/2/content/0/tool_use_id")
-                        .and_then(Value::as_str),
-                    Some("call-1")
-                );
-                "ok"
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        let req: crate::openai::ChatCompletionRequest = serde_json::from_value(serde_json::json!({"model":"claude","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"beforeafter","provider_parts":[{"type":"text","text":"before"},{"type":"tool_use","id":"call-1","name":"_search","input":{"q":1}},{"type":"thinking","thinking":"thought","signature":"signed"},{"type":"text","text":"after"}],"tool_calls":[{"id":"call-1","type":"function","function":{"name":"search","arguments":"{\"q\":1}"}}]},{"role":"tool","tool_call_id":"call-1","content":"result"}],"tools":[{"type":"function","function":{"name":"search","parameters":{"type":"object"}}}]})).unwrap();
-        let payload = super::super::payload::build(&req).unwrap();
-        let response = send(
-            &HTTP_CLIENT,
-            &format!("http://{address}/"),
-            "secret",
-            &payload,
-        )
+    /// Send a minimal Messages body for `model` through credential selection.
+    async fn send_at(
+        state: &crate::server::AppState,
+        provider: &crate::provider::registry::Provider,
+        root: &str,
+        model: &str,
+    ) -> Result<(reqwest::Response, Credential), Refusal> {
+        let body = axum::body::Bytes::from(serde_json::json!({"model": model}).to_string());
+        let url = format!("{root}/v1/messages");
+        first_accepted_at(&state.settings, provider, root, model, |creds, _| {
+            let (url, body) = (url.clone(), body.clone());
+            async move {
+                forward(
+                    &HTTP_CLIENT,
+                    &url,
+                    &creds.access_token,
+                    reqwest::header::HeaderMap::new(),
+                    body,
+                )
+                .await
+            }
+        })
         .await
-        .unwrap();
-        assert!(response.status().is_success());
     }
 
     /// Never follow upstream redirects while carrying credentials.
@@ -367,41 +200,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), reqwest::StatusCode::TEMPORARY_REDIRECT);
-    }
-
-    /// Decode a complete SSE response and reject truncated streams.
-    #[tokio::test]
-    async fn consumes_real_sse_and_rejects_truncated_streams() {
-        let app = Router::new()
-            .route("/complete", get(|| async { "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1}}}\n\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\ndata: {\"type\":\"message_stop\"}\n\n" }))
-            .route("/truncated", get(|| async { "data: {\"type\":\"message_start\",\"message\":{}}\n\n" }));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        let response = reqwest::get(format!("http://{address}/complete"))
-            .await
-            .unwrap();
-        let result = consume(response, Decoder::new("model".into()), None)
-            .await
-            .unwrap();
-        assert_eq!(
-            result.message().get("content").and_then(Value::as_str),
-            Some("hello")
-        );
-        assert_eq!(
-            result.usage().get("total_tokens").and_then(Value::as_u64),
-            Some(3)
-        );
-        let response = reqwest::get(format!("http://{address}/truncated"))
-            .await
-            .unwrap();
-        assert!(
-            consume(response, Decoder::new("model".into()), None)
-                .await
-                .is_err()
-        );
     }
 
     /// Route to the account advertising a model, aggregate discovery across accounts, and keep unlisted models reachable.
@@ -520,41 +318,15 @@ mod tests {
         assert!(ids.contains(&"model-y"));
         assert!(ids.contains(&"shared"));
 
-        let req_y: crate::openai::ChatCompletionRequest = serde_json::from_value(json!({
-            "model": "model-y",
-            "messages": [{"role": "user", "content": "hi"}]
-        }))
-        .unwrap();
-        let payload_y = super::super::payload::build(&req_y).unwrap();
-        let (resp_y, cred_y) = inference_at(
-            &state.settings,
-            &provider,
-            &root,
-            "model-y",
-            "sess",
-            &payload_y,
-        )
-        .await
-        .unwrap_or_else(|_| panic!("expected model-y to succeed"));
+        let (resp_y, cred_y) = send_at(&state, &provider, &root, "model-y")
+            .await
+            .unwrap_or_else(|_| panic!("expected model-y to succeed"));
         assert!(resp_y.status().is_success());
         assert_eq!(cred_y.id, "b");
 
-        let req_z: crate::openai::ChatCompletionRequest = serde_json::from_value(json!({
-            "model": "model-z",
-            "messages": [{"role": "user", "content": "hi"}]
-        }))
-        .unwrap();
-        let payload_z = super::super::payload::build(&req_z).unwrap();
-        let (resp_z, _) = inference_at(
-            &state.settings,
-            &provider,
-            &root,
-            "model-z",
-            "sess",
-            &payload_z,
-        )
-        .await
-        .unwrap_or_else(|_| panic!("expected unlisted model-z to reach pool"));
+        let (resp_z, _) = send_at(&state, &provider, &root, "model-z")
+            .await
+            .unwrap_or_else(|_| panic!("expected unlisted model-z to reach pool"));
         assert!(resp_z.status().is_success());
 
         let recorded = seen.lock().unwrap();

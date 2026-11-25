@@ -7,16 +7,13 @@ use axum::{
 
 use super::INFERENCE_BODY_LIMIT;
 use crate::provider::claude::passthrough;
-use crate::provider::common::{request_identity::RequestIdentity, session::RequestSession};
-use crate::server::{
-    AppState,
-    settings::{Permissions, virtual_key},
-};
+use crate::provider::common::request_identity::RequestIdentity;
+use crate::server::{AppState, settings::Permissions};
 
-/// Forward an Anthropic Messages request to the Claude provider unchanged where possible.
+/// Forward an Anthropic Messages request to the Claude provider unchanged.
 #[utoipa::path(post, path = "/v1/messages", operation_id = "createMessage",
     params(("x-api-key" = Option<String>, Header, description = "Virtual key; `Authorization: Bearer` is also accepted")),
-    request_body(content = Value, description = "Anthropic Messages request; the model may be plain or prefixed with `claude/`"),
+    request_body(content = Value, description = "Anthropic Messages request; plain model names only"),
     responses((status = 200, description = "Anthropic Messages response or event stream, passed through unchanged", body = Value),
         (status = 401, description = "Missing or invalid virtual key", body = Value),
         (status = 403, description = "Provider or model not allowed for this key", body = Value),
@@ -44,8 +41,6 @@ async fn anthropic(state: AppState, request: Request) -> Response {
         return passthrough::error(StatusCode::UNAUTHORIZED, "A virtual key is required");
     };
     let identity = request.extensions().get::<RequestIdentity>().cloned();
-    let session = virtual_key(request.headers())
-        .map_or_default(|token| RequestSession::new(request.headers(), token, "claude").id);
     let path = request.uri().path_and_query().map_or_else(
         || request.uri().path().to_owned(),
         |p| p.as_str().to_owned(),
@@ -58,7 +53,6 @@ async fn anthropic(state: AppState, request: Request) -> Response {
         &state,
         &permissions,
         identity.as_ref(),
-        &session,
         &parts.headers,
         &path,
         body,

@@ -2062,7 +2062,7 @@
     "/v1/messages": {
       "post": {
         "tags": [],
-        "summary": "Forward an Anthropic Messages request to the Claude provider unchanged where possible.",
+        "summary": "Forward an Anthropic Messages request to the Claude provider unchanged.",
         "operationId": "createMessage",
         "parameters": [
           {
@@ -2076,7 +2076,7 @@
           }
         ],
         "requestBody": {
-          "description": "Anthropic Messages request; the model may be plain or prefixed with `claude/`",
+          "description": "Anthropic Messages request; plain model names only",
           "content": {
             "application/json": {
               "schema": {}

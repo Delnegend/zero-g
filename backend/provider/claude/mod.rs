@@ -3,21 +3,15 @@
 mod auth;
 /// Dashboard login API.
 pub(crate) mod dashboard_login;
-/// Response decoding and client streaming.
-mod downstream;
 /// Account model discovery.
 mod models;
 pub(crate) use models::{catalog_info, catalog_reference};
 /// Anthropic Messages pass-through for Anthropic-format clients.
 pub(crate) mod passthrough;
-/// `OpenAI` to Anthropic request translation.
-mod payload;
 /// Subscription quota discovery.
 mod quota;
 /// Public gateway routes.
 mod routes;
-/// Anthropic stream decoding.
-mod stream;
 /// Anthropic HTTP transport and credential selection.
 mod upstream;
 
