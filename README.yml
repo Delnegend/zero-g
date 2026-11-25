@@ -40,8 +40,7 @@ highlights:
 documentation:
   architecture: "Request envelopes, streaming translation, and system invariants."
   development: "Prerequisites, `just check` gate, and test suite."
-  claude-and-omp: "Route Claude Code and omp through Zero-G to track usage and logs."
-  deployment: "Container setup, [configuration](docs/configuration.md), [gateways](docs/gateways.md), updates, and backups."
+  deployment: "Container setup, [configuration](docs/configuration.md), [gateways](docs/gateways.md), [Claude Code and omp](docs/claude-and-omp.md), updates, and backups."
 
 license:
   type:

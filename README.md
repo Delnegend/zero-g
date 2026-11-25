@@ -46,8 +46,7 @@ curl -H "Authorization: Bearer $ZERO_G_VIRTUAL_KEY" http://127.0.0.1:8080/v1/mod
 
 - **[Architecture](docs/architecture.md)**: Request envelopes, streaming translation, and system invariants.
 - **[Development](docs/development.md)**: Prerequisites, `just check` gate, and test suite.
-- **[Claude Code and omp](docs/claude-and-omp.md)**: Route both through Zero-G to track usage and logs.
-- **[Deployment](docs/deployment.md)**: Container setup, [configuration](docs/configuration.md), [gateways](docs/gateways.md), updates, and backups.
+- **[Deployment](docs/deployment.md)**: Container setup, [configuration](docs/configuration.md), [gateways](docs/gateways.md), [Claude Code and omp](docs/claude-and-omp.md), updates, and backups.
 
 ## License
 
