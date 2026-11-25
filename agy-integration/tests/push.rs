@@ -15,7 +15,10 @@ use common::gateway;
 /// A fake `agy`: `/usage` prints `$FAKE_USAGE`, `acp` answers the three ACP calls.
 const FAKE_AGY: &str = r#"#!/bin/sh
 echo "$@" >> "$FAKE_AGY_LOG"
-if [ "$1" = "acp" ]; then
+if [ "$1" = "models" ]; then
+  [ "$FAKE_MODELS" = "broken" ] && exit 1
+  printf 'Fetching available models...\ngemini-test-high\tGemini Test (High)\nclaude-test-low\tClaude Test (Low)\n'
+elif [ "$1" = "acp" ]; then
   [ "$FAKE_ACP" = "broken" ] && exit 1
   while IFS= read -r line; do
     id=$(printf '%s' "$line" | sed -E 's/.*"id":([0-9]+).*/\1/')
@@ -42,6 +45,11 @@ fn install_agy(dir: &Path) -> std::path::PathBuf {
 
 /// Run `quota` once with the fake agy and gateway.
 fn run(dir: &Path, url: &str, usage: &str, acp: &str) -> Output {
+    run_with(dir, url, usage, acp, "ok")
+}
+
+/// Like `run`, with control over whether `agy models` works.
+fn run_with(dir: &Path, url: &str, usage: &str, acp: &str, models: &str) -> Output {
     let agy = install_agy(dir);
     Command::new(env!("CARGO_BIN_EXE_zero-g-agy-integration"))
         .env_clear()
@@ -50,6 +58,7 @@ fn run(dir: &Path, url: &str, usage: &str, acp: &str) -> Output {
         .env("FAKE_AGY_LOG", dir.join("agy.log"))
         .env("FAKE_USAGE", usage)
         .env("FAKE_ACP", acp)
+        .env("FAKE_MODELS", models)
         .env("ZERO_G_CACHE_DIR", dir.join("cache"))
         .env("ZERO_G_URL", url)
         .env("ZERO_G_VIRTUAL_KEY", "zg-test")
@@ -92,9 +101,29 @@ fn pushes_quota_and_plan_and_reads_the_plan_once_a_day() {
         );
         assert_eq!(received.body["tier"]["name"], "Google AI Pro");
         assert_eq!(received.body["tier"]["id"], "g1-pro-tier");
+        // The status line `agy models` prints first is not a model.
+        assert_eq!(
+            received.body["models"],
+            serde_json::json!([
+                {"id": "gemini-test-high", "name": "Gemini Test (High)"},
+                {"id": "claude-test-low", "name": "Claude Test (Low)"},
+            ])
+        );
     }
     assert_eq!(agy_calls(dir.path(), "acp"), 1);
     assert_eq!(agy_calls(dir.path(), "--print"), 2);
+}
+
+#[test]
+fn an_unreadable_model_list_still_pushes_the_quota() {
+    let dir = tempfile::tempdir().unwrap();
+    let (url, seen) = gateway(200);
+    let output = run_with(dir.path(), &url, USAGE, "ok", "broken");
+    assert!(output.status.success());
+    let seen = std::mem::take(&mut *seen.lock().unwrap());
+    assert_eq!(seen.len(), 1);
+    assert!(seen[0].body.get("models").is_none());
+    assert!(seen[0].body.get("tier").is_some());
 }
 
 #[test]

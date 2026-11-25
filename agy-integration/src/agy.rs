@@ -11,6 +11,8 @@ use tokio::time::timeout;
 
 use crate::config::Settings;
 
+/// Longest the `models` command may run.
+const MODELS_TIMEOUT: Duration = Duration::from_secs(30);
 /// Longest the `/usage` command may run.
 const USAGE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Longest one ACP request may wait for its reply.
@@ -46,6 +48,36 @@ pub(crate) async fn usage(agy: &str) -> Result<Value, String> {
         .filter(|data| is_usage && data.get("groups").is_some_and(Value::is_array))
         .cloned()
         .ok_or_else(|| "unexpected /usage output".to_owned())
+}
+
+/// The models `agy models` lists, as `{id, name}` objects.
+///
+/// The command prints a status line and then one `id<TAB>display name` line per model. It costs
+/// nothing and leaves no files in agy's storage. `None` means the list could not be read.
+pub(crate) async fn models(agy: &str) -> Option<Vec<Value>> {
+    let output = timeout(
+        MODELS_TIMEOUT,
+        Command::new(agy)
+            .arg("models")
+            .stdin(Stdio::null())
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let models: Vec<Value> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let (id, name) = line.split_once('\t')?;
+            let (id, name) = (id.trim(), name.trim());
+            (!id.is_empty() && !name.is_empty()).then(|| json!({"id": id, "name": name}))
+        })
+        .collect();
+    (!models.is_empty()).then_some(models)
 }
 
 /// A running `agy acp` server, spoken to over JSON-RPC lines.

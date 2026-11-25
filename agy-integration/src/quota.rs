@@ -1,4 +1,4 @@
-//! The `quota` command: push agy's quota and subscription plan to Zero-G once.
+//! The `quota` command: push agy's quota, subscription plan and model list to Zero-G once.
 
 use std::time::Duration;
 
@@ -24,6 +24,9 @@ pub(crate) async fn run(settings: &Settings) -> Result<(), String> {
         body.as_object_mut(),
     ) {
         object.insert("tier".to_owned(), tier);
+    }
+    if let (Some(models), Some(object)) = (agy::models(&settings.agy).await, body.as_object_mut()) {
+        object.insert("models".to_owned(), models.into());
     }
     gateway::post(settings, "/v1/agy/quota", &body, PUSH_TIMEOUT).await
 }
