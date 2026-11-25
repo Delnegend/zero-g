@@ -1,6 +1,13 @@
+[workspace]
+members = ["agy-quota"]
+
+# One version for every crate, so the collector always matches the backend release.
+[workspace.package]
+version = "1.6.0"
+
 [package]
 name = "zero-g"
-version = "1.6.0"
+version.workspace = true
 edition = "2024"
 description = "OpenAI-compatible AI gateway for multiple providers"
 license = "MIT OR Apache-2.0"
@@ -55,10 +62,13 @@ protoc-bin-vendored = "3.3.0"
 [dev-dependencies]
 toml = "1.1.8"
 
-[lints.rust]
+[lints]
+workspace = true
+
+[workspace.lints.rust]
 unreachable_pub = "warn"
 
-[lints.clippy]
+[workspace.lints.clippy]
 pedantic = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }
 missing_docs_in_private_items = "warn"

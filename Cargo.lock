@@ -5100,6 +5100,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "zero-g-agy-quota"
+version = "1.6.0"
+dependencies = [
+ "reqwest",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "zerocopy"
 version = "0.8.63"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -158,9 +158,52 @@ jobs:
           cache-from: type=registry,ref=${{ steps.meta.outputs.image }}:buildcache
           cache-to: ${{ needs.prepare.outputs.publish == 'true' && format('type=registry,ref={0}:buildcache,mode=max,image-manifest=true', steps.meta.outputs.image) || '' }}
 
+  build-agy-quota:
+    name: Build agy quota collector (${{ matrix.target }})
+    needs: prepare
+    if: needs.prepare.outputs.skip != 'true'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+
+      - name: Install musl linker
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends musl-tools
+
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build collector
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo build --release --locked --package zero-g-agy-quota --target "$TARGET"
+
+      - name: Package collector
+        uses: Delnegend/actions/package-artifact@main  # nosemgrep
+        with:
+          name: zero-g-agy-quota
+          version: ${{ needs.prepare.outputs.version }}
+          target: ${{ matrix.target }}
+          source: target/${{ matrix.target }}/release/zero-g-agy-quota
+          extra: LICENSE-MIT LICENSE-APACHE
+
   publish:
     name: Publish Consolidated Release
-    needs: [prepare, build-container]
+    needs: [prepare, build-container, build-agy-quota]
     if: needs.prepare.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
@@ -170,4 +213,5 @@ jobs:
           ref: ${{ needs.prepare.outputs.ref }}
           publish: ${{ needs.prepare.outputs.publish }}
           container: true
+          download: "true"
           version: ${{ needs.prepare.outputs.version }}

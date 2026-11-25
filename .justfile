@@ -18,7 +18,7 @@ lint:
     # Warnings fail the gate, matching the Tailwind CSS editor diagnostics.
     cd frontend && bun run oxlint --deny-warnings src
     frontend/node_modules/.bin/oxlint --deny-warnings -c frontend/.oxlintrc.json scripts
-    cargo fmt
+    cargo fmt --all
     bun fmt --no-script frontend scripts README.md docs
 
 # Regenerate the consolidated OpenAPI and dashboard client contracts
@@ -48,7 +48,7 @@ api-check:
 check-dependencies:
     #!/usr/bin/env bash
     set -euo pipefail
-    tree="$(cargo tree --locked --target all --all-features --prefix none --format '{p}')"
+    tree="$(cargo tree --workspace --locked --target all --all-features --prefix none --format '{p}')"
     while IFS= read -r package; do
         case "$package" in
             "rsa v0.10."*)
@@ -67,15 +67,15 @@ check:
     just api-check
     cd frontend && NODE_ENV=test bun test src
     NODE_ENV=test bun test scripts
-    cargo fmt --check
-    cargo clippy --all-targets -- -D warnings
-    cargo test
+    cargo fmt --all --check
+    cargo clippy --workspace --all-targets -- -D warnings
+    cargo test --workspace
 
 # Run tests
 test: frontend-build
     cd frontend && NODE_ENV=test bun test src
     NODE_ENV=test bun test scripts
-    cargo test
+    cargo test --workspace
 
 # Build release binary
 build: frontend-build

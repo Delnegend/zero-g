@@ -12,6 +12,7 @@ WORKDIR /app
 # version bumps and source edits reuse the cooked dependency layer.
 FROM chef AS planner
 COPY Cargo.toml Cargo.lock build.rs ./
+COPY agy-quota ./agy-quota
 COPY backend ./backend
 COPY Toasty.toml ./
 COPY toasty ./toasty
@@ -21,6 +22,7 @@ FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --locked --recipe-path recipe.json
 COPY Cargo.toml Cargo.lock build.rs ./
+COPY agy-quota ./agy-quota
 COPY backend ./backend
 COPY Toasty.toml ./
 COPY toasty ./toasty

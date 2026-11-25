@@ -97,29 +97,45 @@ The opt-in `PostInvocation` hook sends a record of each interactive `agy` model 
 
 #### Quota from the official CLI
 
-Zero-G never calls Google for Antigravity quota. The official `agy` CLI already knows it: `agy --print /usage --output-format json` prints each model pool's 5-hour and weekly limits, uses no tokens, and runs with the login `agy` already has. `scripts/agy-quota.py` runs that command and pushes the result to `POST /v1/agy/quota`; the dashboard then shows it on the **Google Antigravity** credential card.
+Zero-G never calls Google for Antigravity quota. The official `agy` CLI already knows it: `agy --print /usage --output-format json` prints each model pool's 5-hour and weekly limits, uses no tokens, and runs with the login `agy` already has. The `zero-g-agy-quota` collector runs that command and pushes the result to `POST /v1/agy/quota`; the dashboard then shows it on the **Google Antigravity** credential card.
+
+The collector is built and released with Zero-G and always has the same version number. Prebuilt static binaries for Linux (x86-64 and arm64) are attached to each [GitHub release](https://github.com/Delnegend/zero-g/releases); Homebrew installs and updates them for you.
 
 Setup:
 
 1. Under **Models → Providers → Google Antigravity**, add one credential per Google account, named after the account. There is no sign-in: the card shows as connected once a report arrives.
-2. On each machine where `agy` is signed in, set the variables above plus `ZERO_G_AGY_ACCOUNT`, and run the script every 10 to 15 minutes.
+2. On each machine where `agy` is signed in, install the collector and give it a settings file. The virtual key must not have a provider allowlist.
 
-```bash
-export ZERO_G_AGY_ACCOUNT='<credential name>'  # as named in Zero-G
-python3 /absolute/path/to/zero-g/scripts/agy-quota.py
-```
+   ```bash
+   brew tap Delnegend/tap
+   brew install zero-g-agy-quota
 
-```cron
-*/15 * * * * ZERO_G_URL=https://zero-g.example.com ZERO_G_VIRTUAL_KEY=... ZERO_G_AGY_ACCOUNT=... python3 /absolute/path/to/zero-g/scripts/agy-quota.py
-```
+   mkdir -p ~/.config/zero-g
+   cat > ~/.config/zero-g/agy-quota.env <<'EOF'
+   ZERO_G_URL=https://zero-g.example.com
+   ZERO_G_VIRTUAL_KEY=<virtual key>
+   ZERO_G_AGY_ACCOUNT=<credential name>
+   EOF
+   chmod 600 ~/.config/zero-g/agy-quota.env
+   ```
 
-| Topic             | Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Matching          | The credential is found by name, ignoring case and surrounding spaces. An unknown name is rejected with 404.                                                                                                                                                                                                                                                                                                                                   |
-| Freshness         | The card shows the last report. If none arrived for 3 hours it shows an error naming the script instead of old numbers.                                                                                                                                                                                                                                                                                                                        |
-| Subscription tier | The script also sends the account's tier (for example `Google AI Pro`) and the credential card shows it next to the name. agy only reports it through its ACP server, and each read leaves a small throwaway conversation file (about 400 KB) in agy's own storage, so the script reads it at most once a day (`AGY_TIER_REFRESH_HOURS`, default 24) and resends the cached value. If it cannot be read, the quota is still pushed without it. |
-| Reset times       | A pool that has not started a window reports no reset time; the card shows none.                                                                                                                                                                                                                                                                                                                                                               |
-| Errors            | The script exits non-zero and prints the reason when `agy` output is unexpected or Zero-G refuses the report.                                                                                                                                                                                                                                                                                                                                  |
+3. Start it as a background service. It reports at start and then every 15 minutes, and `brew upgrade` keeps it current.
+
+   ```bash
+   brew services start zero-g-agy-quota
+   ```
+
+4. To check it by hand, run `zero-g-agy-quota` once: it prints nothing on success and the reason on failure. Service logs are in `$(brew --prefix)/var/log/`.
+
+Without Homebrew, download the archive for your platform from the release page and run `zero-g-agy-quota` from cron or a systemd timer. Settings come from the environment or the settings file (`--config FILE` to use another path); environment variables win. `zero-g-agy-quota --help` lists them all.
+
+| Topic             | Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Matching          | The credential is found by name, ignoring case and surrounding spaces. An unknown name is rejected with 404.                                                                                                                                                                                                                                                                                                                                         |
+| Freshness         | The card shows the last report. If none arrived for 3 hours it shows an error naming the collector instead of old numbers.                                                                                                                                                                                                                                                                                                                           |
+| Subscription tier | The collector also sends the account's tier (for example `Google AI Pro`) and the credential card shows it next to the name. agy only reports it through its ACP server, and each read leaves a small throwaway conversation file (about 400 KB) in agy's own storage, so the collector reads it at most once a day (`AGY_TIER_REFRESH_HOURS`, default 24) and resends the cached value. If it cannot be read, the quota is still pushed without it. |
+| Reset times       | A pool that has not started a window reports no reset time; the card shows none.                                                                                                                                                                                                                                                                                                                                                                     |
+| Errors            | The collector exits non-zero and prints the reason when `agy` output is unexpected or Zero-G refuses the report.                                                                                                                                                                                                                                                                                                                                     |
 
 ### OpenRouter Decisions API Example
 
