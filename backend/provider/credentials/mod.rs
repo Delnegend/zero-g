@@ -34,6 +34,9 @@ pub(crate) struct Credential {
     /// Provider-reported subscription plan, when available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) plan_type: Option<String>,
+    /// Unix seconds of the last quota report, for providers that receive pushed reports.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) updated_at: Option<i64>,
 }
 
 /// Provider-specific secrets stored per credential.
@@ -128,6 +131,7 @@ async fn describe(
             enabled: row.enabled,
             email: None,
             plan_type: None,
+            updated_at: None,
         })
         .collect())
 }
@@ -144,6 +148,7 @@ struct AccountProfile {
 /// Populate dashboard-only identity metadata without parsing it on inference requests.
 async fn include_profiles(
     store: &SettingsStore,
+    provider_id: &str,
     kind: &str,
     credentials: &mut [Credential],
 ) -> Result<(), String> {
@@ -152,8 +157,9 @@ async fn include_profiles(
             .iter_mut()
             .filter(|credential| credential.connected)
         {
-            credential.plan_type =
-                crate::provider::antigravity::quota::tier_name(store, &credential.id).await;
+            let info = crate::provider::antigravity::quota::info(store, &credential.id).await;
+            credential.plan_type = info.as_ref().and_then(|info| info.tier.clone());
+            credential.updated_at = info.map(|info| info.updated_at);
         }
         return Ok(());
     }
@@ -173,6 +179,9 @@ async fn include_profiles(
             credential.email = profile.email.filter(|email| !email.trim().is_empty());
             if kind == "codex" {
                 credential.plan_type = profile.plan_type.filter(|plan| !plan.trim().is_empty());
+            } else if kind == "claude" {
+                credential.plan_type =
+                    crate::provider::claude::plan(store, provider_id, &credential.id).await;
             }
         }
     }
@@ -378,7 +387,7 @@ async fn list_endpoint(
         Ok(credentials) => credentials,
         Err(e) => return internal(&e),
     };
-    match include_profiles(&store, &provider.kind, &mut credentials).await {
+    match include_profiles(&store, &provider.id, &provider.kind, &mut credentials).await {
         Ok(()) => Json(CredentialsResponse { credentials }).into_response(),
         Err(e) => internal(&e),
     }
@@ -398,7 +407,13 @@ async fn written(
         return Ok(None);
     };
     if profile {
-        include_profiles(store, &provider.kind, std::slice::from_mut(&mut credential)).await?;
+        include_profiles(
+            store,
+            &provider.id,
+            &provider.kind,
+            std::slice::from_mut(&mut credential),
+        )
+        .await?;
     }
     Ok(Some(credential))
 }

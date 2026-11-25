@@ -131,36 +131,42 @@ export function CredentialsAddButton({
               </Label>
             )}
           </form.Field>
-          <form.Field name="weight">
-            {(field) => (
-              <Label className="block text-sm font-medium">
-                Weight
-                <Input
-                  className="mt-1"
-                  type="number"
-                  required
-                  min={1}
-                  step={1}
-                  value={field.state.value}
-                  onBlur={field.handleBlur}
-                  onChange={(event) => field.handleChange(event.target.value)}
-                />
-              </Label>
-            )}
-          </form.Field>
-          <form.Field name="enabled">
-            {(field) => (
-              <Label className="text-sm">
-                <Checkbox
-                  checked={field.state.value}
-                  onCheckedChange={(checked) =>
-                    field.handleChange(checked === true)
-                  }
-                />{" "}
-                Enabled
-              </Label>
-            )}
-          </form.Field>
+          {provider.kind !== "agy" && (
+            <>
+              <form.Field name="weight">
+                {(field) => (
+                  <Label className="block text-sm font-medium">
+                    Weight
+                    <Input
+                      className="mt-1"
+                      type="number"
+                      required
+                      min={1}
+                      step={1}
+                      value={field.state.value}
+                      onBlur={field.handleBlur}
+                      onChange={(event) =>
+                        field.handleChange(event.target.value)
+                      }
+                    />
+                  </Label>
+                )}
+              </form.Field>
+              <form.Field name="enabled">
+                {(field) => (
+                  <Label className="text-sm">
+                    <Checkbox
+                      checked={field.state.value}
+                      onCheckedChange={(checked) =>
+                        field.handleChange(checked === true)
+                      }
+                    />{" "}
+                    Enabled
+                  </Label>
+                )}
+              </form.Field>
+            </>
+          )}
           {kind?.api_key && (
             <form.Field name="apiKey">
               {(field) => (

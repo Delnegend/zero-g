@@ -156,13 +156,22 @@ pub(crate) fn convert(report: Report, tier: Option<Tier>, now: i64) -> Result<St
     .map_err(|e| e.to_string())
 }
 
-/// The subscription tier name from a credential's latest snapshot, if any.
-pub(crate) async fn tier_name(store: &SettingsStore, credential: &str) -> Option<String> {
+/// What the dashboard shows about a credential's latest pushed snapshot.
+pub(crate) struct Info {
+    /// Subscription tier name, when the CLI reported one.
+    pub(crate) tier: Option<String>,
+    /// Unix seconds at which the snapshot was received.
+    pub(crate) updated_at: i64,
+}
+
+/// The tier and arrival time of a credential's latest snapshot, if one exists.
+pub(crate) async fn info(store: &SettingsStore, credential: &str) -> Option<Info> {
     let raw = store.setting_get(&setting_name(credential)).await.ok()??;
-    serde_json::from_str::<Stored>(&raw)
-        .ok()?
-        .tier
-        .map(|tier| tier.name)
+    let stored = serde_json::from_str::<Stored>(&raw).ok()?;
+    Some(Info {
+        tier: stored.tier.map(|tier| tier.name),
+        updated_at: stored.updated_at,
+    })
 }
 
 /// Read a credential's latest pushed snapshot for the dashboard.

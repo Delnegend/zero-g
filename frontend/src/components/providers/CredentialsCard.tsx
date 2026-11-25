@@ -13,6 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { formatDistanceToNow } from "@/lib/date";
 import { message } from "@/server/api/client";
 import {
   credentialsOptions,
@@ -23,9 +24,21 @@ import {
 } from "@/server/api/providers";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CredentialConfiguration } from "./CredentialConfiguration";
 import { CredentialsAddButton } from "./CredentialsAddButton";
+
+/** "Last updated 5 minutes ago", refreshed every minute. */
+function LastUpdated({ at }: { at?: number | null }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setTick((tick) => tick + 1), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+  if (at == null) return <>No report received yet</>;
+  const ago = formatDistanceToNow(new Date(at * 1000), { addSuffix: true });
+  return <>Last updated {ago}</>;
+}
 
 export function CredentialsCard({
   provider,
@@ -106,9 +119,15 @@ export function CredentialsCard({
                   )}
                 </p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Weight: {credential.weight} ·{" "}
-                  {credential.enabled ? "Enabled" : "Disabled"} ·{" "}
-                  {credential.connected ? "Connected" : "Not connected"}
+                  {provider.kind === "agy" ? (
+                    <LastUpdated at={credential.updated_at} />
+                  ) : (
+                    <>
+                      Weight: {credential.weight} ·{" "}
+                      {credential.enabled ? "Enabled" : "Disabled"} ·{" "}
+                      {credential.connected ? "Connected" : "Not connected"}
+                    </>
+                  )}
                 </p>
               </div>
               {USAGE_PROVIDERS.includes(
@@ -147,16 +166,17 @@ export function CredentialsCard({
                 >
                   <Trash2 />
                 </Button>
-                {USAGE_PROVIDERS.includes(
-                  provider.kind as (typeof USAGE_PROVIDERS)[number],
-                ) && (
-                  <CredentialUsageRefreshButton
-                    providerId={provider.id}
-                    credentialId={credential.id}
-                    connected={credential.connected}
-                    disabled={loginBusy}
-                  />
-                )}
+                {provider.kind !== "agy" &&
+                  USAGE_PROVIDERS.includes(
+                    provider.kind as (typeof USAGE_PROVIDERS)[number],
+                  ) && (
+                    <CredentialUsageRefreshButton
+                      providerId={provider.id}
+                      credentialId={credential.id}
+                      connected={credential.connected}
+                      disabled={loginBusy}
+                    />
+                  )}
                 {(provider.kind === "zen" ||
                   provider.kind === "openrouter") && (
                   <CredentialConfiguration

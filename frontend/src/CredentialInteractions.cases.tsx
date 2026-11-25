@@ -67,6 +67,53 @@ test("adding a credential saves it and shows it in the list", async () => {
   assert.equal(screen.queryByRole("dialog"), null);
 });
 
+test("Antigravity credentials ask only for a name and save the defaults", async () => {
+  const bodies: unknown[] = [];
+  globalThis.fetch = (async (_url, options) => {
+    if (options?.method === "POST") {
+      const body = JSON.parse(String(options.body));
+      bodies.push(body);
+      return Response.json({ id: "one", ...body, connected: false });
+    }
+    return Response.json({ credentials: [] });
+  }) as typeof fetch;
+  const user = userEvent.setup();
+  mount(
+    <TooltipProvider>
+      <ProviderCard
+        provider={{
+          id: "agy",
+          name: "Google Antigravity",
+          kind: "agy",
+          base_url: "",
+          keyless: false,
+        }}
+        kind={{
+          value: "agy",
+          label: "Google Antigravity",
+          api_key: false,
+          oauth: false,
+          fixed_id: "agy",
+          fixed_name: "Google Antigravity",
+        }}
+        onEdit={() => {}}
+        onDelete={() => {}}
+        deleting={false}
+      />
+    </TooltipProvider>,
+  );
+  await user.click(screen.getByRole("button", { name: "Add credential" }));
+  const dialog = await screen.findByRole("dialog", { name: "Add credential" });
+  assert.equal(within(dialog).queryByLabelText("Weight"), null);
+  assert.equal(within(dialog).queryByText("Enabled"), null);
+  await user.type(within(dialog).getByLabelText("Name"), "Personal");
+  await user.click(
+    within(dialog).getByRole("button", { name: "Save credential" }),
+  );
+  await waitFor(() => assert.equal(bodies.length, 1));
+  assert.deepEqual(bodies[0], { name: "Personal", weight: 1, enabled: true });
+});
+
 test("keyless provider hides credentials and add button on provider card", async () => {
   globalThis.fetch = (async () =>
     Response.json({ credentials: [] })) as typeof fetch;
@@ -629,6 +676,61 @@ test("Zen console configuration sits with credential actions and can be saved", 
   await user.click(screen.getByRole("button", { name: "Save session" }));
   await waitFor(() => assert.equal(saved, true));
   await waitFor(() => assert.equal(screen.queryByRole("dialog"), null));
+});
+
+test("Antigravity cards show when the quota was last reported and have no refresh button", async () => {
+  const now = Math.floor(Date.now() / 1000);
+  globalThis.fetch = (async (url) => {
+    const path = String(url);
+    if (path.endsWith("/credentials"))
+      return Response.json({
+        credentials: [
+          {
+            id: "one",
+            name: "Reported",
+            weight: 1,
+            enabled: true,
+            connected: true,
+            updated_at: now - 5 * 60,
+          },
+          {
+            id: "two",
+            name: "Waiting",
+            weight: 1,
+            enabled: true,
+            connected: false,
+          },
+        ],
+      });
+    if (path.endsWith("/usage"))
+      return Response.json({ kind: "grouped_quota", groups: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  }) as typeof fetch;
+  mount(
+    <CredentialsCard
+      provider={{
+        id: "agy",
+        name: "Google Antigravity",
+        kind: "agy",
+        base_url: "",
+        keyless: false,
+      }}
+      kind={{
+        value: "agy",
+        label: "Google Antigravity",
+        api_key: false,
+        oauth: false,
+        fixed_id: "agy",
+        fixed_name: "Google Antigravity",
+      }}
+      onLogin={() => {}}
+      loginBusy={false}
+    />,
+  );
+  await screen.findByText("Last updated 5 minutes ago");
+  await screen.findByText("No report received yet");
+  assert.equal(screen.queryByText(/Weight:/), null);
+  assert.equal(screen.queryByRole("button", { name: /Refresh usage/ }), null);
 });
 
 test("quota resets show a countdown and reveal the exact time", async () => {

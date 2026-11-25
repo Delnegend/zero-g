@@ -589,6 +589,12 @@ export const Credential = zod
       .string()
       .nullish()
       .describe("Provider-reported subscription plan, when available."),
+    updated_at: zod
+      .int()
+      .nullish()
+      .describe(
+        "Unix seconds of the last quota report, for providers that receive pushed reports.",
+      ),
     weight: zod.int().describe("Relative selection weight."),
   })
   .describe("Credential metadata exposed without the underlying secret.");
@@ -635,6 +641,12 @@ export const CredentialsResponse = zod
               .string()
               .nullish()
               .describe("Provider-reported subscription plan, when available."),
+            updated_at: zod
+              .int()
+              .nullish()
+              .describe(
+                "Unix seconds of the last quota report, for providers that receive pushed reports.",
+              ),
             weight: zod.int().describe("Relative selection weight."),
           })
           .describe(

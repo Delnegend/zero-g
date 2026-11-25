@@ -3,7 +3,7 @@ use serde::Deserialize;
 use super::{auth, upstream};
 
 /// Claude Code release whose user agent the undocumented usage endpoint expects.
-const CLAUDE_VERSION: &str = "2.1.280";
+pub(super) const CLAUDE_VERSION: &str = "2.1.280";
 use crate::provider::quota::{QuotaGroup, QuotaSnapshot, QuotaWindow};
 use crate::server::settings::SettingsStore;
 

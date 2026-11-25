@@ -6,12 +6,13 @@ pub(crate) mod dashboard_login;
 /// Account model discovery.
 mod models;
 pub(crate) use models::{catalog_info, catalog_reference};
+/// Account subscription plan.
+mod profile;
+pub(crate) use profile::plan;
 /// Anthropic Messages pass-through for Anthropic-format clients.
 pub(crate) mod passthrough;
 /// Subscription quota discovery.
 mod quota;
-/// Public gateway routes.
-mod routes;
 /// Anthropic HTTP transport and credential selection.
 mod upstream;
 
@@ -30,9 +31,10 @@ impl super::common::Provider for Backend {
         default_base_url: None,
     };
     fn router(
-        settings: &crate::server::settings::SettingsStore,
+        _settings: &crate::server::settings::SettingsStore,
     ) -> axum::Router<crate::server::AppState> {
-        routes::router(settings)
+        // Claude is served only by the Anthropic pass-through at `/v1/messages`.
+        axum::Router::new()
     }
     async fn discover(
         state: &crate::server::AppState,

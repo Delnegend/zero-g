@@ -539,9 +539,9 @@ mod tests {
             StatusCode::OK
         );
         assert!(
-            crate::provider::antigravity::quota::tier_name(&settings, "cred-1")
+            crate::provider::antigravity::quota::info(&settings, "cred-1")
                 .await
-                .is_none()
+                .is_none_or(|info| info.tier.is_none())
         );
         let tier = json!({"name": "Google AI Pro", "id": "g1-pro-tier"});
         assert_eq!(
@@ -555,12 +555,11 @@ mod tests {
             send(&key, "Kien", &report, &tier).await.unwrap().status(),
             StatusCode::OK
         );
-        assert_eq!(
-            crate::provider::antigravity::quota::tier_name(&settings, "cred-1")
-                .await
-                .as_deref(),
-            Some("Google AI Pro")
-        );
+        let info = crate::provider::antigravity::quota::info(&settings, "cred-1")
+            .await
+            .unwrap();
+        assert_eq!(info.tier.as_deref(), Some("Google AI Pro"));
+        assert!(info.updated_at > 0);
         let snapshot = crate::provider::antigravity::quota::stored(&settings, "cred-1")
             .await
             .unwrap();

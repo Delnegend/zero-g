@@ -2810,6 +2810,11 @@
             "type": ["string", "null"],
             "description": "Provider-reported subscription plan, when available."
           },
+          "updated_at": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Unix seconds of the last quota report, for providers that receive pushed reports."
+          },
           "weight": {
             "type": "integer",
             "format": "int64",
