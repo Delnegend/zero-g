@@ -147,6 +147,16 @@ async fn include_profiles(
     kind: &str,
     credentials: &mut [Credential],
 ) -> Result<(), String> {
+    if kind == "agy" {
+        for credential in credentials
+            .iter_mut()
+            .filter(|credential| credential.connected)
+        {
+            credential.plan_type =
+                crate::provider::antigravity::quota::tier_name(store, &credential.id).await;
+        }
+        return Ok(());
+    }
     if !matches!(kind, "codex" | "claude") {
         return Ok(());
     }

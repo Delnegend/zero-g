@@ -214,6 +214,9 @@ struct QuotaPush {
     account: String,
     /// The `command.data` object of `agy --print /usage --output-format json`.
     report: Value,
+    /// Subscription tier from the CLI, when it could be read.
+    #[serde(default)]
+    tier: Option<crate::provider::antigravity::quota::Tier>,
 }
 
 /// Store the latest quota snapshot for the named `agy` credential.
@@ -230,7 +233,10 @@ async fn push_quota(State(state): State<AppState>, request: Request) -> Response
     let Ok(report) = crate::provider::antigravity::quota::parse(push.report) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    let Ok(stored) = crate::provider::antigravity::quota::convert(report, now()) else {
+    if push.tier.as_ref().is_some_and(|tier| !tier.is_valid()) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let Ok(stored) = crate::provider::antigravity::quota::convert(report, push.tier, now()) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
     let mut db = (*state.database.db).clone();
@@ -480,32 +486,41 @@ mod tests {
         let report = json!({"groups": [{"name": "Gemini Models", "buckets": [
             {"id": "gemini-5h", "window": "5h", "remaining_fraction": 0.5,
              "reset_time": "2099-01-01T00:00:00Z"}]}]});
-        let send = |token: &str, account: &str, report: &Value| {
+        let send = |token: &str, account: &str, report: &Value, tier: &Value| {
             let request = Request::builder()
                 .method("POST")
                 .uri("/v1/agy/quota")
                 .header(header::AUTHORIZATION, format!("Bearer {token}"))
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
-                    json!({"account": account, "report": report}).to_string(),
+                    json!({"account": account, "report": report, "tier": tier}).to_string(),
                 ))
                 .unwrap();
             app.clone().oneshot(request)
         };
         assert_eq!(
-            send("zg-invalid", "Kien", &report).await.unwrap().status(),
+            send("zg-invalid", "Kien", &report, &Value::Null)
+                .await
+                .unwrap()
+                .status(),
             StatusCode::UNAUTHORIZED
         );
         assert_eq!(
-            send(&scoped, "Kien", &report).await.unwrap().status(),
+            send(&scoped, "Kien", &report, &Value::Null)
+                .await
+                .unwrap()
+                .status(),
             StatusCode::FORBIDDEN
         );
         assert_eq!(
-            send(&key, "Nobody", &report).await.unwrap().status(),
+            send(&key, "Nobody", &report, &Value::Null)
+                .await
+                .unwrap()
+                .status(),
             StatusCode::NOT_FOUND
         );
         assert_eq!(
-            send(&key, "Kien", &json!({"groups": []}))
+            send(&key, "Kien", &json!({"groups": []}), &Value::Null)
                 .await
                 .unwrap()
                 .status(),
@@ -517,8 +532,34 @@ mod tests {
                 .is_err()
         );
         assert_eq!(
-            send(&key, " kien ", &report).await.unwrap().status(),
+            send(&key, " kien ", &report, &Value::Null)
+                .await
+                .unwrap()
+                .status(),
             StatusCode::OK
+        );
+        assert!(
+            crate::provider::antigravity::quota::tier_name(&settings, "cred-1")
+                .await
+                .is_none()
+        );
+        let tier = json!({"name": "Google AI Pro", "id": "g1-pro-tier"});
+        assert_eq!(
+            send(&key, "Kien", &report, &json!({"name": "", "id": "x"}))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            send(&key, "Kien", &report, &tier).await.unwrap().status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            crate::provider::antigravity::quota::tier_name(&settings, "cred-1")
+                .await
+                .as_deref(),
+            Some("Google AI Pro")
         );
         let snapshot = crate::provider::antigravity::quota::stored(&settings, "cred-1")
             .await

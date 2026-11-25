@@ -44,11 +44,32 @@ struct Bucket {
     reset_time: Option<String>,
 }
 
+/// Subscription tier the CLI reports for the signed-in account.
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct Tier {
+    /// Display name, such as "Google AI Pro".
+    pub(crate) name: String,
+    /// Stable tier id.
+    pub(crate) id: String,
+}
+
+impl Tier {
+    /// Whether the tier is short, printable text.
+    pub(crate) fn is_valid(&self) -> bool {
+        [&self.name, &self.id].iter().all(|text| {
+            !text.trim().is_empty() && text.len() <= 100 && !text.contains(char::is_control)
+        })
+    }
+}
+
 /// A stored snapshot and when it arrived.
 #[derive(Serialize, Deserialize)]
 struct Stored {
     /// Unix seconds at which the snapshot was received.
     updated_at: i64,
+    /// Subscription tier, when the CLI reported one.
+    #[serde(default)]
+    tier: Option<Tier>,
     /// Display-ready pools.
     groups: Vec<Pool>,
 }
@@ -88,7 +109,7 @@ fn window_label(bucket: &Bucket) -> String {
 }
 
 /// Convert a report into stored pools; an empty report is an error.
-pub(crate) fn convert(report: Report, now: i64) -> Result<String, String> {
+pub(crate) fn convert(report: Report, tier: Option<Tier>, now: i64) -> Result<String, String> {
     let groups: Vec<Pool> = report
         .groups
         .into_iter()
@@ -129,9 +150,19 @@ pub(crate) fn convert(report: Report, now: i64) -> Result<String, String> {
     }
     serde_json::to_string(&Stored {
         updated_at: now,
+        tier,
         groups,
     })
     .map_err(|e| e.to_string())
+}
+
+/// The subscription tier name from a credential's latest snapshot, if any.
+pub(crate) async fn tier_name(store: &SettingsStore, credential: &str) -> Option<String> {
+    let raw = store.setting_get(&setting_name(credential)).await.ok()??;
+    serde_json::from_str::<Stored>(&raw)
+        .ok()?
+        .tier
+        .map(|tier| tier.name)
 }
 
 /// Read a credential's latest pushed snapshot for the dashboard.
@@ -197,7 +228,7 @@ mod tests {
             {"name": "Empty", "buckets": []}
         ]}))
         .unwrap();
-        let stored: Stored = serde_json::from_str(&convert(report, 100).unwrap()).unwrap();
+        let stored: Stored = serde_json::from_str(&convert(report, None, 100).unwrap()).unwrap();
         assert_eq!(stored.groups.len(), 2);
         assert_eq!(stored.groups[0].windows[0].label, "5 hours");
         assert_eq!(stored.groups[0].windows[1].label, "Weekly");
@@ -209,6 +240,6 @@ mod tests {
     fn rejects_empty_or_malformed_reports() {
         assert!(parse(json!({"nope": 1})).is_err());
         let empty = parse(json!({"groups": []})).unwrap();
-        assert!(convert(empty, 1).is_err());
+        assert!(convert(empty, None, 1).is_err());
     }
 }
