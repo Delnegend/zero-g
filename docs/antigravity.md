@@ -8,12 +8,12 @@ Your `agy` CLI talks to Google directly, and Zero-G never sees your Google login
 
 `zero-g-agy-integration` is a single program with two commands. Both run on the machine where you use `agy`, read what the official CLI already knows, and report it to Zero-G:
 
-- `quota` reports how much of your 5-hour and weekly limits is left and which plan you are on. It appears on the Google Antigravity credential card.
+- `quota` reports how much of your 5-hour and weekly limits is left, which plan you are on, and which models `agy` offers. The first two appear on the Google Antigravity credential card, and the models on the catalog page.
 - `observe` is an `agy` hook. It records each model response in the request logs.
 
 Use `quota` if you only want to see your limits. Add the hook if you also want prompts and responses in the logs.
 
-A Google Antigravity provider in the dashboard is only a place to show quota. It has no model routes and does not appear in `/v1/models`.
+A Google Antigravity provider in the dashboard is only a place to show quota and the model list. It has no model routes and does not appear in `/v1/models`. The catalog page lists its models for reference only.
 
 ## Install
 
@@ -68,6 +68,7 @@ Without Homebrew, run `zero-g-agy-integration quota` from cron or a systemd time
 | Freshness         | The card shows the last report. If none arrives for 3 hours, it shows an error naming the service instead of old numbers.                                                                                                                                                                                                                                               |
 | Reset times       | A pool that has not started a window reports no reset time, so the card shows none.                                                                                                                                                                                                                                                                                     |
 | Subscription plan | The card shows the plan (for example `Google AI Pro`) next to the name. `agy` reports it only through its ACP server, and each read leaves a throwaway conversation file of about 400 KB in its storage. The program reads it at most once a day (`AGY_TIER_REFRESH_HOURS`) and resends the saved value. If the read fails, the quota is still pushed without the plan. |
+| Model list        | `agy models` prints each model's id and display name, and nothing else, so the catalog page shows no context size or pricing. The list is sent with every report and replaced when it changes. If `agy models` fails, the quota is still pushed and the stored list stays. Accounts that offer the same model show it once.                                             |
 | Errors            | The command exits non-zero and prints the reason when `agy` output is unexpected or Zero-G refuses the report.                                                                                                                                                                                                                                                          |
 
 ## Observation hook

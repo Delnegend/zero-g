@@ -14,6 +14,7 @@
 | Provider                            | What discovery reports                                                                                                                                                           |
 | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Codex                               | No output limit (no verified cap; client output limits are not forwarded) and tool support unknown. Effort strings, even unknown ones, go to upstream; none is set when omitted. |
+| Antigravity                         | Not in the OpenAI-format list, because Zero-G does not route it. The catalog page lists the models `agy models` reports, with an id and a display name only.                     |
 | Claude                              | Not in the OpenAI-format list. Anthropic clients get Anthropic's own model fields unchanged.                                                                                     |
 | Zen, Go, OpenRouter                 | Only route-relevant metadata from their model lists                                                                                                                              |
 | ChatJimmy                           | No tools; requests with tool definitions, calls or results are rejected, not stripped                                                                                            |
