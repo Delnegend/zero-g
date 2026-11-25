@@ -43,6 +43,27 @@ fn parse_inference(
     Ok((id, model, value))
 }
 
+/// Why a provider kind cannot serve OpenAI-format requests, if it cannot.
+fn unsupported_reason(kind: &str) -> Option<&'static str> {
+    match kind {
+        "claude" => Some("Claude is available only through the Anthropic /v1/messages endpoint"),
+        "agy" => Some("Google Antigravity only reports quota and serves no model requests"),
+        _ => None,
+    }
+}
+
+/// The refusal for a provider kind that cannot serve OpenAI-format requests.
+fn refuse_unsupported(kind: &str) -> Option<Response> {
+    unsupported_reason(kind).map(|reason| {
+        error(
+            StatusCode::BAD_REQUEST,
+            reason,
+            "invalid_request_error",
+            "unsupported_provider",
+        )
+    })
+}
+
 /// Authenticate and dispatch an inference request to its selected provider.
 pub(super) async fn dispatch(
     State(state): State<AppState>,
@@ -100,6 +121,9 @@ pub(super) async fn dispatch(
             );
         }
     };
+    if let Some(response) = refuse_unsupported(&provider.kind) {
+        return response;
+    }
     if parts.uri.path() == "/v1/decisions" && !permissions.allows_model(&model) {
         return error(
             StatusCode::FORBIDDEN,
@@ -140,5 +164,27 @@ pub(super) async fn dispatch(
     {
         Ok(response) => response,
         Err(never) => match never {},
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unsupported_reason;
+
+    #[test]
+    fn only_claude_and_antigravity_refuse_openai_format_requests() {
+        assert!(unsupported_reason("claude").is_some_and(|text| text.contains("/v1/messages")));
+        assert!(unsupported_reason("agy").is_some());
+        for kind in [
+            "codex",
+            "cursor",
+            "zen",
+            "go",
+            "openai",
+            "openrouter",
+            "chatjimmy",
+        ] {
+            assert!(unsupported_reason(kind).is_none(), "{kind}");
+        }
     }
 }

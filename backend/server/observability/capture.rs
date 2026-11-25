@@ -63,10 +63,7 @@ pub(in crate::server) async fn capture(
             .unwrap_or_default();
         let (provider, model) = if path.starts_with("/v1/messages") {
             // Anthropic clients send plain model names to the Claude pass-through.
-            let model = namespaced_model
-                .strip_prefix("claude/")
-                .unwrap_or(&namespaced_model);
-            ("claude".to_owned(), model.to_owned())
+            ("claude".to_owned(), namespaced_model)
         } else if let Some((provider, model)) = namespaced_model.split_once('/') {
             (provider.to_owned(), model.to_owned())
         } else {
