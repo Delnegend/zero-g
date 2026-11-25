@@ -46,7 +46,7 @@ curl -H "Authorization: Bearer $ZERO_G_VIRTUAL_KEY" http://127.0.0.1:8080/v1/mod
 
 - **[Architecture](docs/architecture.md)**: Components, request flow, and provider dispatch.
 - **[Development](docs/development.md)**: Prerequisites, `just check` gate, and test suite.
-- **[Deployment](docs/deployment.md)**: Container setup, [configuration](docs/configuration.md), [gateways](docs/gateways.md), [Claude Code and omp](docs/claude-and-omp.md), [Antigravity](docs/antigravity.md), updates, and backups.
+- **[Deployment](docs/deployment.md)**: Container setup, [configuration](docs/configuration.md), [gateways](docs/gateways.md), [model metadata](docs/model-metadata.md), [wire invariants](docs/wire-invariants.md), [Claude Code and omp](docs/claude-and-omp.md), [Antigravity](docs/antigravity.md), updates, and backups.
 
 ## License
 
