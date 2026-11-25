@@ -113,6 +113,6 @@ The hook reads only transcripts inside `~/.gemini/antigravity-cli/brain`. It ski
 ### Limits
 
 - The hook always prints `{}` and exits 0, so it never interrupts `agy`. Missing settings, malformed events, missing or incomplete records, transcript format changes, a response outside the last 2 MiB, network errors and timeouts each cause the record to be skipped silently. The whole run is capped at 4 seconds.
-- It has been tested against real `agy` transcripts, but not yet run by a live `agy` session.
+- It has run in a live `agy` 1.5.16 session on Linux, where it recorded the response with the same token counts `agy` reported.
 
 See [Gateways](gateways.md) for the endpoints Zero-G serves and [Configuration](configuration.md) for providers and virtual keys.
