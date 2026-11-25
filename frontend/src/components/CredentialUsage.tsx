@@ -13,6 +13,7 @@ import { CredentialUsageSkeleton } from "./providers/ProviderSkeletons";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 export const USAGE_PROVIDERS = [
+  "agy",
   "codex",
   "claude",
   "go",
@@ -92,7 +93,7 @@ export function CredentialUsage({
       {connected && usage.isPending && (
         <CredentialUsageSkeleton
           balance={providerKind === "zen" || providerKind === "openrouter"}
-          grouped={providerKind === "claude"}
+          grouped={providerKind === "agy" || providerKind === "claude"}
         />
       )}
       {connected && usage.isError && (

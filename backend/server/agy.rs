@@ -19,6 +19,8 @@ use crate::{
     storage::RequestLog,
 };
 
+/// Maximum accepted quota report size.
+const QUOTA_BODY_LIMIT: usize = 64 * 1024;
 /// Maximum accepted observation size, including both captured bodies.
 const BODY_LIMIT: usize = 20_000_000;
 
@@ -89,21 +91,40 @@ fn count(value: &Value) -> Result<Option<i64>, ()> {
     value.as_i64().filter(|n| *n >= 0).map(Some).ok_or(())
 }
 
-/// Store an authenticated observation, deduplicating retained logs per key and step.
-async fn observe(State(state): State<AppState>, request: Request) -> Response {
-    let Some(token) = super::settings::virtual_key(request.headers()).map(str::to_owned) else {
-        return StatusCode::UNAUTHORIZED.into_response();
+/// Authenticate a collector request with an unrestricted virtual key.
+async fn collector_auth(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+) -> Result<
+    (
+        String,
+        RequestIdentity,
+        crate::server::settings::Permissions,
+    ),
+    StatusCode,
+> {
+    let Some(token) = super::settings::virtual_key(headers).map(str::to_owned) else {
+        return Err(StatusCode::UNAUTHORIZED);
     };
     let identity = RequestIdentity::default();
     let permissions = match state.settings.permissions(&token, Some(&identity)).await {
         Ok(Some(permissions)) => permissions,
-        Ok(None) => return StatusCode::UNAUTHORIZED.into_response(),
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        Ok(None) => return Err(StatusCode::UNAUTHORIZED),
+        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
     };
     // Provider-scoped keys do not grant access to the independent collector.
     if !permissions.providers.is_empty() {
-        return StatusCode::FORBIDDEN.into_response();
+        return Err(StatusCode::FORBIDDEN);
     }
+    Ok((token, identity, permissions))
+}
+
+/// Store an authenticated observation, deduplicating retained logs per key and step.
+async fn observe(State(state): State<AppState>, request: Request) -> Response {
+    let (token, identity, permissions) = match collector_auth(&state, request.headers()).await {
+        Ok(auth) => auth,
+        Err(status) => return status.into_response(),
+    };
     let Ok(bytes) = to_bytes(request.into_body(), BODY_LIMIT).await else {
         return StatusCode::PAYLOAD_TOO_LARGE.into_response();
     };
@@ -185,10 +206,68 @@ async fn observe(State(state): State<AppState>, request: Request) -> Response {
     }
 }
 
+/// Quota snapshot pushed by `scripts/agy-quota.py` from the official `agy` CLI.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct QuotaPush {
+    /// Name of the `agy` credential this machine's login belongs to.
+    account: String,
+    /// The `command.data` object of `agy --print /usage --output-format json`.
+    report: Value,
+}
+
+/// Store the latest quota snapshot for the named `agy` credential.
+async fn push_quota(State(state): State<AppState>, request: Request) -> Response {
+    if let Err(status) = collector_auth(&state, request.headers()).await {
+        return status.into_response();
+    }
+    let Ok(bytes) = to_bytes(request.into_body(), QUOTA_BODY_LIMIT).await else {
+        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    };
+    let Ok(push) = serde_json::from_slice::<QuotaPush>(&bytes) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    let Ok(report) = crate::provider::antigravity::quota::parse(push.report) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    let Ok(stored) = crate::provider::antigravity::quota::convert(report, now()) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    let mut db = (*state.database.db).clone();
+    let Ok(credentials) = crate::storage::ProviderCredential::filter_by_provider_id("agy")
+        .exec(&mut db)
+        .await
+    else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    let wanted = push.account.trim();
+    let Some(credential) = credentials
+        .into_iter()
+        .find(|credential| credential.name.trim().eq_ignore_ascii_case(wanted))
+    else {
+        return (
+            StatusCode::NOT_FOUND,
+            "No Antigravity credential has that name; add it under Models > Providers",
+        )
+            .into_response();
+    };
+    let result = crate::storage::Setting::upsert_by_name(
+        crate::provider::antigravity::quota::setting_name(&credential.id).as_str(),
+    )
+    .value(stored)
+    .exec(&mut db)
+    .await;
+    match result {
+        Ok(_) => (StatusCode::OK, Json(serde_json::json!({"ok": true}))).into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
 /// Observation route is outside inference capture and authenticates before reading the body.
 pub(super) fn router(state: &AppState) -> Router<AppState> {
     Router::new()
         .route("/v1/agy/observations", post(observe))
+        .route("/v1/agy/quota", post(push_quota))
         .with_state(state.clone())
 }
 
@@ -330,5 +409,124 @@ mod tests {
         let request: Value = serde_json::from_str(body["request_body"].as_str().unwrap()).unwrap();
         assert_eq!(request["authorization"], "[REDACTED]");
         assert_eq!(request["message"], "hello");
+    }
+
+    /// A pushed `/usage` report reaches the named credential; wrong names and keys are refused.
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn quota_reports_reach_the_named_credential() {
+        use crate::storage::ProviderCredential;
+        let database = crate::database::Database::open(":memory:").await.unwrap();
+        let settings = super::super::settings::SettingsStore::new(
+            database.clone(),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )
+        .await
+        .unwrap();
+        let make_key = |body: Value| {
+            let settings = settings.clone();
+            async move {
+                let response = Router::new()
+                    .route("/keys", post(super::super::settings::create_key))
+                    .with_state(settings)
+                    .oneshot(
+                        Request::builder()
+                            .method("POST")
+                            .uri("/keys")
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body.to_string()))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+                serde_json::from_slice::<Value>(&bytes).unwrap()["key"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            }
+        };
+        let mut db = (*database.db).clone();
+        toasty::create!(ProviderRecord {
+            id: "agy".to_string(),
+            name: "Google Antigravity".to_string(),
+            kind: "agy".to_string(),
+            base_url: String::new(),
+            keyless: false,
+            deleted: false
+        })
+        .exec(&mut db)
+        .await
+        .unwrap();
+        toasty::create!(ProviderCredential {
+            id: "cred-1".to_string(),
+            provider_id: "agy".to_string(),
+            name: "Kien".to_string(),
+            weight: 1,
+            enabled: true
+        })
+        .exec(&mut db)
+        .await
+        .unwrap();
+        let key = make_key(json!({"name": "collector"})).await;
+        let scoped = make_key(json!({"name": "scoped", "providers": ["agy"]})).await;
+        let state = AppState {
+            providers: crate::provider::Providers::new(),
+            settings: settings.clone(),
+            database,
+            dashboard_auth: super::super::dashboard_auth_config::test_auth().await,
+        };
+        let app = super::super::create_router(state);
+        let report = json!({"groups": [{"name": "Gemini Models", "buckets": [
+            {"id": "gemini-5h", "window": "5h", "remaining_fraction": 0.5,
+             "reset_time": "2099-01-01T00:00:00Z"}]}]});
+        let send = |token: &str, account: &str, report: &Value| {
+            let request = Request::builder()
+                .method("POST")
+                .uri("/v1/agy/quota")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"account": account, "report": report}).to_string(),
+                ))
+                .unwrap();
+            app.clone().oneshot(request)
+        };
+        assert_eq!(
+            send("zg-invalid", "Kien", &report).await.unwrap().status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            send(&scoped, "Kien", &report).await.unwrap().status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            send(&key, "Nobody", &report).await.unwrap().status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            send(&key, "Kien", &json!({"groups": []}))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert!(
+            crate::provider::antigravity::quota::stored(&settings, "cred-1")
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            send(&key, " kien ", &report).await.unwrap().status(),
+            StatusCode::OK
+        );
+        let snapshot = crate::provider::antigravity::quota::stored(&settings, "cred-1")
+            .await
+            .unwrap();
+        let value = serde_json::to_value(snapshot).unwrap();
+        assert_eq!(value["kind"], "grouped_quota");
+        assert_eq!(value["groups"][0]["label"], "Gemini Models");
+        assert_eq!(value["groups"][0]["windows"][0]["label"], "5 hours");
+        assert_eq!(value["groups"][0]["windows"][0]["remaining_percent"], 50.0);
     }
 }

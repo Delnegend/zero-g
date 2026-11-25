@@ -96,16 +96,32 @@ async fn describe(
         return Ok(Vec::new());
     }
     let secret = SecretKind::primary(kind);
-    let names: Vec<String> = rows.iter().map(|row| secret.name(&row.id)).collect();
-    let present = Secret::filter(Secret::fields().name().in_list(names))
-        .select(Secret::fields().name())
-        .exec(&mut (*store.database.db).clone())
-        .await
-        .map_err(|e| e.to_string())?;
+    // Antigravity holds no secret: it is connected once a quota snapshot has been pushed.
+    let name_of = |id: &str| {
+        if kind == "agy" {
+            crate::provider::antigravity::quota::setting_name(id)
+        } else {
+            secret.name(id)
+        }
+    };
+    let names: Vec<String> = rows.iter().map(|row| name_of(&row.id)).collect();
+    let mut db = (*store.database.db).clone();
+    let present = if kind == "agy" {
+        crate::storage::Setting::filter(crate::storage::Setting::fields().name().in_list(names))
+            .select(crate::storage::Setting::fields().name())
+            .exec(&mut db)
+            .await
+    } else {
+        Secret::filter(Secret::fields().name().in_list(names))
+            .select(Secret::fields().name())
+            .exec(&mut db)
+            .await
+    }
+    .map_err(|e| e.to_string())?;
     Ok(rows
         .into_iter()
         .map(|row| Credential {
-            connected: present.contains(&secret.name(&row.id)),
+            connected: present.contains(&name_of(&row.id)),
             id: row.id,
             name: row.name,
             weight: row.weight,

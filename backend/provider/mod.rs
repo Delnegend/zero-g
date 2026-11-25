@@ -1,3 +1,5 @@
+/// Antigravity quota display.
+pub(crate) mod antigravity;
 /// Model catalog aggregation.
 pub(crate) mod catalog;
 /// `ChatJimmy` provider integration.
@@ -80,6 +82,8 @@ macro_rules! providers {
 }
 
 providers! {
+    /// Google Antigravity quota display.
+    Antigravity => antigravity::Backend,
     /// `OpenAI` Codex backend.
     Codex => codex::Backend,
     /// Claude Code backend.
@@ -135,6 +139,7 @@ impl ProviderKind {
         provider: &registry::Provider,
     ) -> Result<Vec<Model>, String> {
         match self {
+            Self::Antigravity => antigravity::Backend::discover(state, provider).await,
             Self::Codex => codex::Backend::discover(state, provider).await,
             Self::Claude => claude::Backend::discover(state, provider).await,
             Self::Cursor => cursor::Backend::discover(state, provider).await,
@@ -156,6 +161,9 @@ impl ProviderKind {
         permissions: &crate::server::settings::Permissions,
     ) -> Result<Vec<Model>, String> {
         match self {
+            Self::Antigravity => {
+                antigravity::Backend::discover_permitted(state, provider, permissions).await
+            }
             Self::Codex => codex::Backend::discover_permitted(state, provider, permissions).await,
             Self::Claude => claude::Backend::discover_permitted(state, provider, permissions).await,
             Self::Cursor => cursor::Backend::discover_permitted(state, provider, permissions).await,
@@ -180,6 +188,7 @@ impl ProviderKind {
     /// Returns the backend's quota capability, if supported.
     pub(crate) const fn quota(self) -> Option<QuotaCapability> {
         match self {
+            Self::Antigravity => Some(QuotaCapability::Antigravity),
             Self::Codex => Some(QuotaCapability::Codex),
             Self::Zen => Some(QuotaCapability::Zen),
             Self::Go => Some(QuotaCapability::Go),
@@ -196,6 +205,7 @@ impl ProviderKind {
     /// Builds the request router for this backend.
     fn router(self, settings: &SettingsStore) -> Router<AppState> {
         match self {
+            Self::Antigravity => antigravity::Backend::router(settings),
             Self::Codex => codex::Backend::router(settings),
             Self::Claude => claude::Backend::router(settings),
             Self::Cursor => cursor::Backend::router(settings),
@@ -212,6 +222,8 @@ impl ProviderKind {
 
 /// Backends that can retrieve credential quota.
 pub(crate) enum QuotaCapability {
+    /// Antigravity quota.
+    Antigravity,
     /// Codex quota.
     Codex,
     /// Claude subscription quota.
@@ -232,6 +244,7 @@ impl QuotaCapability {
         credential: &str,
     ) -> Result<quota::QuotaSnapshot, String> {
         match self {
+            Self::Antigravity => antigravity::Backend::quota(store, provider, credential).await,
             Self::Codex => codex::Backend::quota(store, provider, credential).await,
             Self::Claude => claude::Backend::quota(store, provider, credential).await,
             Self::Zen => zen::Backend::quota(store, provider, credential).await,
@@ -268,7 +281,8 @@ pub(crate) fn dashboard_router(state: &AppState) -> Router {
             ProviderKind::Openrouter => {
                 router.merge(openrouter::Backend::dashboard_router(state.clone()))
             }
-            ProviderKind::Go
+            ProviderKind::Antigravity
+            | ProviderKind::Go
             | ProviderKind::Openai
             | ProviderKind::ChatJimmy
             | ProviderKind::CommandCode
@@ -288,6 +302,7 @@ mod tests {
         assert_eq!(
             values,
             [
+                "agy",
                 "codex",
                 "claude",
                 "cursor",

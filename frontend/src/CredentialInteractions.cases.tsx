@@ -661,73 +661,75 @@ test("quota resets show a countdown and reveal the exact time", async () => {
   assert.ok(await screen.findByText(new Date(reset * 1000).toLocaleString()));
 });
 
-test("grouped quotas show each pool with its own windows", async () => {
-  globalThis.fetch = (async () =>
-    Response.json({
-      kind: "grouped_quota",
-      groups: [
-        {
-          label: "Gemini Models",
-          windows: [
-            { label: "5 hours", remaining_percent: 80, reset_at: null },
-            { label: "Weekly", remaining_percent: 40, reset_at: null },
-          ],
-        },
-        {
-          label: "Claude and GPT models",
-          windows: [
-            { label: "5 hours", remaining_percent: 30, reset_at: null },
-            { label: "Weekly", remaining_percent: null, reset_at: null },
-            { label: "Daily", remaining_percent: 0, reset_at: null },
-            { label: "Monthly", remaining_percent: 100, reset_at: null },
-          ],
-        },
-      ],
-    })) as typeof fetch;
-  mount(
-    <CredentialUsage
-      providerId="claude"
-      providerKind="claude"
-      credentialId="account"
-      credentialName="Account"
-      connected
-    />,
-  );
-  const gemini = await screen.findByRole("group", { name: "Gemini Models" });
-  const claude = screen.getByRole("group", { name: "Claude and GPT models" });
-  assert.ok(within(gemini).getByText("80% left"));
-  assert.ok(within(gemini).getByText("40% left"));
-  assert.ok(within(claude).getByText("30% left"));
-  assert.ok(within(claude).getByText("Unknown left"));
-  assert.equal(
-    within(gemini)
-      .getByRole("progressbar", { name: "5 hours remaining" })
-      .getAttribute("aria-valuenow"),
-    "80",
-  );
-  assert.equal(
-    within(gemini)
-      .getByRole("progressbar", { name: "Weekly remaining" })
-      .getAttribute("aria-valuenow"),
-    "40",
-  );
-  assert.equal(
-    within(claude).queryByRole("progressbar", { name: "Weekly remaining" }),
-    null,
-  );
-  assert.equal(
-    within(claude)
-      .getByRole("progressbar", { name: "Daily remaining" })
-      .getAttribute("aria-valuenow"),
-    "0",
-  );
-  assert.equal(
-    within(claude)
-      .getByRole("progressbar", { name: "Monthly remaining" })
-      .getAttribute("aria-valuenow"),
-    "100",
-  );
-});
+for (const kind of ["claude", "agy"]) {
+  test(`${kind} quotas show each pool with its own windows`, async () => {
+    globalThis.fetch = (async () =>
+      Response.json({
+        kind: "grouped_quota",
+        groups: [
+          {
+            label: "Gemini Models",
+            windows: [
+              { label: "5 hours", remaining_percent: 80, reset_at: null },
+              { label: "Weekly", remaining_percent: 40, reset_at: null },
+            ],
+          },
+          {
+            label: "Claude and GPT models",
+            windows: [
+              { label: "5 hours", remaining_percent: 30, reset_at: null },
+              { label: "Weekly", remaining_percent: null, reset_at: null },
+              { label: "Daily", remaining_percent: 0, reset_at: null },
+              { label: "Monthly", remaining_percent: 100, reset_at: null },
+            ],
+          },
+        ],
+      })) as typeof fetch;
+    mount(
+      <CredentialUsage
+        providerId={kind}
+        providerKind={kind}
+        credentialId="account"
+        credentialName="Account"
+        connected
+      />,
+    );
+    const gemini = await screen.findByRole("group", { name: "Gemini Models" });
+    const claude = screen.getByRole("group", { name: "Claude and GPT models" });
+    assert.ok(within(gemini).getByText("80% left"));
+    assert.ok(within(gemini).getByText("40% left"));
+    assert.ok(within(claude).getByText("30% left"));
+    assert.ok(within(claude).getByText("Unknown left"));
+    assert.equal(
+      within(gemini)
+        .getByRole("progressbar", { name: "5 hours remaining" })
+        .getAttribute("aria-valuenow"),
+      "80",
+    );
+    assert.equal(
+      within(gemini)
+        .getByRole("progressbar", { name: "Weekly remaining" })
+        .getAttribute("aria-valuenow"),
+      "40",
+    );
+    assert.equal(
+      within(claude).queryByRole("progressbar", { name: "Weekly remaining" }),
+      null,
+    );
+    assert.equal(
+      within(claude)
+        .getByRole("progressbar", { name: "Daily remaining" })
+        .getAttribute("aria-valuenow"),
+      "0",
+    );
+    assert.equal(
+      within(claude)
+        .getByRole("progressbar", { name: "Monthly remaining" })
+        .getAttribute("aria-valuenow"),
+      "100",
+    );
+  });
+}
 
 test("connected Claude credentials show subscription quota", async () => {
   globalThis.fetch = (async (url) =>

@@ -69,7 +69,7 @@ providers:
 
 The opt-in `PostInvocation` hook records interactive `agy` activity without routing model traffic through Zero-G or sharing Google credentials. It requires Python 3 and a Zero-G virtual key. Export these variables in the environment that launches `agy` (use HTTPS when the gateway is remote):
 
-The former `agy` inference provider and its model routes have been retired. Existing saved provider entries do not restore those routes; the observations endpoint and hook remain available independently.
+The former `agy` inference provider and its model routes have been retired. A saved **Google Antigravity** provider entry now only displays quota (see below); it serves no model routes. The observations endpoint and hook remain available independently.
 The collector requires a virtual key without a provider allowlist; model restrictions still apply. Provider-scoped keys cannot submit observations.
 
 ```bash
@@ -99,6 +99,33 @@ The hook sends the first completed model response transcript record at or after 
 Collection is best effort: missing or incomplete records, transcript format changes, a response outside the final 2 MiB, network errors and timeouts can cause observations to be skipped without interrupting `agy`. Missing token counts are sent as null, not estimated. Observed `input_tokens` exclude cached input; `cache_read_tokens`, if supplied, remains in the response record rather than being added. No live `agy` verification is claimed.
 
 These imported records have no measured request duration; the dashboard currently displays their latency as 0 ms. The hook is independent of model traffic, but Google's terms do not explicitly address exporting transcript data to Zero-G. Check the terms for your account before enabling it.
+
+### Antigravity quota from the official CLI
+
+Zero-G never calls Google for Antigravity quota. The official `agy` CLI already knows it: `agy --print /usage --output-format json` prints each model pool's 5-hour and weekly limits, uses no tokens, and runs with the login `agy` already has. `scripts/agy-quota.py` runs that command and pushes the result to `POST /v1/agy/quota`; the dashboard then shows it on the **Google Antigravity** credential card.
+
+Setup:
+
+1. Under **Models → Providers → Google Antigravity**, add one credential per Google account, named after the account (for example `Kien`). There is no sign-in: the card shows as connected once a report arrives.
+2. On each machine where `agy` is signed in, set the variables below and run the script every 10 to 15 minutes. The same unrestricted virtual key as the observation hook works.
+
+```bash
+export ZERO_G_URL=http://127.0.0.1:8080       # gateway root, without /v1
+export ZERO_G_VIRTUAL_KEY='<virtual key>'     # no provider allowlist
+export ZERO_G_AGY_ACCOUNT='Kien'              # the credential name in Zero-G
+python3 /absolute/path/to/zero-g/scripts/agy-quota.py
+```
+
+```cron
+*/15 * * * * ZERO_G_URL=https://zero-g.example.com ZERO_G_VIRTUAL_KEY=... ZERO_G_AGY_ACCOUNT=Kien python3 /absolute/path/to/zero-g/scripts/agy-quota.py
+```
+
+| Topic       | Behavior                                                                                                                |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Matching    | The credential is found by name, ignoring case and surrounding spaces. An unknown name is rejected with 404.            |
+| Freshness   | The card shows the last report. If none arrived for 3 hours it shows an error naming the script instead of old numbers. |
+| Reset times | A pool that has not started a window reports no reset time; the card shows none.                                        |
+| Errors      | The script exits non-zero and prints the reason when `agy` output is unexpected or Zero-G refuses the report.           |
 
 ### OpenRouter Decisions API Example
 
