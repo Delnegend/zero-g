@@ -8,8 +8,11 @@
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::sync::{Arc, Mutex};
+use std::sync::LockResult;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
+use std::time::Duration;
 
 /// One request the gateway received.
 pub(crate) struct Received {
@@ -21,15 +24,46 @@ pub(crate) struct Received {
     pub(crate) body: serde_json::Value,
 }
 
+/// A handle to the fake gateway: its requests and the switch that stops its thread.
+pub(crate) struct Log {
+    requests: Arc<Mutex<Vec<Received>>>,
+    stop: Arc<AtomicBool>,
+}
+
+impl Log {
+    /// Lock the recorded requests.
+    pub(crate) fn lock(&self) -> LockResult<MutexGuard<'_, Vec<Received>>> {
+        self.requests.lock()
+    }
+}
+
+impl Drop for Log {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
 /// A gateway stand-in that answers every request with `status` and records it.
-pub(crate) fn gateway(status: u16) -> (String, Arc<Mutex<Vec<Received>>>) {
+///
+/// Its thread stops when the returned `Log` is dropped.
+pub(crate) fn gateway(status: u16) -> (String, Log) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
-    let seen = Arc::new(Mutex::new(Vec::new()));
-    let log = Arc::clone(&seen);
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let log = Arc::clone(&requests);
+    let stop = Arc::new(AtomicBool::new(false));
+    let running = Arc::clone(&stop);
     thread::spawn(move || {
-        for stream in listener.incoming() {
-            let Ok(mut stream) = stream else { return };
+        while !running.load(Ordering::Relaxed) {
+            let mut stream = match listener.accept() {
+                Ok((stream, _)) => stream,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                Err(_) => return,
+            };
             let mut data = Vec::new();
             let mut buffer = [0u8; 4096];
             let (head, body) = loop {
@@ -73,5 +107,5 @@ pub(crate) fn gateway(status: u16) -> (String, Arc<Mutex<Vec<Received>>>) {
             );
         }
     });
-    (url, seen)
+    (url, Log { requests, stop })
 }

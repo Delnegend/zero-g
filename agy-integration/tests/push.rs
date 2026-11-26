@@ -150,7 +150,7 @@ fn unexpected_agy_output_sends_nothing_and_fails() {
 #[test]
 fn a_rejected_report_fails_loudly() {
     let dir = tempfile::tempdir().unwrap();
-    let (url, _) = gateway(404);
+    let (url, _seen) = gateway(404);
     let output = run(dir.path(), &url, USAGE, "ok");
     assert!(!output.status.success());
     assert!(

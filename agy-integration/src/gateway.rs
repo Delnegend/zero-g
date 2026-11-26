@@ -6,6 +6,9 @@ use serde_json::Value;
 
 use crate::config::Settings;
 
+/// The longest error body kept for a failed report.
+const MAX_REASON: usize = 300;
+
 /// Post `body` to `path` on the gateway, never following redirects.
 pub(crate) async fn post(
     settings: &Settings,
@@ -33,14 +36,26 @@ pub(crate) async fn post(
     if status.is_success() {
         return Ok(());
     }
-    let reason: String = response
-        .text()
-        .await
-        .unwrap_or_default()
-        .chars()
-        .take(300)
-        .collect();
+    let reason = read_reason(response).await;
     Err(format!(
         "Zero-G did not accept the report: HTTP {status} {reason}"
     ))
+}
+
+/// Read at most `MAX_REASON` characters of an error body.
+async fn read_reason(mut response: reqwest::Response) -> String {
+    let mut reason = String::new();
+    let mut count = 0;
+    while count < MAX_REASON
+        && let Ok(Some(chunk)) = response.chunk().await
+    {
+        for character in String::from_utf8_lossy(&chunk).chars() {
+            if count == MAX_REASON {
+                break;
+            }
+            reason.push(character);
+            count = count.saturating_add(1);
+        }
+    }
+    reason
 }

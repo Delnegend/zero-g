@@ -191,7 +191,7 @@ fn bad_events_and_missing_settings_still_succeed_quietly() {
 fn an_unreachable_or_refusing_gateway_never_fails_the_hook() {
     let home = tempfile::tempdir().unwrap();
     let path = write_transcript(home.path(), &transcript());
-    let (refusing, _) = gateway(500);
+    let (refusing, _seen) = gateway(500);
     for url in ["http://127.0.0.1:1", refusing.as_str()] {
         assert_quiet_success(&observe(home.path(), &event(&path), &settings(url)));
     }
@@ -200,7 +200,7 @@ fn an_unreachable_or_refusing_gateway_never_fails_the_hook() {
 #[test]
 fn a_stdin_that_never_closes_cannot_hold_the_hook_past_its_budget() {
     let home = tempfile::tempdir().unwrap();
-    let (url, _) = gateway(200);
+    let (url, _seen) = gateway(200);
     let started = Instant::now();
     let mut child = Command::new(env!("CARGO_BIN_EXE_zero-g-agy-integration"))
         .arg("observe")

@@ -42,6 +42,14 @@ The settings file defaults to ~/.config/zero-g/agy-integration.env.
 /// The longest `observe` may run, safely inside agy's 5 second hook timeout.
 const OBSERVE_BUDGET: Duration = Duration::from_secs(4);
 
+/// One of the two commands.
+enum Command {
+    /// Push the quota once.
+    Quota,
+    /// Run the hook.
+    Observe,
+}
+
 /// What the command line asked for.
 enum Action {
     /// Push the quota once.
@@ -68,14 +76,15 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Action, String> {
                     args.next().ok_or("--config needs a file path")?,
                 ));
             }
-            "quota" | "observe" if command.is_none() => command = Some(arg),
+            "quota" if command.is_none() => command = Some(Command::Quota),
+            "observe" if command.is_none() => command = Some(Command::Observe),
             other => return Err(format!("unknown argument: {other}")),
         }
     }
-    match command.as_deref() {
-        Some("quota") => Ok(Action::Quota(config)),
-        Some("observe") => Ok(Action::Observe(config)),
-        _ => Err("name a command: quota or observe (see --help)".to_owned()),
+    match command {
+        Some(Command::Quota) => Ok(Action::Quota(config)),
+        Some(Command::Observe) => Ok(Action::Observe(config)),
+        None => Err("name a command: quota or observe (see --help)".to_owned()),
     }
 }
 
