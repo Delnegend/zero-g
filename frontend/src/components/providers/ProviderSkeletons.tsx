@@ -77,7 +77,7 @@ export function CredentialUsageSkeleton({
     <div
       role="status"
       aria-label="Loading usage"
-      className="space-y-3 @md:grid @md:grid-cols-[4.5rem_minmax(0,1fr)_max-content_minmax(11rem,max-content)] @md:gap-x-3"
+      className="space-y-3 @md:grid @md:grid-cols-[fit-content(9rem)_minmax(0,1fr)_max-content_minmax(11rem,max-content)] @md:gap-x-3"
     >
       {grouped && <Skeleton className="h-5 w-36 @md:col-span-4" />}
       <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5 text-sm @md:col-span-4 @md:grid-cols-subgrid">

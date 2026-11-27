@@ -105,7 +105,7 @@ export function CredentialUsage({
       {connected &&
         usage.data?.kind === "quota" &&
         (usage.data.windows.length ? (
-          <div className="space-y-3 @md:grid @md:grid-cols-[4.5rem_minmax(0,1fr)_max-content_minmax(11rem,max-content)] @md:gap-x-3">
+          <div className="space-y-3 @md:grid @md:grid-cols-[fit-content(9rem)_minmax(0,1fr)_max-content_minmax(11rem,max-content)] @md:gap-x-3">
             {usage.data.windows.map((window, index) => (
               <WindowUsage key={`${window.label}-${index}`} window={window} />
             ))}
@@ -116,7 +116,7 @@ export function CredentialUsage({
           </p>
         ))}
       {connected && usage.data?.kind === "grouped_quota" && (
-        <div className="space-y-4 @md:grid @md:grid-cols-[4.5rem_minmax(0,1fr)_max-content_minmax(11rem,max-content)] @md:gap-x-3">
+        <div className="space-y-4 @md:grid @md:grid-cols-[fit-content(9rem)_minmax(0,1fr)_max-content_minmax(11rem,max-content)] @md:gap-x-3">
           {usage.data.groups.map((group, index) => (
             <section
               key={`${group.label}-${index}`}
