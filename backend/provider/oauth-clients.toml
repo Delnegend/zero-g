@@ -1,4 +1,5 @@
-# Public OAuth application credentials published by oh-my-pi.
+# Public OAuth application credentials published by oh-my-pi (codex, claude, cursor)
+# and by the CoDev Code client (codev).
 [codex]
 client_id = "app_EMoamEEZ73f0CkXaXp7hrann"
 
@@ -7,3 +8,6 @@ client_id = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 
 [cursor]
 client_id = "KbZUR41cY7W6zRSdpSUJ7I7mLYBKOCmB"
+
+[codev]
+client_id = "litellm-test"

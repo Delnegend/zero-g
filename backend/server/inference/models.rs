@@ -16,6 +16,7 @@ fn normalize_model(kind: &str, model: &mut crate::openai::Model) {
         "zen" | "go" => crate::provider::zen::catalog::catalog_info(model, kind),
         "openrouter" => crate::provider::openrouter::catalog_info(model),
         "chatjimmy" => crate::provider::chatjimmy::catalog_info(model),
+        "codev" => crate::provider::codev::catalog_info(model),
         _ => return,
     };
     info.apply_to_route(model);

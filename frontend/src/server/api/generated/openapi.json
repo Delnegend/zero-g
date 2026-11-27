@@ -1276,6 +1276,90 @@
         }
       }
     },
+    "/api/providers/{id}/credentials/{credential_id}/codev/finish": {
+      "post": {
+        "tags": [],
+        "summary": "Exchange a pasted callback and save credentials.",
+        "operationId": "finishCodevLogin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CodevFinishInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodevFinishResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/providers/{id}/credentials/{credential_id}/codev/start": {
+      "post": {
+        "tags": [],
+        "summary": "Start an SSO authorization flow.",
+        "operationId": "startCodevLogin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodevStartResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/providers/{id}/credentials/{credential_id}/codex/poll": {
       "post": {
         "tags": [],
@@ -2699,6 +2783,51 @@
         "description": "Login completion state."
       },
       "ClaudeStartResponse": {
+        "type": "object",
+        "description": "Login start response.",
+        "required": ["id", "url"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Flow identifier."
+          },
+          "url": {
+            "type": "string",
+            "description": "Browser authorization URL."
+          }
+        }
+      },
+      "CodevFinishInput": {
+        "type": "object",
+        "description": "Manual callback submission.",
+        "required": ["id", "code"],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Pasted code or callback URL."
+          },
+          "id": {
+            "type": "string",
+            "description": "Flow identifier."
+          }
+        }
+      },
+      "CodevFinishResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["status"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["complete"]
+              }
+            }
+          }
+        ],
+        "description": "Login completion state."
+      },
+      "CodevStartResponse": {
         "type": "object",
         "description": "Login start response.",
         "required": ["id", "url"],

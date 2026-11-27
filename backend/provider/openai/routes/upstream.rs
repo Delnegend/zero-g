@@ -20,12 +20,19 @@ pub(crate) async fn send(
     body: Option<Bytes>,
     identity: Option<&RequestIdentity>,
 ) -> Result<reqwest::Response, ProxyError> {
+    if matches!(upstream, Upstream::Codev) {
+        return crate::provider::codev::send(
+            settings, provider, path, query, method, headers, body, identity,
+        )
+        .await;
+    }
     retry_api_keys(
         settings,
         provider,
         match upstream {
             Upstream::OpenAi(_) => "No connected OpenAI-compatible credentials",
             Upstream::Go => "No connected OpenCode Go credentials",
+            Upstream::Codev => "No connected CoDev credentials",
         },
         identity,
         |key| {
@@ -45,6 +52,7 @@ pub(crate) async fn send(
                         )
                         .await
                     }
+                    Upstream::Codev => Err("CoDev requests are sent above"),
                     Upstream::Go => {
                         crate::provider::go::send_upstream(
                             crate::provider::go::base(provider, path == "models"),

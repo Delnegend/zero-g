@@ -42,7 +42,7 @@ impl IntoResponse for ProxyError {
 }
 impl ProxyError {
     /// Attach a retry delay for a locally enforced cooldown.
-    fn with_retry_after(mut self, wait: std::time::Duration) -> Self {
+    pub(crate) fn with_retry_after(mut self, wait: std::time::Duration) -> Self {
         self.4 = Some(cooldown::retry_after_secs(wait));
         self
     }

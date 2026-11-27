@@ -37,6 +37,8 @@ pub(crate) enum Upstream {
     OpenAi(Option<std::sync::Arc<str>>),
     /// `OpenCode` Go endpoints for model discovery and inference.
     Go,
+    /// `CoDev` gateway, whose key and URL come from each signed-in credential.
+    Codev,
 }
 
 /// Build routes for an OpenAI-compatible provider kind.
@@ -55,6 +57,11 @@ pub(crate) fn router_for(
 /// Build routes using `OpenCode` Go's distinct discovery and inference endpoints.
 pub(crate) fn go_router(settings: &SettingsStore) -> Router<AppState> {
     router_with(settings, "go", Upstream::Go)
+}
+
+/// Build routes for the `CoDev` gateway.
+pub(crate) fn codev_router(settings: &SettingsStore) -> Router<AppState> {
+    router_with(settings, "codev", Upstream::Codev)
 }
 
 /// Builds compatible routes with the selected upstream transport.

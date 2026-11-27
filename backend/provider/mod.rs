@@ -6,6 +6,8 @@ pub(crate) mod catalog;
 pub(crate) mod chatjimmy;
 /// Claude Code provider integration.
 pub(crate) mod claude;
+/// `CoDev` provider integration.
+pub(crate) mod codev;
 /// Codex provider integration.
 pub(crate) mod codex;
 /// Command Code provider integration.
@@ -106,6 +108,8 @@ providers! {
     CommandCode => commandcode::Backend,
     /// Command Code Go plan backend.
     CommandCodeGo => commandcode::go::GoBackend,
+    /// `CoDev` backend.
+    Codev => codev::Backend,
 }
 
 impl ProviderKind {
@@ -152,6 +156,7 @@ impl ProviderKind {
             Self::ChatJimmy => chatjimmy::Backend::discover(state, provider).await,
             Self::CommandCode => commandcode::Backend::discover(state, provider).await,
             Self::CommandCodeGo => commandcode::go::GoBackend::discover(state, provider).await,
+            Self::Codev => codev::Backend::discover(state, provider).await,
         }
     }
 
@@ -184,6 +189,7 @@ impl ProviderKind {
             Self::CommandCodeGo => {
                 commandcode::go::GoBackend::discover_permitted(state, provider, permissions).await
             }
+            Self::Codev => codev::Backend::discover_permitted(state, provider, permissions).await,
         }
     }
 
@@ -200,7 +206,8 @@ impl ProviderKind {
             | Self::Cursor
             | Self::ChatJimmy
             | Self::CommandCode
-            | Self::CommandCodeGo => None,
+            | Self::CommandCodeGo
+            | Self::Codev => None,
         }
     }
 
@@ -217,7 +224,8 @@ impl ProviderKind {
             | Self::Cursor
             | Self::ChatJimmy
             | Self::CommandCode
-            | Self::CommandCodeGo => None,
+            | Self::CommandCodeGo
+            | Self::Codev => None,
         }
     }
 
@@ -235,6 +243,7 @@ impl ProviderKind {
             Self::ChatJimmy => chatjimmy::Backend::router(settings),
             Self::CommandCode => commandcode::Backend::router(settings),
             Self::CommandCodeGo => commandcode::go::GoBackend::router(settings),
+            Self::Codev => codev::Backend::router(settings),
         }
     }
 }
@@ -332,6 +341,7 @@ pub(crate) fn dashboard_router(state: &AppState) -> Router {
             ProviderKind::Codex => router.merge(codex::Backend::dashboard_router(state.clone())),
             ProviderKind::Claude => router.merge(claude::Backend::dashboard_router(state.clone())),
             ProviderKind::Cursor => router.merge(cursor::Backend::dashboard_router(state.clone())),
+            ProviderKind::Codev => router.merge(codev::Backend::dashboard_router(state.clone())),
             ProviderKind::Zen => router.merge(zen::Backend::dashboard_router(state.clone())),
             ProviderKind::Openrouter => {
                 router.merge(openrouter::Backend::dashboard_router(state.clone()))
@@ -368,6 +378,7 @@ mod tests {
                 "chatjimmy",
                 "commandcode",
                 "commandcode-go",
+                "codev",
             ]
         );
         for value in values {

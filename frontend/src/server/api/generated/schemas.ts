@@ -443,6 +443,35 @@ export const ClaudeStartResponse = zod
 export type ClaudeStartResponse = zod.input<typeof ClaudeStartResponse>;
 export type ClaudeStartResponseOutput = zod.output<typeof ClaudeStartResponse>;
 
+export const CodevFinishInput = zod
+  .object({
+    code: zod.string().describe("Pasted code or callback URL."),
+    id: zod.string().describe("Flow identifier."),
+  })
+  .describe("Manual callback submission.");
+
+export type CodevFinishInput = zod.input<typeof CodevFinishInput>;
+export type CodevFinishInputOutput = zod.output<typeof CodevFinishInput>;
+
+export const CodevFinishResponse = zod
+  .object({
+    status: zod.enum(["complete"]),
+  })
+  .describe("Login completion state.");
+
+export type CodevFinishResponse = zod.input<typeof CodevFinishResponse>;
+export type CodevFinishResponseOutput = zod.output<typeof CodevFinishResponse>;
+
+export const CodevStartResponse = zod
+  .object({
+    id: zod.string().describe("Flow identifier."),
+    url: zod.string().describe("Browser authorization URL."),
+  })
+  .describe("Login start response.");
+
+export type CodevStartResponse = zod.input<typeof CodevStartResponse>;
+export type CodevStartResponseOutput = zod.output<typeof CodevStartResponse>;
+
 export const CodexPollInput = zod
   .object({
     id: zod.string().describe("Dashboard-facing flow identifier."),
@@ -2272,6 +2301,18 @@ export const PollClaudeLoginBody = zod
 
 export type PollClaudeLoginBody = zod.input<typeof PollClaudeLoginBody>;
 export type PollClaudeLoginBodyOutput = zod.output<typeof PollClaudeLoginBody>;
+
+export const FinishCodevLoginBody = zod
+  .object({
+    code: zod.string().describe("Pasted code or callback URL."),
+    id: zod.string().describe("Flow identifier."),
+  })
+  .describe("Manual callback submission.");
+
+export type FinishCodevLoginBody = zod.input<typeof FinishCodevLoginBody>;
+export type FinishCodevLoginBodyOutput = zod.output<
+  typeof FinishCodevLoginBody
+>;
 
 export const PollCodexLoginBody = zod
   .object({

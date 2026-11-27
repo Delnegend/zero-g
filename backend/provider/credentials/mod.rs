@@ -163,7 +163,7 @@ async fn include_profiles(
         }
         return Ok(());
     }
-    if !matches!(kind, "codex" | "claude") {
+    if !matches!(kind, "codex" | "claude" | "codev") {
         return Ok(());
     }
     for credential in credentials

@@ -187,7 +187,9 @@ export function CredentialsCard({
                   />
                 )}
                 {kind?.oauth &&
-                  ["codex", "claude", "cursor"].includes(provider.kind) && (
+                  ["codex", "claude", "cursor", "codev"].includes(
+                    provider.kind,
+                  ) && (
                     <Button
                       disabled={loginBusy || !credential.enabled}
                       onClick={() => onLogin(credential)}
@@ -200,6 +202,7 @@ export function CredentialsCard({
                             codex: "Codex",
                             claude: "Claude Code",
                             cursor: "Cursor",
+                            codev: "CoDev",
                           } as Record<string, string>
                         )[provider.kind]
                       }

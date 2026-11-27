@@ -8,6 +8,8 @@
 import {
   ClaudePollResponse,
   ClaudeStartResponse,
+  CodevFinishResponse,
+  CodevStartResponse,
   CodexPollResponse,
   CodexStartResponse,
   CreatedKey,
@@ -32,6 +34,7 @@ import {
 import type {
   ClaudeFinishInput,
   ClaudePollInput,
+  CodevFinishInput,
   CodexPollInput,
   ConsoleConnection,
   CreateKey,
@@ -714,6 +717,74 @@ export const startClaudeLogin = async (
       schema: ClaudeStartResponse,
     },
   );
+};
+
+export const getFinishCodevLoginUrl = (id: string, credentialId: string) => {
+  return `/api/providers/${encodeURIComponent(String(id))}/credentials/${encodeURIComponent(String(credentialId))}/codev/finish`;
+};
+
+/**
+ * @summary Exchange a pasted callback and save credentials.
+ */
+export const finishCodevLogin = async (
+  id: string,
+  credentialId: string,
+  codevFinishInput: CodevFinishInput,
+  options?: Parameters<typeof request>[1],
+): Promise<CodevFinishResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<
+      string | readonly string[] | undefined
+    >(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return request<CodevFinishResponse>(
+    getFinishCodevLoginUrl(id, credentialId),
+    {
+      ...options,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...getHeaders(options?.headers),
+      },
+      body: JSON.stringify(codevFinishInput),
+      schema: CodevFinishResponse,
+    },
+  );
+};
+
+export const getStartCodevLoginUrl = (id: string, credentialId: string) => {
+  return `/api/providers/${encodeURIComponent(String(id))}/credentials/${encodeURIComponent(String(credentialId))}/codev/start`;
+};
+
+/**
+ * @summary Start an SSO authorization flow.
+ */
+export const startCodevLogin = async (
+  id: string,
+  credentialId: string,
+  options?: Parameters<typeof request>[1],
+): Promise<CodevStartResponse> => {
+  return request<CodevStartResponse>(getStartCodevLoginUrl(id, credentialId), {
+    ...options,
+    method: "POST",
+    schema: CodevStartResponse,
+  });
 };
 
 export const getPollCodexLoginUrl = (id: string, credentialId: string) => {

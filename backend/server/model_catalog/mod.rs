@@ -563,6 +563,7 @@ fn normalize_model(
         "codex" => crate::provider::codex::models::catalog_info(&model),
         "openrouter" => crate::provider::openrouter::catalog_info(&model),
         "chatjimmy" => crate::provider::chatjimmy::catalog_info(&model),
+        "codev" => crate::provider::codev::catalog_info(&model),
         _ => crate::provider::common::catalog::CatalogInfo::default(),
     };
     let zen = (provider.kind == "zen")

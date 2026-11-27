@@ -7,6 +7,7 @@ import {
   credentialUsageKey,
   startCodexSignIn,
   startClaudeSignIn,
+  startCodevSignIn,
   startCursorSignIn,
   type Provider,
   type ProviderCredential,
@@ -83,6 +84,22 @@ export function ProviderSignIn({
           credential,
           data: { ...result, url: url.href },
         });
+      } else if (provider.kind === "codev") {
+        const result = await startCodevSignIn(provider.id, credential.id);
+        const url = new URL(result.url);
+        if (
+          url.protocol !== "https:" ||
+          !url.hostname.startsWith("netmind.") ||
+          url.username ||
+          url.password ||
+          url.port
+        )
+          throw new Error("Invalid CoDev authorization URL.");
+        setFlow({
+          kind: "codev",
+          credential,
+          data: { ...result, url: url.href },
+        });
       } else if (provider.kind === "cursor") {
         const result = await startCursorSignIn(provider.id, credential.id);
         const url = new URL(result.url);
@@ -127,7 +144,7 @@ export function ProviderSignIn({
       {flow && (
         <p className="mt-4 text-sm">Signing in: {flow.credential.name}</p>
       )}
-      {flow?.kind === "claude" && (
+      {(flow?.kind === "claude" || flow?.kind === "codev") && (
         <CallbackSignIn
           providerId={provider.id}
           flow={flow}

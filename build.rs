@@ -9,6 +9,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         ("codex", "client_id", "CODEX_OAUTH_CLIENT_ID"),
         ("claude", "client_id", "CLAUDE_OAUTH_CLIENT_ID"),
         ("cursor", "client_id", "CURSOR_OAUTH_CLIENT_ID"),
+        ("codev", "client_id", "CODEV_OAUTH_CLIENT_ID"),
     ] {
         let value = config
             .get(provider)

@@ -65,6 +65,19 @@ export function startClaudeSignIn(providerId: string, credentialId: string) {
   return api.startClaudeLogin(providerId, credentialId);
 }
 
+export function startCodevSignIn(providerId: string, credentialId: string) {
+  return api.startCodevLogin(providerId, credentialId);
+}
+
+export function finishCodevSignIn(
+  providerId: string,
+  credentialId: string,
+  id: string,
+  code: string,
+) {
+  return api.finishCodevLogin(providerId, credentialId, { id, code });
+}
+
 export function startCursorSignIn(providerId: string, credentialId: string) {
   return api.startCursorLogin(providerId, credentialId);
 }

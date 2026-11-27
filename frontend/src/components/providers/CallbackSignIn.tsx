@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { message } from "@/server/api/client";
-import { finishClaudeSignIn } from "@/server/api/providers";
+import { finishClaudeSignIn, finishCodevSignIn } from "@/server/api/providers";
 import type { CallbackFlow } from "./signInFlow";
 
 export function CallbackSignIn({
@@ -23,13 +23,15 @@ export function CallbackSignIn({
   onComplete: () => void;
   onCancel: () => void;
 }) {
+  const label = flow.kind === "codev" ? "CoDev" : "Claude";
+  const finish = flow.kind === "codev" ? finishCodevSignIn : finishClaudeSignIn;
   const form = useForm({
     defaultValues: { callback: "" },
     onSubmit: async ({ value }) => {
       setBusy(true);
       onError("");
       try {
-        await finishClaudeSignIn(
+        await finish(
           providerId,
           flow.credential.id,
           flow.data.id,
@@ -59,7 +61,7 @@ export function CallbackSignIn({
           target="_blank"
           rel="noopener noreferrer"
         >
-          Claude authorization
+          {label} authorization
         </a>{" "}
         and sign in. Paste the authorization code or redirected callback URL
         below.
@@ -86,7 +88,7 @@ export function CallbackSignIn({
       </p>
       <div className="flex gap-2">
         <Button type="submit" disabled={busy}>
-          Finish Claude sign-in
+          Finish {label} sign-in
         </Button>
         <Button
           type="button"

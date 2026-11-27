@@ -3,7 +3,7 @@ import type { DeviceFlow, ProviderCredential } from "@/server/api/providers";
 export type SignInFlow =
   | { kind: "device"; credential: ProviderCredential; data: DeviceFlow }
   | {
-      kind: "claude";
+      kind: "claude" | "codev";
       credential: ProviderCredential;
       data: { id: string; url: string };
     }
@@ -13,5 +13,5 @@ export type SignInFlow =
       data: { id: string; url: string; interval: number };
     };
 
-export type CallbackFlow = Extract<SignInFlow, { kind: "claude" }>;
-export type PollingFlow = Exclude<SignInFlow, { kind: "claude" }>;
+export type CallbackFlow = Extract<SignInFlow, { kind: "claude" | "codev" }>;
+export type PollingFlow = Exclude<SignInFlow, { kind: "claude" | "codev" }>;

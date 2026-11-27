@@ -117,6 +117,9 @@ fn validate(id: &str, name: &str, kind: &str, base_url: &str) -> Result<(), &'st
     if kind.as_str() == "chatjimmy" && !base_url.is_empty() {
         return Err("ChatJimmy uses a fixed upstream URL");
     }
+    if kind.as_str() == "codev" && !base_url.is_empty() {
+        return Err("CoDev uses a fixed upstream URL");
+    }
     if matches!(kind.as_str(), "commandcode" | "commandcode-go") && !base_url.is_empty() {
         return Err("Command Code uses a fixed upstream URL");
     }
