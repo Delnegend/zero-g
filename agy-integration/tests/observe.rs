@@ -60,12 +60,11 @@ fn observe(home: &Path, stdin: &str, env: &[(&str, &str)]) -> Output {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(stdin.as_bytes())
-        .unwrap();
+    // Without settings the hook exits before reading its event, so the write
+    // can race the exit and find the pipe already closed.
+    if let Err(error) = child.stdin.take().unwrap().write_all(stdin.as_bytes()) {
+        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe, "{error}");
+    }
     child.wait_with_output().unwrap()
 }
 
