@@ -17,13 +17,6 @@ vulnerability.ignore = true
 effectiveUntil = 2026-11-28
 reason = "RUSTSEC-2023-0071 concerns private-key timing; OIDC verifies public signatures."
 
-# fast-xml-parser is a transitive dependency of ReDoc's openapi-sampler; the
-# fixed 5.12.0 release is inside the 14-day supply-chain quarantine window.
-[[IgnoredVulns]]
-id = "GHSA-474x-hrwr-fgx4"
-ignoreUntil = 2026-11-28
-reason = "Affected through ReDoc; fixed release remains quarantined until 2026-11-17."
-
 # Upstream dependencies (openidconnect/oauth2 and turso/toasty) still require chrono.
 [[PackageOverrides]]
 name = "chrono"
