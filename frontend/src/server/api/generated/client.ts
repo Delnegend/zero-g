@@ -25,6 +25,8 @@ import {
   ProviderKindsResponse,
   ProvidersResponse,
   QuotaSnapshot,
+  RedeemResult,
+  ResetCredits,
   SettingsResponse,
 } from "./schemas";
 import type {
@@ -977,6 +979,52 @@ export const deleteOpenrouterManagementKey = async (
     ...options,
     method: "DELETE",
   });
+};
+
+export const getGetCredentialResetsUrl = (id: string, credentialId: string) => {
+  return `/api/providers/${encodeURIComponent(String(id))}/credentials/${encodeURIComponent(String(credentialId))}/resets`;
+};
+
+/**
+ * @summary Lists the resets an existing credential holds, when the provider supports them.
+ */
+export const getCredentialResets = async (
+  id: string,
+  credentialId: string,
+  options?: Parameters<typeof request>[1],
+): Promise<ResetCredits> => {
+  return request<ResetCredits>(getGetCredentialResetsUrl(id, credentialId), {
+    ...options,
+    method: "GET",
+    schema: ResetCredits,
+  });
+};
+
+export const getRedeemCredentialResetUrl = (
+  id: string,
+  credentialId: string,
+  resetId: string,
+) => {
+  return `/api/providers/${encodeURIComponent(String(id))}/credentials/${encodeURIComponent(String(credentialId))}/resets/${encodeURIComponent(String(resetId))}/redeem`;
+};
+
+/**
+ * @summary Spends one reset. Resets cannot be undone or put back.
+ */
+export const redeemCredentialReset = async (
+  id: string,
+  credentialId: string,
+  resetId: string,
+  options?: Parameters<typeof request>[1],
+): Promise<RedeemResult> => {
+  return request<RedeemResult>(
+    getRedeemCredentialResetUrl(id, credentialId, resetId),
+    {
+      ...options,
+      method: "POST",
+      schema: RedeemResult,
+    },
+  );
 };
 
 export const getGetCredentialUsageUrl = (id: string, credentialId: string) => {

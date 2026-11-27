@@ -16,6 +16,7 @@ pub(crate) fn openapi() -> utoipa::openapi::OpenApi {
     document.merge(crate::provider::registry::Api::openapi());
     document.merge(crate::provider::credentials::Api::openapi());
     document.merge(crate::provider::quota::Api::openapi());
+    document.merge(crate::provider::resets::Api::openapi());
     document.merge(crate::provider::zen::Api::openapi());
     document.merge(crate::provider::openrouter::Api::openapi());
     document.merge(crate::provider::codex::dashboard_login::Api::openapi());

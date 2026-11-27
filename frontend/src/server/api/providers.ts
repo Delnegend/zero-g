@@ -9,6 +9,7 @@ import type {
   ProviderKindsResponse,
   QuotaSnapshot,
   QuotaWindow as QuotaWindowContract,
+  ResetCredit as ResetCreditContract,
   UpdateProvider,
 } from "./generated/schemas";
 
@@ -17,6 +18,7 @@ export type Provider = ProviderContract;
 export type ProviderCredential = Credential;
 export type QuotaWindow = QuotaWindowContract;
 export type CredentialUsage = QuotaSnapshot;
+export type ResetCredit = ResetCreditContract;
 export type DeviceFlow = CodexStartResponse;
 export type CredentialUpdate = CredentialInput;
 
@@ -178,4 +180,32 @@ export function credentialUsageOptions(
     refetchOnWindowFocus: false,
     retry: false,
   });
+}
+
+export function credentialResetsKey(providerId: string) {
+  return ["credential-resets", providerId] as const;
+}
+
+export function credentialResetsOptions(
+  providerId: string,
+  credentialId: string,
+  connected = true,
+) {
+  return queryOptions({
+    queryKey: [...credentialResetsKey(providerId), credentialId],
+    queryFn: ({ signal }) =>
+      api.getCredentialResets(providerId, credentialId, { signal }),
+    enabled: connected,
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+}
+
+export function redeemCredentialReset(
+  providerId: string,
+  credentialId: string,
+  resetId: string,
+) {
+  return api.redeemCredentialReset(providerId, credentialId, resetId);
 }

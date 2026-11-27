@@ -62,28 +62,41 @@ pub(crate) enum QuotaSnapshot {
 )]
 pub(crate) struct Api;
 
+/// Loads the provider and checks that the credential belongs to it.
+///
+/// Ownership is established here once; quota and reset backends trust it and read only their
+/// own secrets.
+pub(crate) async fn authorize(
+    store: &SettingsStore,
+    provider_id: &str,
+    credential_id: &str,
+) -> Result<registry::Provider, StatusCode> {
+    let provider = match registry::get(&store.database, provider_id).await {
+        Ok(Some(value)) => value,
+        Ok(None) => return Err(StatusCode::NOT_FOUND),
+        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+    };
+    match ProviderCredential::filter_by_id(credential_id)
+        .first()
+        .exec(&mut (*store.database.db).clone())
+        .await
+    {
+        Ok(Some(row)) if row.provider_id == provider_id => Ok(provider),
+        Ok(_) => Err(StatusCode::NOT_FOUND),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
 /// Returns usage for an existing provider credential when supported.
 #[utoipa::path(get, path = "/api/providers/{id}/credentials/{credential_id}/usage", operation_id = "getCredentialUsage", params(("id" = String, Path), ("credential_id" = String, Path)), responses((status = 200, body = QuotaSnapshot), (status = 404, description = "Provider or credential not found, or usage is unavailable"), (status = 500, description = "Failed to load provider or credential"), (status = 502, description = "Failed to fetch usage", body = String, content_type = "text/plain")))]
 async fn usage(
     State(store): State<SettingsStore>,
     Path((provider_id, credential_id)): Path<(String, String)>,
 ) -> Response {
-    let provider = match registry::get(&store.database, &provider_id).await {
-        Ok(Some(value)) => value,
-        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    let provider = match authorize(&store, &provider_id, &credential_id).await {
+        Ok(provider) => provider,
+        Err(status) => return status.into_response(),
     };
-    // Ownership is established here once; quota backends trust it and read only
-    // their own secrets.
-    match ProviderCredential::filter_by_id(credential_id.as_str())
-        .first()
-        .exec(&mut (*store.database.db).clone())
-        .await
-    {
-        Ok(Some(row)) if row.provider_id == provider_id => {}
-        Ok(_) => return StatusCode::NOT_FOUND.into_response(),
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    }
     let Some(capability) =
         super::ProviderKind::from_str(&provider.kind).and_then(super::ProviderKind::quota)
     else {

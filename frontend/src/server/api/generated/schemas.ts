@@ -1883,6 +1883,93 @@ export const QuotaSnapshot = zod
 export type QuotaSnapshot = zod.input<typeof QuotaSnapshot>;
 export type QuotaSnapshotOutput = zod.output<typeof QuotaSnapshot>;
 
+export const RedeemResult = zod
+  .object({
+    message: zod.string().describe("Plain-language outcome for the dashboard."),
+    redeemed: zod
+      .boolean()
+      .describe("Whether the provider refilled the usage windows."),
+  })
+  .describe("Outcome of spending a reset.");
+
+export type RedeemResult = zod.input<typeof RedeemResult>;
+export type RedeemResultOutput = zod.output<typeof RedeemResult>;
+
+export const resetCreditRemainingMin = 0;
+
+export const ResetCredit = zod
+  .object({
+    expires_at: zod
+      .int()
+      .nullable()
+      .describe("Expiry in Unix seconds, when the provider reports one."),
+    id: zod
+      .string()
+      .describe("Provider identifier of the reset, safe to put in a URL path."),
+    label: zod
+      .string()
+      .describe("What the reset refills, as the provider names it."),
+    note: zod.string().nullable().describe("Why it cannot be used right now."),
+    remaining: zod
+      .int()
+      .min(resetCreditRemainingMin)
+      .describe("Resets of this kind still unspent."),
+    usable: zod
+      .boolean()
+      .describe("Whether spending it now would be accepted."),
+  })
+  .describe("A reset the account holds and may spend.");
+
+export type ResetCredit = zod.input<typeof ResetCredit>;
+export type ResetCreditOutput = zod.output<typeof ResetCredit>;
+
+export const resetCreditsCreditsItemRemainingMin = 0;
+
+export const ResetCredits = zod
+  .object({
+    credits: zod
+      .array(
+        zod
+          .object({
+            expires_at: zod
+              .int()
+              .nullable()
+              .describe(
+                "Expiry in Unix seconds, when the provider reports one.",
+              ),
+            id: zod
+              .string()
+              .describe(
+                "Provider identifier of the reset, safe to put in a URL path.",
+              ),
+            label: zod
+              .string()
+              .describe("What the reset refills, as the provider names it."),
+            note: zod
+              .string()
+              .nullable()
+              .describe("Why it cannot be used right now."),
+            remaining: zod
+              .int()
+              .min(resetCreditsCreditsItemRemainingMin)
+              .describe("Resets of this kind still unspent."),
+            usable: zod
+              .boolean()
+              .describe("Whether spending it now would be accepted."),
+          })
+          .describe("A reset the account holds and may spend."),
+      )
+      .describe("Unspent, unexpired resets."),
+    note: zod
+      .string()
+      .nullable()
+      .describe("Why the provider offers none to this account, when it says."),
+  })
+  .describe("The resets an account holds.");
+
+export type ResetCredits = zod.input<typeof ResetCredits>;
+export type ResetCreditsOutput = zod.output<typeof ResetCredits>;
+
 export const settingsResponseBodyRetentionDaysMax = 36500;
 
 export const settingsResponseDiscoveryIntervalMinutesMin = 0;

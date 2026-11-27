@@ -9,6 +9,7 @@ import {
 } from "../server/api/providers";
 import { Button } from "./ui/button";
 import { Progress } from "./ui/progress";
+import { CredentialResets, RESET_PROVIDERS } from "./CredentialResets";
 import { CredentialUsageSkeleton } from "./providers/ProviderSkeletons";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
@@ -150,6 +151,16 @@ export function CredentialUsage({
           </span>
         </p>
       )}
+      {connected &&
+        RESET_PROVIDERS.includes(
+          providerKind as (typeof RESET_PROVIDERS)[number],
+        ) && (
+          <CredentialResets
+            providerId={providerId}
+            credentialId={credentialId}
+            credentialName={credentialName}
+          />
+        )}
     </div>
   );
 }

@@ -1644,6 +1644,130 @@
         }
       }
     },
+    "/api/providers/{id}/credentials/{credential_id}/resets": {
+      "get": {
+        "tags": [],
+        "summary": "Lists the resets an existing credential holds, when the provider supports them.",
+        "operationId": "getCredentialResets",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResetCredits"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Provider or credential not found, or resets are not available"
+          },
+          "500": {
+            "description": "Failed to load provider or credential"
+          },
+          "502": {
+            "description": "Failed to fetch resets",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/providers/{id}/credentials/{credential_id}/resets/{reset_id}/redeem": {
+      "post": {
+        "tags": [],
+        "summary": "Spends one reset. Resets cannot be undone or put back.",
+        "operationId": "redeemCredentialReset",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "reset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RedeemResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid reset identifier",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Provider or credential not found, or resets are not available"
+          },
+          "500": {
+            "description": "Failed to load provider or credential"
+          },
+          "502": {
+            "description": "The provider did not confirm the reset",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/providers/{id}/credentials/{credential_id}/usage": {
       "get": {
         "tags": [],
@@ -3827,6 +3951,80 @@
             "type": ["integer", "null"],
             "format": "int64",
             "description": "Reset timestamp, when provided by the upstream."
+          }
+        }
+      },
+      "RedeemResult": {
+        "type": "object",
+        "description": "Outcome of spending a reset.",
+        "required": ["redeemed", "message"],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Plain-language outcome for the dashboard."
+          },
+          "redeemed": {
+            "type": "boolean",
+            "description": "Whether the provider refilled the usage windows."
+          }
+        }
+      },
+      "ResetCredit": {
+        "type": "object",
+        "description": "A reset the account holds and may spend.",
+        "required": [
+          "id",
+          "label",
+          "remaining",
+          "expires_at",
+          "usable",
+          "note"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Expiry in Unix seconds, when the provider reports one."
+          },
+          "id": {
+            "type": "string",
+            "description": "Provider identifier of the reset, safe to put in a URL path."
+          },
+          "label": {
+            "type": "string",
+            "description": "What the reset refills, as the provider names it."
+          },
+          "note": {
+            "type": ["string", "null"],
+            "description": "Why it cannot be used right now."
+          },
+          "remaining": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Resets of this kind still unspent.",
+            "minimum": 0
+          },
+          "usable": {
+            "type": "boolean",
+            "description": "Whether spending it now would be accepted."
+          }
+        }
+      },
+      "ResetCredits": {
+        "type": "object",
+        "description": "The resets an account holds.",
+        "required": ["credits", "note"],
+        "properties": {
+          "credits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResetCredit"
+            },
+            "description": "Unspent, unexpired resets."
+          },
+          "note": {
+            "type": ["string", "null"],
+            "description": "Why the provider offers none to this account, when it says."
           }
         }
       },

@@ -28,10 +28,12 @@ pub(crate) mod openrouter;
 pub(crate) mod quota;
 /// Configured provider registry.
 pub(crate) mod registry;
+/// Banked quota resets.
+pub(crate) mod resets;
 /// Zen provider integration.
 pub(crate) mod zen;
 
-use self::common::{DashboardProvider, Provider, ProviderDescriptor, QuotaProvider};
+use self::common::{DashboardProvider, Provider, ProviderDescriptor, QuotaProvider, ResetProvider};
 use crate::openai::Model;
 use crate::server::{AppState, settings::SettingsStore};
 use axum::Router;
@@ -202,6 +204,23 @@ impl ProviderKind {
         }
     }
 
+    /// Returns the backend's banked-reset capability, if supported.
+    pub(crate) const fn resets(self) -> Option<ResetCapability> {
+        match self {
+            Self::Codex => Some(ResetCapability::Codex),
+            Self::Claude => Some(ResetCapability::Claude),
+            Self::Antigravity
+            | Self::Zen
+            | Self::Go
+            | Self::Openrouter
+            | Self::Openai
+            | Self::Cursor
+            | Self::ChatJimmy
+            | Self::CommandCode
+            | Self::CommandCodeGo => None,
+        }
+    }
+
     /// Builds the request router for this backend.
     fn router(self, settings: &SettingsStore) -> Router<AppState> {
         match self {
@@ -250,6 +269,42 @@ impl QuotaCapability {
             Self::Zen => zen::Backend::quota(store, provider, credential).await,
             Self::Go => go::Backend::quota(store, provider, credential).await,
             Self::Openrouter => openrouter::Backend::quota(store, provider, credential).await,
+        }
+    }
+}
+
+/// Backends that can list and spend banked quota resets.
+pub(crate) enum ResetCapability {
+    /// Codex reset credits.
+    Codex,
+    /// Claude limit resets.
+    Claude,
+}
+impl ResetCapability {
+    /// Lists the resets held by a configured provider credential.
+    pub(crate) async fn list(
+        self,
+        store: &SettingsStore,
+        provider: &str,
+        credential: &str,
+    ) -> Result<resets::ResetCredits, String> {
+        match self {
+            Self::Codex => codex::Backend::list_resets(store, provider, credential).await,
+            Self::Claude => claude::Backend::list_resets(store, provider, credential).await,
+        }
+    }
+
+    /// Spends one reset held by a configured provider credential.
+    pub(crate) async fn redeem(
+        self,
+        store: &SettingsStore,
+        provider: &str,
+        credential: &str,
+        reset: &str,
+    ) -> Result<resets::RedeemResult, String> {
+        match self {
+            Self::Codex => codex::Backend::redeem_reset(store, provider, credential, reset).await,
+            Self::Claude => claude::Backend::redeem_reset(store, provider, credential, reset).await,
         }
     }
 }

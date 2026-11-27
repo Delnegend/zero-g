@@ -12,6 +12,8 @@ pub(crate) mod models;
 mod payload;
 /// Codex account quota retrieval.
 pub(crate) mod quota;
+/// Banked rate-limit resets.
+mod resets;
 /// HTTP routes for Codex requests.
 pub(crate) mod routes;
 /// Client version sent to the `ChatGPT` backend.
@@ -57,6 +59,25 @@ impl super::common::QuotaProvider for Backend {
         credential: &str,
     ) -> Result<super::quota::QuotaSnapshot, String> {
         quota::fetch(store, provider, credential).await
+    }
+}
+
+impl super::common::ResetProvider for Backend {
+    async fn list_resets(
+        store: &crate::server::settings::SettingsStore,
+        provider: &str,
+        credential: &str,
+    ) -> Result<super::resets::ResetCredits, String> {
+        resets::list(store, provider, credential).await
+    }
+
+    async fn redeem_reset(
+        store: &crate::server::settings::SettingsStore,
+        provider: &str,
+        credential: &str,
+        reset: &str,
+    ) -> Result<super::resets::RedeemResult, String> {
+        resets::redeem(store, provider, credential, reset).await
     }
 }
 

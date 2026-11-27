@@ -94,6 +94,14 @@ omp -p --no-session --no-tools --model anthropic/claude-haiku-4-5-20251001 "Repl
 
 Prompts and responses are stored in full, so treat the dashboard as sensitive.
 
+## Limit resets
+
+Anthropic sometimes gives a subscription a banked reset: one click refills its usage windows. Each reset has an expiry date, and an unused one is lost when that date passes. The credential card lists the resets an account holds under **Limit resets**, with the expiry date and a **Reset now** button. Codex accounts show their reset credits the same way.
+
+Spending a reset cannot be undone, so the button asks first. Zero-G checks again with the provider right before it spends, and refuses a reset that has expired, was already used, or has nothing to refill yet (Anthropic keeps such a reset greyed out until the window it clears has been used).
+
+Anthropic does not document this feature. Zero-G sends the requests Claude Code sends. If the card says Anthropic does not offer resets to this account, the reason Anthropic gave is shown next to it.
+
 ## Troubleshooting
 
 | Symptom                                                                    | Meaning and fix                                                                                                                                    |

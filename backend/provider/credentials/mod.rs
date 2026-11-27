@@ -623,7 +623,8 @@ pub(crate) fn router(store: SettingsStore) -> Router {
             axum::routing::put(update).delete(delete),
         )
         .with_state(store.clone())
-        .merge(crate::provider::quota::router(store))
+        .merge(crate::provider::quota::router(store.clone()))
+        .merge(crate::provider::resets::router(store))
 }
 
 /// Credential storage checks.

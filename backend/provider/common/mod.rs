@@ -20,7 +20,7 @@ pub(crate) mod translation;
 pub(crate) mod version;
 
 use crate::openai::Model;
-use crate::provider::{quota, registry};
+use crate::provider::{quota, registry, resets};
 use crate::server::{AppState, settings::SettingsStore};
 use axum::Router;
 
@@ -57,6 +57,24 @@ pub(crate) trait QuotaProvider {
         provider: &str,
         credential: &str,
     ) -> Result<quota::QuotaSnapshot, String>;
+}
+
+/// Provider backend that holds banked quota resets.
+pub(crate) trait ResetProvider {
+    /// Lists the resets for the named provider and credential. Callers must already
+    /// have verified that the credential belongs to a provider of this kind.
+    async fn list_resets(
+        store: &SettingsStore,
+        provider: &str,
+        credential: &str,
+    ) -> Result<resets::ResetCredits, String>;
+    /// Spends one reset. The backend checks that it is still available first.
+    async fn redeem_reset(
+        store: &SettingsStore,
+        provider: &str,
+        credential: &str,
+        reset: &str,
+    ) -> Result<resets::RedeemResult, String>;
 }
 
 /// Provider backend exposing dashboard-specific routes.

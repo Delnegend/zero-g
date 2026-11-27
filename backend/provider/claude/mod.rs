@@ -13,6 +13,8 @@ pub(crate) use profile::plan;
 pub(crate) mod passthrough;
 /// Subscription quota discovery.
 mod quota;
+/// Banked limit resets.
+mod resets;
 /// Anthropic HTTP transport and credential selection.
 mod upstream;
 /// Claude Code version used for Zero-G's own Anthropic calls.
@@ -58,5 +60,24 @@ impl super::common::QuotaProvider for Backend {
         credential: &str,
     ) -> Result<super::quota::QuotaSnapshot, String> {
         quota::fetch(store, provider, credential).await
+    }
+}
+
+impl super::common::ResetProvider for Backend {
+    async fn list_resets(
+        store: &crate::server::settings::SettingsStore,
+        provider: &str,
+        credential: &str,
+    ) -> Result<super::resets::ResetCredits, String> {
+        resets::list(store, provider, credential).await
+    }
+
+    async fn redeem_reset(
+        store: &crate::server::settings::SettingsStore,
+        provider: &str,
+        credential: &str,
+        reset: &str,
+    ) -> Result<super::resets::RedeemResult, String> {
+        resets::redeem(store, provider, credential, reset).await
     }
 }

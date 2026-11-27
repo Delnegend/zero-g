@@ -1097,3 +1097,192 @@ test("rejects an untrusted provider authorization URL", async () => {
   await screen.findByText("Invalid Cursor authorization URL.");
   assert.equal(screen.queryByRole("link", { name: /authorization/ }), null);
 });
+
+/** Serves usage and resets for one credential, recording every request and spending resets on POST. */
+function mockResets(options?: {
+  note?: string | null;
+  credits?: object[];
+  redeem?: () => Response;
+}) {
+  const expiresAt = Math.floor(Date.now() / 1000) + 3 * 86400 + 2 * 3600 + 630;
+  const calls: string[] = [];
+  const spent = new Set<string>();
+  const all = options?.credits ?? [
+    {
+      id: "fable-1",
+      label: "Fable reset",
+      remaining: 2,
+      expires_at: expiresAt,
+      usable: true,
+      note: null,
+    },
+    {
+      id: "weekly-1",
+      label: "Weekly reset",
+      remaining: 1,
+      expires_at: null,
+      usable: false,
+      note: "Nothing to reset yet",
+    },
+  ];
+  globalThis.fetch = (async (url, init) => {
+    const path = String(url);
+    calls.push(`${init?.method ?? "GET"} ${path}`);
+    if (path.endsWith("/usage")) {
+      return Response.json({ kind: "quota", windows: [] });
+    }
+    if (path.endsWith("/redeem")) {
+      const response =
+        options?.redeem?.() ??
+        Response.json({ redeemed: true, message: "Reset applied." });
+      if (response.ok) spent.add(path.split("/").at(-2)!);
+      return response;
+    }
+    return Response.json({
+      credits: all.filter(
+        (credit) => !spent.has((credit as { id: string }).id),
+      ),
+      note: options?.note ?? null,
+    });
+  }) as typeof fetch;
+  return { calls, expiresAt };
+}
+
+function mountResets(kind = "claude") {
+  return mount(
+    <TooltipProvider>
+      <CredentialUsage
+        providerId={kind}
+        providerKind={kind}
+        credentialId="account"
+        credentialName="Account"
+        connected
+      />
+    </TooltipProvider>,
+  );
+}
+
+test("limit resets list each reset with its expiry and disable the unusable ones", async () => {
+  const { expiresAt } = mockResets();
+  const user = userEvent.setup();
+  mountResets();
+  const resets = await screen.findByRole("group", {
+    name: "Resets for Account",
+  });
+  assert.ok(within(resets).getByText("Fable reset"));
+  assert.ok(within(resets).getByText("· 2 left"));
+  assert.ok(within(resets).getByText("Weekly reset"));
+  assert.ok(within(resets).getByText(/No expiry date/));
+  assert.ok(within(resets).getByText(/Nothing to reset yet/));
+  const [usable, unusable] = within(resets).getAllByRole("button", {
+    name: "Reset now",
+  });
+  assert.equal(usable.hasAttribute("disabled"), false);
+  assert.equal(unusable.hasAttribute("disabled"), true);
+  const expiry = within(resets).getByRole("button", {
+    name: "Expires in 3d 2h 11m",
+  });
+  await user.hover(expiry);
+  assert.ok(
+    await screen.findByText(new Date(expiresAt * 1000).toLocaleString()),
+  );
+});
+
+test("using a reset asks first, then spends it and drops it from the list", async () => {
+  const { calls } = mockResets();
+  const user = userEvent.setup();
+  mountResets("codex");
+  const resets = await screen.findByRole("group", {
+    name: "Resets for Account",
+  });
+  await user.click(
+    within(resets).getAllByRole("button", { name: "Reset now" })[0],
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Use this reset?" });
+  assert.ok(within(dialog).getByText(/cannot be undone/));
+  assert.equal(
+    calls.some((call) => call.startsWith("POST")),
+    false,
+    "nothing is spent before the user confirms",
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Use reset" }));
+  await waitFor(() =>
+    assert.ok(
+      calls.includes(
+        "POST /api/providers/codex/credentials/account/resets/fable-1/redeem",
+      ),
+    ),
+  );
+  await waitFor(() => assert.equal(screen.queryByText("Fable reset"), null));
+  assert.ok(screen.getByText("Weekly reset"));
+  assert.equal(screen.queryByRole("dialog"), null);
+  // The quota windows are read again, since the reset changed them.
+  await waitFor(() =>
+    assert.ok(calls.filter((call) => call.endsWith("/usage")).length >= 2),
+  );
+});
+
+test("cancelling the confirmation spends nothing", async () => {
+  const { calls } = mockResets();
+  const user = userEvent.setup();
+  mountResets();
+  const resets = await screen.findByRole("group", {
+    name: "Resets for Account",
+  });
+  await user.click(
+    within(resets).getAllByRole("button", { name: "Reset now" })[0],
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Use this reset?" });
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => assert.equal(screen.queryByRole("dialog"), null));
+  assert.equal(
+    calls.some((call) => call.startsWith("POST")),
+    false,
+  );
+  assert.ok(screen.getByText("Fable reset"));
+});
+
+test("a refused reset keeps the confirmation open and says why", async () => {
+  mockResets({
+    redeem: () =>
+      new Response("Claude is limiting reset requests; try again later", {
+        status: 502,
+      }),
+  });
+  const user = userEvent.setup();
+  mountResets();
+  const resets = await screen.findByRole("group", {
+    name: "Resets for Account",
+  });
+  await user.click(
+    within(resets).getAllByRole("button", { name: "Reset now" })[0],
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Use this reset?" });
+  await user.click(within(dialog).getByRole("button", { name: "Use reset" }));
+  assert.ok(
+    await within(dialog).findByText(/limiting reset requests; try again later/),
+  );
+  assert.ok(within(dialog).getByRole("button", { name: "Use reset" }));
+  assert.ok(screen.getByText("Fable reset"));
+});
+
+test("an account with no resets shows the provider's reason, and other providers are never asked", async () => {
+  const { calls } = mockResets({
+    credits: [],
+    note: "Anthropic does not offer resets to this account (surface)",
+  });
+  mountResets();
+  assert.ok(await screen.findByText(/does not offer resets to this account/));
+  assert.equal(screen.queryByRole("button", { name: "Reset now" }), null);
+  document.body.innerHTML = "";
+  const other = mockResets();
+  mountResets("go");
+  await waitFor(() =>
+    assert.ok(other.calls.some((call) => call.endsWith("/usage"))),
+  );
+  assert.equal(
+    other.calls.some((call) => call.endsWith("/resets")),
+    false,
+  );
+  assert.ok(calls.some((call) => call.endsWith("/resets")));
+});
