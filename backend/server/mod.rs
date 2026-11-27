@@ -163,6 +163,19 @@ pub(crate) fn error_body(message: &str, error_type: &str, code: Option<&str>) ->
     })
 }
 
+/// Whether a failed `to_bytes` read hit its size limit, rather than the client
+/// or a proxy cutting the upload short.
+pub(crate) fn body_over_limit(err: &axum::Error) -> bool {
+    let mut source = std::error::Error::source(err);
+    while let Some(err) = source {
+        if err.is::<http_body_util::LengthLimitError>() {
+            return true;
+        }
+        source = err.source();
+    }
+    false
+}
+
 /// API reference access and contract checks.
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
@@ -171,6 +184,19 @@ mod tests {
     use axum::body::{Body, to_bytes};
     use axum::http::{Request, StatusCode, header};
     use tower::ServiceExt;
+
+    /// Only a size-limit failure counts as an oversized body; a broken upload does not.
+    #[tokio::test]
+    async fn distinguishes_oversized_from_interrupted_bodies() {
+        let oversized = to_bytes(Body::from(vec![0_u8; 10]), 5).await.unwrap_err();
+        assert!(body_over_limit(&oversized));
+        let chunks = futures_util::stream::iter([
+            Ok(axum::body::Bytes::from_static(b"partial")),
+            Err(std::io::Error::other("connection reset")),
+        ]);
+        let interrupted = to_bytes(Body::from_stream(chunks), 1024).await.unwrap_err();
+        assert!(!body_over_limit(&interrupted));
+    }
 
     /// The reference and its contract require dashboard authentication.
     #[tokio::test]

@@ -119,14 +119,24 @@ async fn collector_auth(
     Ok((token, identity, permissions))
 }
 
+/// 413 when the body exceeded its limit, otherwise 400 for an upload cut short.
+fn body_read_failure(err: &axum::Error) -> Response {
+    if super::body_over_limit(err) {
+        StatusCode::PAYLOAD_TOO_LARGE.into_response()
+    } else {
+        StatusCode::BAD_REQUEST.into_response()
+    }
+}
+
 /// Store an authenticated observation, deduplicating retained logs per key and step.
 async fn observe(State(state): State<AppState>, request: Request) -> Response {
     let (token, identity, permissions) = match collector_auth(&state, request.headers()).await {
         Ok(auth) => auth,
         Err(status) => return status.into_response(),
     };
-    let Ok(bytes) = to_bytes(request.into_body(), BODY_LIMIT).await else {
-        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    let bytes = match to_bytes(request.into_body(), BODY_LIMIT).await {
+        Ok(bytes) => bytes,
+        Err(err) => return body_read_failure(&err),
     };
     let Ok(mut observation) = serde_json::from_slice::<Observation>(&bytes) else {
         return StatusCode::BAD_REQUEST.into_response();
@@ -227,8 +237,9 @@ async fn push_quota(State(state): State<AppState>, request: Request) -> Response
     if let Err(status) = collector_auth(&state, request.headers()).await {
         return status.into_response();
     }
-    let Ok(bytes) = to_bytes(request.into_body(), QUOTA_BODY_LIMIT).await else {
-        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    let bytes = match to_bytes(request.into_body(), QUOTA_BODY_LIMIT).await {
+        Ok(bytes) => bytes,
+        Err(err) => return body_read_failure(&err),
     };
     let Ok(push) = serde_json::from_slice::<QuotaPush>(&bytes) else {
         return StatusCode::BAD_REQUEST.into_response();

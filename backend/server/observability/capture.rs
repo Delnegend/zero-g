@@ -6,7 +6,7 @@ use axum::http::{Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use serde_json::Value;
-use tracing::error;
+use tracing::{error, warn};
 
 use crate::provider::common::request_identity::RequestIdentity;
 
@@ -38,16 +38,32 @@ pub(in crate::server) async fn capture(
         .cloned()
         .unwrap_or_default();
     parts.extensions.insert(identity.clone());
-    let Ok(body) = to_bytes(body, crate::server::inference::INFERENCE_BODY_LIMIT).await else {
-        return (
-            StatusCode::PAYLOAD_TOO_LARGE,
-            axum::Json(crate::server::error_body(
-                "Request body too large",
-                "invalid_request_error",
-                Some("body_too_large"),
-            )),
-        )
-            .into_response();
+    let body = match to_bytes(body, crate::server::inference::INFERENCE_BODY_LIMIT).await {
+        Ok(body) => body,
+        Err(err) if crate::server::body_over_limit(&err) => {
+            return (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                axum::Json(crate::server::error_body(
+                    "Request body too large",
+                    "invalid_request_error",
+                    Some("body_too_large"),
+                )),
+            )
+                .into_response();
+        }
+        // Usually the client or a proxy in front of zero-g gave up mid-upload.
+        Err(err) => {
+            warn!("Request body was not fully received: {err}");
+            return (
+                StatusCode::BAD_REQUEST,
+                axum::Json(crate::server::error_body(
+                    "Request body was not fully received",
+                    "invalid_request_error",
+                    Some("body_incomplete"),
+                )),
+            )
+                .into_response();
+        }
     };
     // Defer extracting attacker-controlled content until authentication has succeeded.
     let response = next
@@ -790,6 +806,35 @@ mod tests {
         drop(app);
         drop(database);
         std::fs::remove_file(path).unwrap();
+    }
+
+    /// An upload cut short is reported as an incomplete body, not as too large.
+    #[tokio::test]
+    async fn capture_reports_interrupted_upload_as_incomplete() {
+        let database = Database::open(":memory:").await.unwrap();
+        let app = Router::new()
+            .route("/v1/messages", post(|| async { "unreachable" }))
+            .route_layer(middleware::from_fn_with_state(database.clone(), capture))
+            .with_state(database);
+        let chunks = futures_util::stream::iter([
+            Ok(Bytes::from_static(b"{\"model\":")),
+            Err(std::io::Error::other("connection reset")),
+        ]);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/messages")
+                    .body(Body::from_stream(chunks))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(body["error"]["code"], "body_incomplete");
     }
 
     /// Failure detection handles fragmented events without treating normal text as errors.
