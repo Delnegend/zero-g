@@ -84,13 +84,13 @@ omp -p --no-session --no-tools --model anthropic/claude-haiku-4-5-20251001 "Repl
 
 ## What gets tracked
 
-| Where                | What you see                                                                                                                      |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| **Dashboard**        | Total requests, successful requests, tokens, and average latency over a date range.                                               |
-| **LLM Logs**         | One row per request: time, provider and model, status, latency, tokens. Open a row for the full prompt and response.              |
-| **Filters**          | Narrow logs and charts by status, model, provider, virtual key, or provider credential (which Claude account served the request). |
-| **Token counts**     | Input (including cache reads and writes) and output tokens, read from Anthropic's reply.                                          |
-| **Account activity** | The provider's credential card shows each connected Claude account's plan (for example Max 5x) and its quota windows.             |
+| Where                | What you see                                                                                                                                                                          |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Dashboard**        | Total requests, successful requests, tokens, and average latency over a date range.                                                                                                   |
+| **LLM Logs**         | One row per request: time, provider and model, status, latency, tokens. Open a row for the full prompt and response.                                                                  |
+| **Filters**          | Narrow logs and charts by status, model, provider, virtual key, or provider credential (which Claude account served the request).                                                     |
+| **Token counts**     | Input (including cache reads and writes) and output tokens, read from Anthropic's reply.                                                                                              |
+| **Account activity** | The provider's credential card shows each connected Claude account's plan (for example Max 5x) and its quota windows, including the separate weekly cap for Fable (`Weekly · Fable`). |
 
 Prompts and responses are stored in full, so treat the dashboard as sensitive.
 
