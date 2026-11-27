@@ -14,8 +14,6 @@ pub(crate) const CODEX_CLIENT_ID: &str = env!("CODEX_OAUTH_CLIENT_ID");
 pub(in crate::provider::codex) const CODEX_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 /// Base URL for the `ChatGPT` backend API.
 pub(super) const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api";
-/// Codex client version sent to the backend.
-pub(super) const CODEX_CLIENT_VERSION: &str = "0.159.0";
 /// Endpoint for starting device authorization.
 pub(crate) const CODEX_DEVICE_USERCODE_URL: &str =
     "https://auth.openai.com/api/accounts/deviceauth/usercode";

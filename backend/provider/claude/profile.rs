@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{auth, quota::CLAUDE_VERSION, upstream};
+use super::{auth, upstream, version};
 use crate::server::settings::SettingsStore;
 
 /// Claude Code's undocumented account profile endpoint.
@@ -77,10 +77,7 @@ async fn fetch_plan(
         .bearer_auth(token)
         .header("anthropic-beta", "oauth-2025-04-20")
         .header(reqwest::header::ACCEPT, "application/json")
-        .header(
-            reqwest::header::USER_AGENT,
-            format!("claude-cli/{CLAUDE_VERSION} (external, cli)"),
-        )
+        .header(reqwest::header::USER_AGENT, version::user_agent())
         .timeout(Duration::from_secs(10))
         .send()
         .await

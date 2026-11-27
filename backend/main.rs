@@ -168,6 +168,8 @@ async fn run_server(settings: SettingsStore, database: Database) -> Result<(), S
     let addr = bind.parse().map_err(ServerError::InvalidBindAddress)?;
     let state = init_state(settings, database).await?;
     tokio::spawn(crate::server::model_setting::run_background(state.clone()));
+    tokio::spawn(crate::provider::codex::version::run_background());
+    tokio::spawn(crate::provider::claude::version::run_background());
     let database = state.database.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));

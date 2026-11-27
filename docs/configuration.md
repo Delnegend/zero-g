@@ -71,6 +71,17 @@ Built-in provider cards show their name without a separate type label. Custom Op
 | **ChatJimmy**          | Translation | `chatjimmy`      | API Key / Keyless    | Keyless upstream; uses Taalas HC1 silicon at `chatjimmy.ai`.                                                                                                                                                                            |
 | **Custom OpenAI**      | Passthrough | _Custom_         | API Key / Keyless    | Configurable base URL; forwards `/v1/chat/completions` & `/v1/responses`.                                                                                                                                                               |
 
+### Client versions
+
+Anthropic and OpenAI answer some endpoints only for recent client versions, so Zero-G's own calls (quota, resets, and for Codex the model list) must claim a current one. A stale version hides new models or gets the call refused. Chat requests are not affected: Claude requests carry the client's own user agent.
+
+- **Claude Code:** Zero-G reads the current release of `@anthropic-ai/claude-code` from the npm registry at startup and then once a day. The pinned starting version is in `backend/provider/claude/version.rs`.
+- **Codex:** Zero-G reads the current stable release of `@openai/codex` from the npm registry at startup and then once a day. The pinned starting version is in `backend/provider/codex/version.rs`.
+
+An install with no route to `registry.npmjs.org` keeps the pinned versions and logs one warning a day for each check.
+
+Raise the pinned versions now and then. They are only starting values.
+
 ---
 
 ## Credential Pool & Failover Logic

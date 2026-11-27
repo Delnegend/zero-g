@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::openai::{Model, ModelListResponse};
 use crate::provider::codex::CodexClient;
-use crate::provider::codex::auth::{CODEX_CLIENT_VERSION, Credentials};
+use crate::provider::codex::auth::Credentials;
 use crate::provider::common::errors::UpstreamError;
 use crate::provider::common::pool::CatalogCache;
 use crate::provider::registry::Provider;
@@ -149,14 +149,17 @@ async fn request_models(
     base_url: &str,
     creds: &Credentials,
 ) -> Result<CodexModelsResponse, UpstreamError> {
-    let url = format!("{base_url}/codex/models?client_version={CODEX_CLIENT_VERSION}");
+    let url = format!(
+        "{base_url}/codex/models?client_version={}",
+        crate::provider::codex::version::current()
+    );
     let mut req = crate::util::HTTP_CLIENT
         .get(&url)
         .timeout(std::time::Duration::from_secs(30))
         .header("Authorization", format!("Bearer {}", creds.access_token))
         .header("OpenAI-Beta", "responses=experimental")
         .header("originator", "omp")
-        .header("version", CODEX_CLIENT_VERSION)
+        .header("version", crate::provider::codex::version::current())
         .header("accept", "application/json");
 
     if let Some(account_id) = &creds.account_id {

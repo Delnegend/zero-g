@@ -2,7 +2,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
-use super::auth::{CODEX_BASE_URL, CODEX_CLIENT_VERSION, CodexAuthManager};
+use super::auth::{CODEX_BASE_URL, CodexAuthManager};
+use super::version;
 use crate::provider::quota::{QuotaSnapshot, QuotaWindow};
 use crate::server::settings::SettingsStore;
 
@@ -22,7 +23,7 @@ pub(crate) async fn fetch(
         .timeout(Duration::from_secs(15))
         .header(
             reqwest::header::USER_AGENT,
-            format!("codex_cli_rs/{CODEX_CLIENT_VERSION}"),
+            format!("codex_cli_rs/{}", version::current()),
         )
         .bearer_auth(&creds.access_token);
     if let Some(account_id) = &creds.account_id {

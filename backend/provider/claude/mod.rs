@@ -15,6 +15,8 @@ pub(crate) mod passthrough;
 mod quota;
 /// Anthropic HTTP transport and credential selection.
 mod upstream;
+/// Claude Code version used for Zero-G's own Anthropic calls.
+pub(crate) mod version;
 
 /// Claude Code provider backend.
 pub(crate) struct Backend;

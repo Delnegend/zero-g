@@ -16,6 +16,8 @@ pub(crate) mod session;
 pub(crate) mod stream;
 /// Decoded upstream events rendered as `OpenAI` chat or Responses output.
 pub(crate) mod translation;
+/// Client versions Zero-G's own upstream calls claim to be.
+pub(crate) mod version;
 
 use crate::openai::Model;
 use crate::provider::{quota, registry};

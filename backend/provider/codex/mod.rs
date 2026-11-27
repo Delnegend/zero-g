@@ -14,6 +14,8 @@ mod payload;
 pub(crate) mod quota;
 /// HTTP routes for Codex requests.
 pub(crate) mod routes;
+/// Client version sent to the `ChatGPT` backend.
+pub(crate) mod version;
 
 pub(crate) use auth::CodexAuthManager;
 pub(crate) use client::CodexClient;

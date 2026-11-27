@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use super::downstream::CodexClient;
-use crate::provider::codex::auth::{CODEX_CLIENT_VERSION, Credentials};
+use crate::provider::codex::auth::Credentials;
 use crate::provider::common::errors::UpstreamError;
 
 impl CodexClient {
@@ -24,7 +24,7 @@ impl CodexClient {
             .header("Authorization", format!("Bearer {}", creds.access_token))
             .header("OpenAI-Beta", "responses=experimental")
             .header("originator", "omp")
-            .header("version", CODEX_CLIENT_VERSION)
+            .header("version", crate::provider::codex::version::current())
             .header("x-codex-routing-hint", format!("model={model_slug}"))
             .header("accept", "text/event-stream")
             .header("content-type", "application/json");
