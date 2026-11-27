@@ -131,7 +131,30 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
+        id: buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      # Compiled Rust dependencies live in the Dockerfile's cache mounts, which
+      # the image layer cache does not keep. Carry them between releases so a
+      # dependency update recompiles only what changed. Each run saves a new
+      # entry and restores the newest one.
+      - name: Cache Rust build mounts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: cargo-mounts
+          key: docker-cargo-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
+          restore-keys: docker-cargo-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Load Rust build mounts into BuildKit
+        uses: reproducible-containers/buildkit-cache-dance@5422eac04292c961a382e0f584ea0f03ad9da723 # v3.4.0
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          cache-map: |
+            {
+              "cargo-mounts/registry": {"target": "/usr/local/cargo/registry", "id": "zero-g-cargo-registry"},
+              "cargo-mounts/git": {"target": "/usr/local/cargo/git", "id": "zero-g-cargo-git"},
+              "cargo-mounts/target": {"target": "/app/target", "id": "zero-g-target"}
+            }
 
       - name: Log in to GitHub Container Registry
         if: needs.prepare.outputs.publish == 'true'

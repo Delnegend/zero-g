@@ -31,6 +31,9 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: "zero-g"
+          # Branches restore main's cache; saving one per branch filled the
+          # 10 GB repository limit and pushed out the release build cache.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Setup Just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
