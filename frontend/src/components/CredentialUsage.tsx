@@ -20,6 +20,7 @@ export const USAGE_PROVIDERS = [
   "go",
   "zen",
   "openrouter",
+  "codev",
 ] as const;
 function ResetTime({ reset }: { reset: Date }) {
   const [now, setNow] = useState(() => Date.now());
@@ -94,7 +95,11 @@ export function CredentialUsage({
       {connected && usage.isPending && (
         <CredentialUsageSkeleton
           balance={providerKind === "zen" || providerKind === "openrouter"}
-          grouped={providerKind === "agy" || providerKind === "claude"}
+          grouped={
+            providerKind === "agy" ||
+            providerKind === "claude" ||
+            providerKind === "codev"
+          }
         />
       )}
       {connected && usage.isError && (

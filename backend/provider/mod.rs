@@ -202,12 +202,12 @@ impl ProviderKind {
             Self::Go => Some(QuotaCapability::Go),
             Self::Claude => Some(QuotaCapability::Claude),
             Self::Openrouter => Some(QuotaCapability::Openrouter),
+            Self::Codev => Some(QuotaCapability::Codev),
             Self::Openai
             | Self::Cursor
             | Self::ChatJimmy
             | Self::CommandCode
-            | Self::CommandCodeGo
-            | Self::Codev => None,
+            | Self::CommandCodeGo => None,
         }
     }
 
@@ -262,6 +262,8 @@ pub(crate) enum QuotaCapability {
     Go,
     /// `OpenRouter` account balance.
     Openrouter,
+    /// `CoDev` usage recorded from gateway responses.
+    Codev,
 }
 impl QuotaCapability {
     /// Fetches quota for a configured provider credential.
@@ -278,6 +280,7 @@ impl QuotaCapability {
             Self::Zen => zen::Backend::quota(store, provider, credential).await,
             Self::Go => go::Backend::quota(store, provider, credential).await,
             Self::Openrouter => openrouter::Backend::quota(store, provider, credential).await,
+            Self::Codev => codev::Backend::quota(store, provider, credential).await,
         }
     }
 }

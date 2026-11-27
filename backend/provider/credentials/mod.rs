@@ -600,6 +600,14 @@ async fn delete(
         .delete()
         .exec(&mut tx)
         .await?;
+        crate::storage::Setting::filter(
+            crate::storage::Setting::fields()
+                .name()
+                .eq(crate::provider::codev::usage::setting_name(&id)),
+        )
+        .delete()
+        .exec(&mut tx)
+        .await?;
         ProviderCredential::delete_by_id(&mut tx, id.as_str()).await?;
         tx.commit().await?;
         Ok(true)

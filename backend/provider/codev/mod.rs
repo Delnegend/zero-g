@@ -4,6 +4,8 @@ mod auth;
 pub(crate) mod dashboard_login;
 /// Model sizes and prices.
 mod models;
+/// Usage recorded from gateway responses.
+pub(crate) mod usage;
 
 pub(crate) use models::catalog_info;
 
@@ -101,6 +103,12 @@ pub(crate) async fn send(
                 continue;
             }
         };
+        let (store, id, response_headers) = (
+            settings.clone(),
+            credential.id.clone(),
+            response.headers().clone(),
+        );
+        tokio::spawn(async move { usage::record(&store, &id, &response_headers).await });
         if response.status() == StatusCode::TOO_MANY_REQUESTS {
             cooldown::start(&credential.id, cooldown::wait_for(response.headers()));
         }
@@ -208,6 +216,16 @@ impl common::Provider for Backend {
             models::attach_prices(&mut models, &info);
         }
         Ok(models)
+    }
+}
+
+impl common::QuotaProvider for Backend {
+    async fn quota(
+        store: &SettingsStore,
+        _provider: &str,
+        credential: &str,
+    ) -> Result<crate::provider::quota::QuotaSnapshot, String> {
+        usage::stored(store, credential).await
     }
 }
 
