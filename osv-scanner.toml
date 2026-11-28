@@ -7,14 +7,15 @@ ecosystem = "crates.io"
 vulnerability.ignore = true
 reason = "Only present through Toasty's disabled MySQL driver; checked by just check-dependencies."
 
-# Review by 2026-11-28. Zero-G verifies OIDC signatures using public keys;
+# Review by 2026-12-19. Zero-G verifies OIDC signatures using public keys;
 # it does not use this dependency for RSA private-key operations.
+# openidconnect 4.1.0, the newest release, still requires rsa ^0.9.
 [[PackageOverrides]]
 name = "rsa"
 version = "0.9.10"
 ecosystem = "crates.io"
 vulnerability.ignore = true
-effectiveUntil = 2026-11-28
+effectiveUntil = 2026-12-19
 reason = "RUSTSEC-2023-0071 concerns private-key timing; OIDC verifies public signatures."
 
 # Upstream dependencies (openidconnect/oauth2 and turso/toasty) still require chrono.
