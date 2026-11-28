@@ -203,6 +203,11 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ steps.meta.outputs.revision }}
           cache-from: type=registry,ref=${{ steps.meta.outputs.image }}:buildcache
+          # Always run the Rust build so the cache mounts hold its output.
+          # Reusing the stage from the layer cache (identical sources, as in a
+          # test build of a released commit) left them empty, and the empty
+          # mounts were saved under the dependency key.
+          no-cache-filters: builder
           cache-to: ${{ needs.prepare.outputs.publish == 'true' && format('type=registry,ref={0}:buildcache,mode=max,image-manifest=true', steps.meta.outputs.image) || '' }}
 
   build-agy-integration:
