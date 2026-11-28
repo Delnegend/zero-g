@@ -17,6 +17,10 @@ RUN mkdir -p /app/data && chown 65532:65532 /app/data
 # builds (the release workflow saves them to the GitHub Actions cache), so a
 # dependency update recompiles only the crates that changed. The binary is
 # copied out because cache mounts are not part of the image.
+# The release workflow sets BUILD_RUN to its run ID so this step always runs
+# and fills the mounts, even when an identical earlier build is in the layer
+# cache; it does not change what is built.
+ARG BUILD_RUN=
 RUN --mount=type=cache,id=zero-g-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=zero-g-cargo-git,target=/usr/local/cargo/git \
     --mount=type=cache,id=zero-g-target,target=/app/target \
