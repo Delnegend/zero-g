@@ -135,15 +135,38 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       # Compiled Rust dependencies live in the Dockerfile's cache mounts, which
-      # the image layer cache does not keep. Carry them between releases so a
-      # dependency update recompiles only what changed. Each run saves a new
-      # entry and restores the newest one.
+      # the image layer cache does not keep. The key names what they depend
+      # on: the lockfile and manifests without Zero-G's own version (bumped
+      # every release), the Dockerfile, and the Rust builder image. An exact
+      # hit skips copying the mounts back out and saving them again, which is
+      # most of the cost; a miss restores the closest entry built with the same
+      # image, so a dependency update recompiles only what changed, and a new
+      # Rust image starts clean instead of piling up stale artifacts.
+      - name: Key Rust build mounts
+        id: cargo-key
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="$(docker buildx imagetools inspect --raw docker.io/library/rust:1-alpine | sha256sum | cut -c1-12)"
+          deps="$(
+            {
+              awk '/^name = "zero-g(-agy-integration)?"$/ { print; getline; next } { print }' Cargo.lock
+              grep -hv '^version = ' Cargo.toml agy-integration/Cargo.toml
+              cat Dockerfile
+            } | sha256sum | cut -c1-16
+          )"
+          {
+            echo "prefix=docker-cargo-${RUNNER_OS}-${RUNNER_ARCH}-${image}-"
+            echo "deps=${deps}"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Cache Rust build mounts
+        id: cargo-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: cargo-mounts
-          key: docker-cargo-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
-          restore-keys: docker-cargo-${{ runner.os }}-${{ runner.arch }}-
+          key: ${{ steps.cargo-key.outputs.prefix }}${{ steps.cargo-key.outputs.deps }}
+          restore-keys: ${{ steps.cargo-key.outputs.prefix }}
 
       - name: Load Rust build mounts into BuildKit
         uses: reproducible-containers/buildkit-cache-dance@5422eac04292c961a382e0f584ea0f03ad9da723 # v3.4.0
@@ -155,6 +178,7 @@ jobs:
               "cargo-mounts/git": {"target": "/usr/local/cargo/git", "id": "zero-g-cargo-git"},
               "cargo-mounts/target": {"target": "/app/target", "id": "zero-g-target"}
             }
+          skip-extraction: ${{ steps.cargo-cache.outputs.cache-hit }}
 
       - name: Log in to GitHub Container Registry
         if: needs.prepare.outputs.publish == 'true'
